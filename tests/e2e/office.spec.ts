@@ -49,6 +49,24 @@ test('panels open and close', async ({ page }) => {
   expect(errors).toEqual([]);
 });
 
+test('new chat messages do not overlay an open drawer or block its close button', async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem('office-quality', 'low');
+    localStorage.setItem('office-tips', 'seen');
+  });
+  await page.goto('/?demo&debug&layout=cozy');
+  await page.waitForFunction(() => !!(window as unknown as { __office?: { chatSay?: unknown } }).__office?.chatSay);
+  await page.click('#btn-mac');
+  await expect(page.locator('#dr-mac')).toBeVisible();
+  await page.evaluate(() => (window as unknown as { __office: { chatSay: (from: string, text: string, opts: object) => void } }).__office
+    .chatSay('reception', 'synthetic drawer overlap', { now: true }));
+  await expect(page.locator('#chat-badge')).toBeVisible();
+  // A new-message badge must remain; the floating preview must not cover modal controls.
+  await expect(page.locator('#zc-peek')).toBeHidden({ timeout: 1200 });
+  await page.click('#dr-mac [data-close]');
+  await expect(page.locator('#dr-mac')).toBeHidden();
+});
+
 test('hooks are accepted only from this machine and the page needs a token from elsewhere', { tag: '@smoke' }, async ({ request }) => {
   const r = await request.post('/event', { data: { hook_event_name: 'Ping' } });
   expect(r.status()).toBe(200);

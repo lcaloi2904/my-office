@@ -321,7 +321,8 @@ function groupAvatar(size = 40) {
 // a small card by the button for a new message while the window is shut (like a conversation in the app's list)
 let peekTimer = 0;
 function peek(m) {
-  if (chat.open || m.kind === 'sys' || m.from === 'me' || photoOn()) return;
+  // Keep the unread badge, but do not place a clickable preview over an open drawer.
+  if (chat.open || m.kind === 'sys' || m.from === 'me' || photoOn() || document.querySelector('.drawer:not([hidden])')) return;
   let p = $('zc-peek'); if (!p) { p = el('button', 'zc-peek'); p.id = 'zc-peek'; p.type = 'button'; p.addEventListener('click', () => toggle(true)); document.body.append(p); }
   if (m.kind === 'work') return;   // (a card at work: its answer is the news)
   const txt = m.kind === 'text' ? mask(m.text) : m.kind === 'poll' ? `📊 ${m.poll.q}` : m.kind === 'remind' ? `⏰ ${m.remind.title}` : m.kind === 'photo' ? tr('chat.photo') : tr('chat.sticker');
