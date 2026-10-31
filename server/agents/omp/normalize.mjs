@@ -1,0 +1,129 @@
+// Schema 3 at OMP 6a86df8539fccf3ad7818081266e554022fc21bc. Inert JSON only.
+import { redact } from '../../redact.mjs';
+import { ompSessionIdentity } from '../schema.mjs';
+import { aggregateUsage, usageRecord } from './usage.mjs';
+
+const idOf = (v) => typeof v === 'string' && v.length > 0 && v.length <= 256 && !/[\x00-\x1f\x7f]/.test(v) ? v : null;
+const modelOf = (v) => typeof v === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,95}$/.test(v) ? v : null;
+const timestamp = (v) => typeof v === 'string' && Number.isFinite(Date.parse(v)) ? Date.parse(v) : 0;
+const contentText = (content) => typeof content === 'string' ? content : Array.isArray(content) ? content.filter((p) => p?.type === 'text' && typeof p.text === 'string').map((p) => p.text).join('\n') : '';
+const safeText = (s) => redact(String(s)).slice(0, 4000).replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '');
+// Exact names only; custom/MCP and inherited Object prototype names remain neutral.
+const TOOL_CATEGORIES = new Map(Object.entries({ read: 'read', edit: 'edit', write: 'edit', bash: 'cmd', grep: 'read', find: 'read', ls: 'read', task: 'task', ask: 'ask', web_search: 'web', fetch: 'web' }));
+export const toolCategory = (name) => TOOL_CATEGORIES.get(name) || 'other';
+const KNOWN = new Set(['message', 'model_usage', 'model_change', 'thinking_level_change', 'service_tier_change', 'compaction', 'branch_summary', 'reset_boundary', 'custom', 'label', 'title_change', 'ttsr_injection', 'credential_pin', 'session_init', 'mode_change', 'custom_message']);
+
+export function createNormalizer({ sourceNamespace, includeContent = false, maxEntries = 4096, maxIndexBytes = 1024 * 1024 } = {}) {
+  let header = null, rejected = false, titleSeen = false, leaf = null, lastSelf = null, bytes = 0, capped = false;
+  const entries = new Map(), sizes = new Map(), diagnostics = new Set();
+  const issue = (code) => { if (diagnostics.size < 24) diagnostics.add(code); };
+  function push(raw, location = {}) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) { issue('invalid-record'); return; }
+    if (!header) {
+      if (raw.type === 'title' && !rejected) {
+        if (titleSeen || raw.v !== 1 || (location.offset !== undefined && location.offset !== 0) || (location.bytes !== undefined && location.bytes !== 256)) { rejected = true; issue('unsupported-title-slot'); }
+        titleSeen = true;
+        return;
+      }
+      if (rejected) return;
+      if (raw.type !== 'session' || raw.version !== 3 || !ompSessionIdentity(sourceNamespace, raw.id)) { rejected = true; issue('unsupported-header'); return; }
+      header = { id: raw.id, inherited: typeof raw.parentSession === 'string' || typeof raw.continuationOf === 'string',
+        relationKind: typeof raw.continuationOf === 'string' ? 'continuation' : typeof raw.parentSession === 'string' ? 'fork' : 'unknown', timestamp: timestamp(raw.timestamp) };
+      return;
+    }
+    if (raw.type === 'session' || raw.type === 'title') { issue('unexpected-header'); return; }
+    const id = idOf(raw.id);
+    if (!id) { issue('invalid-entry'); return; }
+    const parentId = raw.parentId === null ? null : idOf(raw.parentId);
+    if (raw.parentId !== null && !parentId) issue('invalid-parent');
+    const selected = raw.activeLeafId === null ? null : raw.activeLeafId === undefined ? id : idOf(raw.activeLeafId);
+    if (raw.activeLeafId !== undefined && raw.activeLeafId !== null && !selected) issue('invalid-leaf');
+    const e = { id, parentId, selectedLeafId: selected, type: KNOWN.has(raw.type) ? raw.type : 'unknown', ts: timestamp(raw.timestamp) };
+    if (e.type === 'unknown') issue('unknown-record');
+    if (raw.type === 'custom' && raw.customType === 'session_exit') e.exitEvidence = true;
+    if (raw.type === 'model_change' && (raw.role === undefined || raw.role === 'default')) e.model = modelOf(raw.model);
+    if (raw.type === 'model_usage') { e.usage = usageRecord(raw.usage); e.model = modelOf(raw.model); }
+    if (raw.type === 'compaction') { e.firstKeptEntryId = idOf(raw.firstKeptEntryId); if (includeContent) e.text = safeText(raw.summary || ''); }
+    if (raw.type === 'branch_summary' && includeContent) e.text = safeText(raw.summary || '');
+    if (raw.type === 'message') {
+      const m = raw.message && typeof raw.message === 'object' ? raw.message : {};
+      e.role = ['assistant', 'user', 'toolResult'].includes(m.role) ? m.role : 'unknown';
+      if (m.role === 'assistant') {
+        e.usage = usageRecord(m.usage); e.model = modelOf(m.model);
+        const calls = (Array.isArray(m.content) ? m.content : []).filter((p) => p?.type === 'toolCall' && idOf(p.id));
+        if (calls.length > 64) issue('tool-limit');
+        e.calls = calls.slice(0, 64).map((p) => ({ id: p.id, category: toolCategory(p.name) }));
+      }
+      if (m.role === 'toolResult') { e.toolCallId = idOf(m.toolCallId); e.isError = m.isError === true; }
+      // Text only. No images, args, outputs, thinking, unknown roles, or custom payloads.
+      if (includeContent && ['assistant', 'user'].includes(e.role)) e.text = safeText(contentText(m.content));
+    }
+    const previous = entries.get(id), serialized = JSON.stringify(e), size = Buffer.byteLength(serialized);
+    if (previous) {
+      if (JSON.stringify(previous) !== serialized) issue('conflicting-entry-id');
+      return;
+    }
+    // Retransmitted IDs never move the leaf. A genuinely new capped leaf does: report incompleteness.
+    leaf = selected;
+    if (selected === id) lastSelf = id;
+    // Past the cap the oldest entries are dropped, so the index keeps the tail that the active branch ends in. The
+    // branch then starts mid-history and is reported incomplete, instead of losing the whole branch.
+    if (size > maxIndexBytes) { capped = true; issue('index-limit'); return; }
+    while (entries.size && (entries.size >= maxEntries || bytes + size > maxIndexBytes)) {
+      const oldest = entries.keys().next().value;
+      bytes -= sizes.get(oldest); sizes.delete(oldest); entries.delete(oldest);
+      capped = true; issue('index-limit');
+    }
+    entries.set(id, e); sizes.set(id, size); bytes += size;
+  }
+
+  function value({ incomplete: inputIncomplete = false } = {}) {
+    const issues = new Set(diagnostics);
+    let active = leaf;
+    if (active !== null && !entries.has(active)) {
+      if (capped) issues.add('missing-capped-leaf');
+      else { active = lastSelf; issues.add('leaf-fallback'); }
+    }
+    const seen = new Set(), branch = [];
+    while (active !== null) {
+      if (seen.has(active)) { issues.add('branch-cycle'); break; }
+      if (seen.size >= maxEntries) { issues.add('branch-depth-limit'); break; }
+      const entry = entries.get(active);
+      if (!entry) { issues.add('missing-parent'); break; }
+      seen.add(active); branch.push(entry); active = entry.parentId;
+    }
+    branch.reverse();
+    let selected = branch;
+    const reset = selected.findLastIndex((e) => e.type === 'reset_boundary');
+    if (reset >= 0) selected = selected.slice(reset + 1);
+    const compact = selected.findLastIndex((e) => e.type === 'compaction');
+    if (compact >= 0) {
+      const c = selected[compact], kept = selected.findIndex((e) => e.id === c.firstKeptEntryId);
+      if (kept < 0 || kept > compact) { issues.add('compaction-incomplete'); selected = selected.slice(compact); }
+      else selected = [c, ...selected.slice(kept, compact), ...selected.slice(compact + 1)];
+    }
+    const tools = new Map();
+    for (const e of selected) {
+      for (const call of e.calls || []) { const old = tools.get(call.id); tools.set(call.id, { ...call, phase: old?.phase || 'requested' }); }
+      if (e.toolCallId) { const old = tools.get(e.toolCallId); tools.set(e.toolCallId, { id: e.toolCallId, category: old?.category || 'other', phase: e.isError ? 'error' : 'completed' }); }
+    }
+    const counts = { read: 0, edit: 0, cmd: 0, web: 0 };
+    for (const tool of tools.values()) if (Object.hasOwn(counts, tool.category)) counts[tool.category]++;
+    const incomplete = inputIncomplete || capped || [...issues].some((s) => !['unknown-record', 'leaf-fallback'].includes(s));
+    const items = includeContent ? selected.flatMap((e) => {
+      if (e.type === 'message' && ['user', 'assistant'].includes(e.role) && e.text) return [{ role: e.role, text: e.text, ts: e.ts }];
+      if (['compaction', 'branch_summary'].includes(e.type)) return [{ role: 'summary', text: e.text || '[Persisted summary]', ts: e.ts }];
+      return [];
+    }) : [];
+    return {
+      sourceNamespace, sourceSessionId: header?.id || null, supported: !!header && !rejected,
+      relationKind: header?.relationKind || 'unknown', persistedOnly: true, lifecycle: 'historical',
+      model: branch.findLast((e) => e.model && ['message', 'model_change'].includes(e.type))?.model || null,
+      observedAt: branch.at(-1)?.ts || header?.timestamp || 0, counts,
+      metrics: aggregateUsage(entries.values(), { inherited: header?.inherited, incomplete }),
+      items, tools: [...tools.values()], incomplete, diagnostics: [...issues],
+      exitEvidence: [...entries.values()].some((e) => e.exitEvidence === true), indexEntries: entries.size, indexBytes: bytes,
+    };
+  }
+  return { push, value };
+}

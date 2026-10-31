@@ -30,14 +30,30 @@ import { createPrefs } from './prefs.mjs';
 import { pickLang, createT } from '../src/i18n/index.js';
 import { createAgentRegistry } from './agents/registry.mjs';
 import { createClaudeAdapter } from './agents/claude/compat.mjs';
+import { createOmpAdapter } from './agents/omp/index.mjs';
 import { projectClaudeSession } from './agents/projection.mjs';
 import { isClaudeRequest, resolveOmpMode } from './agents/schema.mjs';
 
-// Phase 02 is a compatibility seam only: requesting files/hybrid never opens agent data.
-// Config/roots/ingress are intentionally not loaded until a live adapter is approved.
+// OMP is off unless OFFICE_OMP=files names an explicit config (OFFICE_OMP_CONFIG, absolute path). No home discovery.
+// hybrid needs the realtime ingress, which is not built: it stays effectively off.
 const OMP_MODE = resolveOmpMode(process.env.OFFICE_OMP);
-const ompAvailability = Object.freeze({ requestedMode: OMP_MODE, effectiveMode: 'off',
-  reason: OMP_MODE === 'off' ? 'disabled' : 'adapter-not-implemented' });
+const OMP_CONFIG = OMP_MODE === 'files' ? process.env.OFFICE_OMP_CONFIG || '' : '';   // (read only when files mode asks for it)
+const ompAdapter = OMP_MODE === 'files' && OMP_CONFIG ? createOmpAdapter({
+  configFile: OMP_CONFIG,
+  pinStore: {
+    load: async () => { try { const d = JSON.parse(await fsp.readFile(path.join(DATA_DIR, 'omp-pins.json'), 'utf8')); return Array.isArray(d?.ids) ? d.ids : []; } catch { return []; } },
+    save: async (ids) => { const file = path.join(DATA_DIR, 'omp-pins.json'); await fsp.writeFile(file + '.tmp', JSON.stringify({ ids })); await fsp.rename(file + '.tmp', file); },
+  },
+  // pinned OMP actors only: a changed or removed pin is a session/gone message, never an event
+  onChange: (ids) => { for (const id of ids) { const r = agents.resolve(id); broadcast(r ? { k: 'sess', s: r.publicSession } : { k: 'gone', id }, true); } },
+}) : null;
+function ompAvailability() {
+  const status = ompAdapter?.status(), files = !!status && !['config-invalid', 'disposed'].includes(status.state);
+  return { requestedMode: OMP_MODE, effectiveMode: files ? 'files' : 'off',
+    reason: OMP_MODE === 'off' ? 'disabled' : OMP_MODE === 'hybrid' ? 'hybrid-not-implemented' : !OMP_CONFIG ? 'config-missing' : files ? 'files' : 'config-invalid',
+    ...(status && { state: status.state, sources: status.sources, pins: status.pins }) };
+}
+/* end OMP wiring */
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = Number(process.env.OFFICE_PORT) || 4310;
@@ -292,7 +308,7 @@ const agents = createAgentRegistry({ adapters: [createClaudeAdapter({
   resolveSession: (id) => [...sessions.values()].find((s) => s.id === id) || null,
   publicSession: legacyPub,
   readLog,
-})] });
+}), ...(ompAdapter ? [ompAdapter] : [])] });
 function gitOf(s) { const r = s.cwd && git.repoOf(s.cwd); return r ? { repo: r.name, branch: r.branch, dirty: r.dirty, ahead: r.ahead, ci: r.ci, ciName: r.ciName, ciUrl: r.ciUrl, born: r.born || null } : null; }
 // context: exact from the status line while it reports (last 15 min), else estimated from the transcript
 const liveCtx = (s) => (s.live?.ctxMax && s.live.ctx != null && Date.now() - s.live.at < 15 * 60e3 ? { ctx: s.live.ctx, ctxMax: s.live.ctxMax, exact: true } : { ctx: s.usage.ctx, ctxMax: ctxMax(s.usage) });
@@ -448,11 +464,13 @@ function send(res, obj) { res.write(`data: ${JSON.stringify(obj)}\n\n`); }
 const backlog = [], waiting = new Set();
 let sent = 0, polledAt = 0;   // (sent: how many messages so far, the number of the last)
 const watching = () => clients.size > 0 || Date.now() - polledAt < 60_000;   // (a page open: a stream, or asking now and then)
-function broadcast(obj) {
-  for (const c of clients) send(c.res, obj);
-  backlog.push([++sent, JSON.stringify(obj)]); if (backlog.length > 400) backlog.shift();
+/* localOnly: for what only this computer's own pages may see (a pinned saved session): not sent to a phone or the tunnel,
+   not handed to a remote /api/live poll, not kept in the replay log. */
+function broadcast(obj, localOnly = false) {
+  for (const c of clients) if (!localOnly || c.local) send(c.res, obj);
+  backlog.push([++sent, JSON.stringify(obj), localOnly]); if (backlog.length > 400) backlog.shift();
   for (const w of waiting) w();
-  if (RECORDED.has(obj.k)) record(obj);
+  if (RECORDED.has(obj.k) && !localOnly) record(obj);
 }
 
 /* ---------- replay log ----------
@@ -464,7 +482,7 @@ const REPLAY_KEEP_DAYS = 7;
 const RECORDED = new Set(['ev', 'sess', 'gone', 'stats']);
 fs.mkdirSync(REPLAY_DIR, { recursive: true });
 let rec = { day: '', out: null, snapAt: 0 };
-const replaySnap = () => ({ k: 'snap', sessions: agents.list(), feed: feed.slice(-40), stats });
+const replaySnap = () => ({ k: 'snap', sessions: agents.list().filter((s) => !s.persistedOnly), feed: feed.slice(-40), stats });
 function record(m) {
   const t = Date.now(), day = today();
   if (day !== rec.day) {
@@ -1789,7 +1807,7 @@ const server = http.createServer((req, res) => {
   }
   if (req.method === 'GET' && url.pathname === '/api/doctor') {
     if (!isLoopback(req)) { res.writeHead(403).end(); return; }
-    json(res, 200, { uptime: Math.round((Date.now() - startedAt) / 1000), lastEventAt: lastHookAt, sessions: sessions.size, pending: pending.size, node: process.versions.node, statusAt, limitsAt: planLimits?.at || 0, limitsSource: planLimits?.source || null, usageNote: noteText(), agents: { omp: ompAvailability, diagnostics: agents.diagnostics() } });
+    json(res, 200, { uptime: Math.round((Date.now() - startedAt) / 1000), lastEventAt: lastHookAt, sessions: sessions.size, pending: pending.size, node: process.versions.node, statusAt, limitsAt: planLimits?.at || 0, limitsSource: planLimits?.source || null, usageNote: noteText(), agents: { omp: ompAvailability(), ompIssues: ompAdapter?.status().issues || [], diagnostics: agents.diagnostics() } });
     return;
   }
   if (req.method === 'POST' && url.pathname === '/hook/question') {
@@ -1904,6 +1922,17 @@ const server = http.createServer((req, res) => {
       fsp.appendFile(ACTION_LOG, `${new Date().toISOString()} phone lan ${b?.on ? 'on' : 'off'}\n`).catch(() => {});
       const on = lanIsOn();
       json(res, 200, { ok: true, on, fixed: lanFixed, lan: on ? lanUrl() : null, lanBase: on ? lanUrl(false) : null, ts: on ? tsUrl() : null, pin: currentPin() });
+    });
+    return;
+  }
+  if (url.pathname === '/api/omp/pin' && req.method === 'POST') {   // { id, on }: a public catalogue id only, never a path
+    if (!ompAdapter || ompAvailability().effectiveMode !== 'files') { json(res, 404, { ok: false, code: 'ompOff' }); return; }
+    if (!isLoopback(req) || !sameOriginOf(req) || !String(req.headers['content-type'] || '').startsWith('application/json')) { json(res, 403, { ok: false, code: 'agentLocalOnly' }); return; }
+    readJson(req).then(async (b) => {
+      const r = await ompAdapter.pin(String(b?.id ?? ''), b?.on !== false);
+      if (r.ok) { fsp.appendFile(ACTION_LOG, `${new Date().toISOString()} omp pin ${r.pinned ? 'on' : 'off'}
+`).catch(() => {}); await ompAdapter.refresh({ rescan: false }).catch(() => {}); }   // (the first read is done when the answer comes back)
+      json(res, r.ok ? 200 : 400, r);
     });
     return;
   }
@@ -2162,14 +2191,15 @@ const server = http.createServer((req, res) => {
   // everything as it is now, the first message a page gets (the Mac's own addresses and PIN only for the Mac)
   const snapNow = (local) => {
     const lanOn = lanIsOn();
-    return { k: 'snap', lang: prefs.lang(), sessions: agents.list(), perms: [...pending.values()].map(permPub), feed, stats, local, todos, limits: limitsOut(), limitsNote: noteText(), trophies: trophies.pub(),
+    const omp = ompAvailability().effectiveMode === 'files' ? { on: true, local, conversation: !!ompAdapter.catalog({ limit: 1 }).conversation } : null;   // (whether the history picker is offered; the list itself is this computer only)
+    return { k: 'snap', lang: prefs.lang(), omp, sessions: local ? agents.list() : agents.list().filter((s) => !s.persistedOnly), perms: [...pending.values()].map(permPub), feed, stats, local, todos, limits: limitsOut(), limitsNote: noteText(), trophies: trophies.pub(),
       lan: local && lanOn ? lanUrl() : null, lanBase: local && lanOn ? lanUrl(false) : null, pin: local ? currentPin() : null,
       ts: local && lanOn ? tsUrl() : null, tsHere: !!tsUrl(), phoneApprove: !!prefs.get('phoneApprove'), phoneTasks: !!prefs.get('phoneTasks'), lanFixed: local && lanFixed, build: BUILD };
   };
   if (url.pathname === '/stream') {
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store, no-transform', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
     const local = isLoopback(req);
-    const client = { res };
+    const client = { res, local };
     clients.add(client);
     fetchPlanUsage();   // skipped when the saved reading is fresh
     pollGit().then(() => git.pollCi());
@@ -2187,10 +2217,11 @@ const server = http.createServer((req, res) => {
       return;
     }
     let timer = 0;
+    const local = isLoopback(req);
     const answer = () => {
       waiting.delete(answer); clearTimeout(timer);
       if (res.writableEnded || res.destroyed) return;
-      const msgs = backlog.filter(([n]) => n > since).map(([, d]) => d);
+      const msgs = backlog.filter(([n, , only]) => n > since && (local || !only)).map(([, d]) => d);
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }).end(`{"seq":${sent},"msgs":[${msgs.join(',')}]}`);
     };
     if (sent > since) { answer(); return; }
@@ -2198,10 +2229,17 @@ const server = http.createServer((req, res) => {
     req.on('close', () => { waiting.delete(answer); clearTimeout(timer); });
     return;
   }
+  if (url.pathname === '/api/omp/catalog' && req.method === 'GET') {   // paged history of the approved sources (metadata only, this computer only)
+    if (!ompAdapter || ompAvailability().effectiveMode !== 'files') { json(res, 404, { items: [], code: 'ompOff' }); return; }
+    if (!isLoopback(req)) { json(res, 403, { items: [], code: 'agentLocalOnly' }); return; }
+    json(res, 200, ompAdapter.catalog({ cursor: url.searchParams.get('cursor') || 0, limit: url.searchParams.get('limit') || 25, kind: url.searchParams.get('kind') || 'all' }));
+    return;
+  }
   if (url.pathname === '/api/log') {
     const id = url.searchParams.get('id'), owner = agents.resolve(id);
     if (!owner) { json(res, 404, { items: [] }); return; }
     if (!owner.publicSession.capabilities.readConversation) { json(res, 403, { items: [], code: 'agentReadOnly' }); return; }
+    if (owner.kind === 'omp' && !isLoopback(req)) { json(res, 403, { items: [], code: 'agentLocalOnly' }); return; }   // persisted OMP text: this computer only
     agents.readConversation(id, 120, url.searchParams.get('agent')).then((items) => json(res, 200, { items })).catch(() => json(res, 200, { items: [] }));
     return;
   }
@@ -2422,6 +2460,7 @@ process.on('exit', () => { try { awakeProc?.kill(); } catch { /* gone */ } });
 for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => process.exit(0));
 
 server.listen(PORT, HOST, () => {
+  agents.start().catch(() => {});   // (OMP files mode only: nothing is opened while it is off)
   syncLan();
   if (prefs.get('tunnel')) startTunnel(); else killStaleTunnel();
   scanSessions();

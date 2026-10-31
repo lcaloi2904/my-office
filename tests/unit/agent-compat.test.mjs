@@ -111,14 +111,14 @@ function loadUi(file, names, dependencies = {}) {
   }, { timeout: 1000 });
 }
 const ui = () => loadUi('src/office/people/workers.js',
-  ['AGENT_NAME', 'agentOf', 'canSession', 'claudeQuotaAccount', 'claudeCost', 'contextPercent']);
+  ['AGENT_NAME', 'agentOf', 'canSession', 'claudeQuotaAccount', 'claudeCost', 'contextPercent', 'isPersisted', 'unknownLabel']);
 
 function productionProjection(sessions, overrides = {}) {
   const start = serverSource.indexOf('const pubSub =');
   const end = serverSource.indexOf('\nfunction gitOf(', start);
   assert.ok(start > 0 && end > start, 'projection boundary exists');
   return vm.runInNewContext(serverSource.slice(start, end) + '\n;({pub,legacyPub,agents})', {
-    createAgentRegistry, createClaudeAdapter, projectClaudeSession, sessions,
+    createAgentRegistry, createClaudeAdapter, projectClaudeSession, sessions, ompAdapter: null,
     readLog: async () => [], tilde: (v) => v, oneLine: (s) => s.replace(/\n/g, ' '),
     unwrapPaste: (s) => s, acctOf: (s) => s.acct || '', acctShown: (s) => s,
     gitOf: () => null, liveCtx: (s) => ({ ctx: s.usage.ctx, ctxMax: 100 }),
@@ -154,26 +154,42 @@ test('actual Claude pub retains legacy fields for status, subagents, account and
   }
 });
 
-test('production mode and registration do not read config or activate an OMP adapter', () => {
+// Phase 03 intentionally changes the Phase 02 seam: files mode with an explicit config may now start the file-only
+// adapter. Every other mode keeps the original guarantee: only OFFICE_OMP is read and nothing is activated.
+function ompWiring(env, status = 'ready') {
   const start = serverSource.indexOf('const OMP_MODE =');
-  const end = serverSource.indexOf('});', start) + 3;
-  for (const requested of [undefined, 'off', 'files', 'hybrid', 'bad-mode']) {
-    const envReads = [];
-    const env = new Proxy({}, { get: (_, key) => {
-      envReads.push(key);
-      assert.equal(key, 'OFFICE_OMP', 'must not inspect config/profile/token/roots');
-      return requested;
-    } });
-    const availability = vm.runInNewContext(serverSource.slice(start, end) + '\n;ompAvailability', {
-      resolveOmpMode, process: { env },
-    }, { timeout: 1000 });
+  const end = serverSource.indexOf('/* end OMP wiring */', start);
+  assert.ok(start > 0 && end > start, 'OMP wiring boundary exists');
+  const reads = [], created = [];
+  const proxy = new Proxy({}, { get: (_, key) => { reads.push(key); return env[key]; } });
+  const out = vm.runInNewContext(serverSource.slice(start, end) + '\n;({ ompAvailability, ompAdapter })', {
+    resolveOmpMode, process: { env: proxy },
+    createOmpAdapter: (options) => { created.push(options); return { status: () => ({ state: status, sources: [], pins: 0 }) }; },
+    fsp: {}, path: { join: (...p) => p.join('/') }, DATA_DIR: 'data', broadcast() {}, agents: {},
+  }, { timeout: 1000 });
+  return { ...out, reads, created };
+}
+
+test('production mode and registration do not read config or activate an OMP adapter unless files mode is configured', () => {
+  for (const requested of [undefined, 'off', 'hybrid', 'bad-mode']) {
+    const w = ompWiring({ OFFICE_OMP: requested, OFFICE_OMP_CONFIG: '/must/not/be/read' });
+    const availability = w.ompAvailability();
     assert.equal(availability.effectiveMode, 'off');
     assert.equal(availability.requestedMode, resolveOmpMode(requested));
-    assert.deepEqual(envReads, ['OFFICE_OMP']);
+    assert.deepEqual(w.reads, ['OFFICE_OMP'], 'must not inspect config/profile/token/roots');
+    assert.equal(w.ompAdapter, null); assert.deepEqual(w.created, []);
     const { agents } = productionProjection(new Map([['internal', privateSession()]]));
     assert.deepEqual(agents.list().map((s) => s.agentKind), ['claude']);
     assert.deepEqual(agents.diagnostics(), []);
   }
+  assert.equal(ompWiring({ OFFICE_OMP: 'hybrid' }).ompAvailability().reason, 'hybrid-not-implemented');
+  const missing = ompWiring({ OFFICE_OMP: 'files' });
+  assert.deepEqual([missing.ompAvailability().effectiveMode, missing.ompAvailability().reason, missing.ompAdapter], ['off', 'config-missing', null]);
+  const on = ompWiring({ OFFICE_OMP: 'files', OFFICE_OMP_CONFIG: '/synthetic/omp.json' });
+  assert.equal(on.created.length, 1); assert.equal(on.created[0].configFile, '/synthetic/omp.json');
+  assert.deepEqual([on.ompAvailability().effectiveMode, on.ompAvailability().reason], ['files', 'files']);
+  const bad = ompWiring({ OFFICE_OMP: 'files', OFFICE_OMP_CONFIG: '/synthetic/omp.json' }, 'config-invalid');
+  assert.deepEqual([bad.ompAvailability().effectiveMode, bad.ompAvailability().reason], ['off', 'config-invalid']);
 });
 
 function routeFixture() {
@@ -185,7 +201,7 @@ function routeFixture() {
   return { s, sessions, agents, omp };
 }
 
-async function requestCallback(fixture, url, body, method = 'POST') {
+async function requestCallback(fixture, url, body, method = 'POST', extra = {}) {
   const start = serverSource.indexOf('const server = http.createServer(');
   const end = serverSource.indexOf('\n});', start);
   assert.ok(start > 0 && end > start, 'HTTP callback boundary exists');
@@ -201,11 +217,11 @@ async function requestCallback(fixture, url, body, method = 'POST') {
     moveSession: async (s) => { calls.move++; assert.equal(s, fixture.s); return { ok: true }; },
     tasks: { start: () => { calls.start++; return { ok: false, code: 'synthetic' }; } },
     slugOf: (s) => s, ACTION_LOG: 'synthetic-log', fsp: { appendFile: async () => { calls.log++; } },
-    prefs: { get: () => false },
+    prefs: { get: () => false }, ...extra,
   };
   const handler = vm.runInNewContext('(' + callback + ')', context, { timeout: 1000 });
   handler({ url, method, headers: { 'content-type': 'application/json' }, socket: {} }, {});
-  await new Promise((resolve) => setImmediate(resolve));
+  for (let i = 0; i < 20 && !responses.length; i++) await new Promise((resolve) => setImmediate(resolve));
   assert.equal(responses.length, 1, 'one response from the real handler, without server startup');
   return { ...responses[0], calls };
 }
@@ -379,7 +395,7 @@ test('actual List Mode keeps unknown providers visible without NaN or fake activ
     ['o', { id: 'o', name: 'OMP fixture', agentKind: 'omp', status: 'unknown', taskStart: 1, usage: { ctx: 0, ctxMax: 0 } }],
   ]);
   const list = loadUi('src/office/ui/lite.js', ['setLite'], {
-    ...h, sessions, el: node, $: (id) => id === 'lite' ? box : button,
+    ...h, sessions, el: node, $: (id) => id === 'lite' ? box : button, ompButton: () => ({ hidden: true }),
     document: { body: { classList: { toggle() {} } }, createDocumentFragment: () => node('fragment') },
     fp: { on: false }, closePlace() {}, colorOf: () => '#000', dn: (s) => s.name,
     doingOf: (s) => { assert.equal(s.id, 'c'); return { text: 'rest' }; },
@@ -531,4 +547,72 @@ test('actual rail and HUD keep foreign metrics, PID and Remote Control isolated 
   const hud = nodeText(f.element('feed-stats'));
   assert.match(hud, /\$2\.00/);
   assert.doesNotMatch(hud, /999|NaN|Infinity/);
+});
+
+// Persisted OMP routes: this computer only, public ids only, and no path ever reaches the adapter.
+function ompRouteFixture(conversation) {
+  const claude = privateSession(), sessions = new Map([['internal', claude]]), calls = { catalog: [], pin: [], refresh: 0, read: 0 };
+  const f = { s: claude, sessions, agents: productionProjection(sessions).agents };
+  const raw = { sourceNamespace: 'persisted-fixture', sourceSessionId: 'p1', persistedOnly: true, conversation };
+  const persisted = projectOmpSession(raw);
+  f.agents.register({ kind: 'omp', list: () => [raw], resolve: (id) => id === persisted.id ? raw : null, readConversation: async () => { calls.read++; return [{ role: 'user', text: 'fixture', ts: 1 }]; } });
+  const ompAdapter = { catalog: (o) => { calls.catalog.push(o); return { items: [], sources: [], next: null }; },
+    pin: async (id, on) => { calls.pin.push([id, on]); return /^omp:[0-9a-f]{64}$/.test(id) ? { ok: true, pinned: on } : { ok: false, code: 'invalid-id' }; },
+    refresh: async () => { calls.refresh++; } };
+  return { ...f, persisted, calls, extra: (loopback, mode = 'files') => ({ ompAdapter, ompAvailability: () => ({ effectiveMode: mode }), isLoopback: () => loopback }) };
+}
+
+test('actual OMP catalogue and pin routes are local-only, off-aware and id-only', async () => {
+  const f = ompRouteFixture(false);
+  const remote = await requestCallback(f, '/api/omp/catalog', null, 'GET', f.extra(false));
+  assert.equal(remote.status, 403); assert.equal(remote.payload.code, 'agentLocalOnly'); assert.deepEqual(f.calls.catalog, []);
+  const off = await requestCallback(f, '/api/omp/catalog', null, 'GET', f.extra(true, 'off'));
+  assert.equal(off.status, 404); assert.deepEqual(f.calls.catalog, []);
+  const local = await requestCallback(f, '/api/omp/catalog?limit=9&cursor=3', null, 'GET', f.extra(true));
+  assert.equal(local.status, 200); assert.deepEqual(plain(f.calls.catalog), [{ cursor: '3', limit: '9', kind: 'all' }]);
+
+  const foreignPin = await requestCallback(f, '/api/omp/pin', { id: f.persisted.id }, 'POST', f.extra(false));
+  assert.equal(foreignPin.status, 403); assert.deepEqual(f.calls.pin, []);
+  const noSameOrigin = await requestCallback(f, '/api/omp/pin', { id: f.persisted.id }, 'POST', { ...f.extra(true), sameOriginOf: () => false });
+  assert.equal(noSameOrigin.status, 403); assert.deepEqual(f.calls.pin, []);
+  const path = await requestCallback(f, '/api/omp/pin', { id: '/etc/passwd', on: true }, 'POST', f.extra(true));
+  assert.equal(path.status, 400); assert.equal(path.payload.code, 'invalid-id'); assert.equal(path.calls.log, 0);
+  const ok = await requestCallback(f, '/api/omp/pin', { id: f.persisted.id, on: false }, 'POST', f.extra(true));
+  assert.equal(ok.status, 200); assert.deepEqual(plain(f.calls.pin.at(-1)), [f.persisted.id, false]); assert.equal(ok.calls.log, 1); assert.equal(f.calls.refresh, 1);
+  assert.equal((await requestCallback(f, '/api/omp/pin', { id: f.persisted.id }, 'POST', f.extra(true, 'off'))).status, 404);
+});
+
+test('actual log route reads persisted OMP text only for this computer and only when the source allows it', async () => {
+  const allowed = ompRouteFixture(true), denied = ompRouteFixture(false);
+  assert.equal(allowed.persisted.capabilities.readConversation, true);
+  const remote = await requestCallback(allowed, '/api/log?id=' + encodeURIComponent(allowed.persisted.id), null, 'GET', allowed.extra(false));
+  assert.equal(remote.status, 403); assert.equal(remote.payload.code, 'agentLocalOnly'); assert.equal(allowed.calls.read, 0);
+  const local = await requestCallback(allowed, '/api/log?id=' + encodeURIComponent(allowed.persisted.id), null, 'GET', allowed.extra(true));
+  assert.equal(local.status, 200); assert.equal(local.payload.items.length, 1);
+  const off = await requestCallback(denied, '/api/log?id=' + encodeURIComponent(denied.persisted.id), null, 'GET', denied.extra(true));
+  assert.equal(off.status, 403); assert.equal(off.payload.code, 'agentReadOnly'); assert.equal(denied.calls.read, 0);
+});
+
+test('a pinned saved session is shown to this computer only: not streamed to remote pages, not polled, not recorded', () => {
+  const start = serverSource.indexOf('const clients = new Set();');
+  const end = serverSource.indexOf('/* ---------- replay log', start);
+  assert.ok(start > 0 && end > start, 'SSE boundary exists');
+  const recorded = [], writes = { local: [], remote: [] };
+  const out = vm.runInNewContext(serverSource.slice(start, end) + '\n;({ clients, backlog, broadcast })', {
+    RECORDED: new Set(['sess', 'gone']), record: (m) => recorded.push(m.k),
+  }, { timeout: 1000 });
+  out.clients.add({ local: true, res: { write: (d) => writes.local.push(d) } });
+  out.clients.add({ local: false, res: { write: (d) => writes.remote.push(d) } });
+  out.broadcast({ k: 'sess', s: { id: 'omp:pinned' } }, true);
+  out.broadcast({ k: 'gone', id: 'omp:pinned' }, true);
+  assert.equal(writes.local.length, 2); assert.deepEqual(writes.remote, []);
+  assert.deepEqual(recorded, [], 'local-only messages never reach the replay log');
+  assert.deepEqual(plain(out.backlog.map(([, , only]) => only)), [true, true], 'the poll route can tell them apart');
+  out.broadcast({ k: 'sess', s: { id: 'claude' } });
+  assert.equal(writes.local.length, 3); assert.equal(writes.remote.length, 1);
+  assert.deepEqual(recorded, ['sess'], 'ordinary messages are still recorded and sent to everyone');
+  // the polling and snapshot paths use the same flag
+  assert.match(serverSource, /backlog\.filter\(\(\[n, , only\]\) => n > since && \(local \|\| !only\)\)/);
+  assert.match(serverSource, /sessions: local \? agents\.list\(\) : agents\.list\(\)\.filter\(\(s\) => !s\.persistedOnly\)/);
+  assert.match(serverSource, /sessions: agents\.list\(\)\.filter\(\(s\) => !s\.persistedOnly\), feed: feed\.slice\(-40\)/);
 });

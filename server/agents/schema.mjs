@@ -29,6 +29,10 @@ export function capabilitiesFor(kind) {
   return kind === 'claude' ? CLAUDE_CAPABILITIES : READ_ONLY_CAPABILITIES;
 }
 
+// OMP stays read-only; only the server's validated source config may open persisted conversation reads.
+const OMP_CONVERSATION_CAPABILITIES = Object.freeze({ ...READ_ONLY_CAPABILITIES, readConversation: true });
+export const ompCapabilities = (conversation) => conversation === true ? OMP_CONVERSATION_CAPABILITIES : READ_ONLY_CAPABILITIES;
+
 export function hasClaudeCapability(session, capability) {
   if (!CONTROL_KEYS.has(capability) || agentKindOf(session) !== 'claude' || reservedAgentId(session.id)) return false;
   if (!Object.hasOwn(session, 'capabilities')) return !Object.hasOwn(session, 'agentKind');
