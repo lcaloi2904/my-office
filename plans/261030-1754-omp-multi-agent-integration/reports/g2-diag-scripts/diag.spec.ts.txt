@@ -1,0 +1,62 @@
+// Diagnostic only: mirrors the "panels open and close" steps verbatim, with timing + rendering probes.
+// Not an acceptance test: the generous test timeout exists so the slow steps can be measured, not hidden.
+import { test, expect, type Page } from '@playwright/test';
+
+const T0 = Date.now();
+const log = (m: string) => console.log(`[diag +${((Date.now() - T0) / 1000).toFixed(1)}s] ${m}`);
+
+async function probe(page: Page, label: string) {
+  const r = await page.evaluate(() => {
+    const raf = (window as any).__raf as number[], long = (window as any).__long as number[][];
+    const a = raf.slice(); a.sort((x, y) => x - y);
+    const out = { frames: raf.length, rafMedian: a[Math.floor(a.length / 2)] ?? 0, rafMax: a[a.length - 1] ?? 0, long: long.length, longMax: Math.max(0, ...long.map((l) => l[1])), longSum: long.reduce((s, l) => s + l[1], 0) };
+    (window as any).__raf.length = 0; (window as any).__long.length = 0;
+    return out;
+  });
+  log(`${label}: rAF frames=${r.frames} median=${r.rafMedian}ms max=${r.rafMax}ms | longtasks n=${r.long} max=${r.longMax}ms sum=${r.longSum}ms`);
+}
+async function step(page: Page, label: string, fn: () => Promise<unknown>) {
+  const t = Date.now(); await fn(); log(`STEP ${label}: ${Date.now() - t}ms`); await probe(page, `  after ${label}`);
+}
+
+test('diag: panels steps (verbatim bodies) with probes', async ({ page }) => {
+  test.setTimeout(Number(process.env.DIAG_TIMEOUT) || 300_000);
+  await page.addInitScript(() => {
+    try { localStorage.setItem('office-tips', 'seen'); } catch { /* */ }
+    try { localStorage.setItem('office-quality', 'low'); } catch { /* */ }
+    const w = window as any; w.__raf = []; w.__long = [];
+    try { new PerformanceObserver((l) => { for (const e of l.getEntries()) w.__long.push([Math.round(e.startTime), Math.round(e.duration)]); }).observe({ entryTypes: ['longtask'] }); } catch { /* */ }
+    let last = performance.now();
+    (function f(t: number) { if (w.__raf.length < 20000) w.__raf.push(Math.round(t - last)); last = t; requestAnimationFrame(f); })(last);
+  });
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  page.on('console', (m) => { if (m.type() === 'error' && !/favicon|WebGL/i.test(m.text())) errors.push(m.text()); });
+
+  await step(page, 'goto', () => page.goto('/?demo&layout=pro'));
+  const gl = await page.evaluate(() => {
+    const c = document.createElement('canvas'); const g = c.getContext('webgl2') || c.getContext('webgl');
+    if (!g) return 'no webgl';
+    const e = g.getExtension('WEBGL_debug_renderer_info');
+    return e ? `${g.getParameter(e.UNMASKED_VENDOR_WEBGL)} | ${g.getParameter(e.UNMASKED_RENDERER_WEBGL)}` : 'no debug ext';
+  });
+  log(`WEBGL: ${gl}`);
+  log(`UA: ${await page.evaluate(() => navigator.userAgent)}`);
+  await step(page, 'rail visible', () => expect(page.locator('#rail-list .ri').first()).toBeVisible({ timeout: 60_000 }));
+  await page.waitForTimeout(3000); await probe(page, 'idle 3s (no interaction)');
+  await step(page, 'click #btn-look', () => page.click('#btn-look'));
+  await step(page, 'pop-look visible', () => expect(page.locator('#pop-look')).toBeVisible());
+  await step(page, 'Escape', () => page.keyboard.press('Escape'));
+  await step(page, 'click #btn-mac', () => page.click('#btn-mac'));
+  await step(page, 'dr-mac visible', () => expect(page.locator('#dr-mac')).toBeVisible());
+  await step(page, 'click #dr-mac [data-close]', () => page.click('#dr-mac [data-close]'));
+  await step(page, 'dr-mac hidden', () => expect(page.locator('#dr-mac')).toBeHidden());
+  await step(page, 'click #tl-open', () => page.click('#tl-open'));
+  await step(page, 'tl visible', () => expect(page.locator('#tl')).toBeVisible());
+  await step(page, 'click #tl-close', () => page.click('#tl-close'));
+  await step(page, 'click #btn-lite', () => page.click('#btn-lite'));
+  await step(page, 'lite visible', () => expect(page.locator('#lite')).toBeVisible());
+  await step(page, 'click #btn-lite (2)', () => page.click('#btn-lite'));
+  log(`errors: ${JSON.stringify(errors)}`);
+  expect(errors).toEqual([]);
+});

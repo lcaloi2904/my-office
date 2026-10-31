@@ -1,0 +1,22 @@
+param([string]$Name, [string]$Args1 = '', [string]$Channel = '', [int]$TimeoutMs = 120000, [string]$Config = 'test-results-win-diag-src/playwright.diag.config.ts', [string]$Extra = '', [string]$Cwd = 'E:\vide-code\my-office', [string]$Dist = '.next-win-g2')
+Set-Location $Cwd
+$root = "E:\vide-code\my-office\test-results-win-$Name"; New-Item -ItemType Directory -Force "$root\home\.claude" | Out-Null
+$env:HOME="$root\home"; $env:USERPROFILE="$root\home"; $env:CLAUDE_CONFIG_DIR="$root\home\.claude"
+$env:PLAYWRIGHT_BROWSERS_PATH="$env:LOCALAPPDATA\ms-playwright"
+$env:OFFICE_OMP='off'; $env:OFFICE_USAGE='0'; $env:OFFICE_CI='0'; $env:OFFICE_TRANSLATE='0'; $env:NEXT_TELEMETRY_DISABLED='1'
+$env:OFFICE_DIST_DIR=$Dist; $env:E2E_OUT=$root; $env:E2E_PORT='4399'; $env:OFFICE_DATA_DIR="$root\office-data"; $env:FORCE_COLOR='0'
+if ($Args1) { $env:DIAG_ARGS = $Args1 } else { Remove-Item Env:DIAG_ARGS -ErrorAction SilentlyContinue }
+if ($Channel) { $env:DIAG_CHANNEL = $Channel } else { Remove-Item Env:DIAG_CHANNEL -ErrorAction SilentlyContinue }
+$env:DIAG_TIMEOUT = "$TimeoutMs"
+$argv = @('E:\vide-code\my-office\node_modules\@playwright\test\cli.js','test','-c',$Config,'--workers=1','--retries=0','--reporter=line','--trace=off') + @($Extra -split ' ' | Where-Object { $_ })
+$sw = [Diagnostics.Stopwatch]::StartNew()
+$p = Start-Process node -ArgumentList $argv -NoNewWindow -PassThru -RedirectStandardOutput "$root\run.out.log" -RedirectStandardError "$root\run.err.log"
+$prev=@{}; $samples=@()
+while(-not $p.HasExited){
+  Start-Sleep 4
+  $procs = Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'ms-playwright' -and $_.Name -match 'chrome|headless' }
+  foreach($x in $procs){ $cpu=(Get-Process -Id $x.ProcessId -ErrorAction SilentlyContinue).CPU; if($null -ne $cpu){ $type = if($x.CommandLine -match '--type=([a-z-]+)'){$Matches[1]}else{'browser'}; $d = if($prev[$x.ProcessId]){ ($cpu-$prev[$x.ProcessId])/4*100 }else{0}; $prev[$x.ProcessId]=$cpu; $samples += "{0:HH:mm:ss} pid={1} {2} cpu%={3:N0}" -f (Get-Date),$x.ProcessId,$type,$d } }
+}
+$samples | Out-File "$root\cpu-samples.log"
+"exit=$($p.ExitCode) wall=$([int]$sw.Elapsed.TotalSeconds)s"
+Select-String -Path "$root\run.out.log","$root\run.err.log" -Pattern '\[diag|passed|failed|Error:' | ForEach-Object { ($_.Line -replace '\x1b\[[0-9;]*[A-Za-z]','') }

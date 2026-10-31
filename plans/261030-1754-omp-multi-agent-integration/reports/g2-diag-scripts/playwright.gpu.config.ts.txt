@@ -1,0 +1,17 @@
+// Local wrapper (ignored by git): the repo's config unchanged, only the browser is told to use the GPU (ANGLE/D3D11).
+// testDir stays tests/e2e, so the acceptance tests run verbatim: same viewport, 90s test / 30s expect timeouts.
+import path from 'node:path';
+import base from '../playwright.config';
+
+const repo = path.resolve(import.meta.dirname, '..');
+export default {
+  ...base,
+  testDir: path.join(repo, 'tests/e2e'),
+  workers: 1,
+  retries: 0,
+  webServer: { ...(base as any).webServer, cwd: repo },
+  use: {
+    ...(base as any).use,
+    launchOptions: { args: (process.env.DIAG_ARGS || '--use-angle=d3d11').split(' ') },
+  },
+};

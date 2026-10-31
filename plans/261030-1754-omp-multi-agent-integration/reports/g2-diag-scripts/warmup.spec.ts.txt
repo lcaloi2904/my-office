@@ -1,0 +1,19 @@
+// Diagnostic only: time from page.goto() to the first rail row, over consecutive loads in ONE fresh browser (cold -> warm).
+import { test } from '@playwright/test';
+
+test('diag: cold start vs warm loads', async ({ browser }) => {
+  test.setTimeout(Number(process.env.DIAG_TIMEOUT) || 600_000);
+  const n = Number(process.env.DIAG_LOADS) || 6;
+  for (let i = 0; i < n; i++) {
+    const ctx = await browser.newContext({ baseURL: `http://127.0.0.1:${process.env.E2E_PORT || 4399}`, viewport: { width: 1440, height: 900 } });
+    const page = await ctx.newPage();
+    await page.addInitScript(() => { try { localStorage.setItem('office-tips', 'seen'); } catch { /* */ } });
+    const t0 = Date.now();
+    await page.goto('/?demo&layout=pro');
+    const tLoad = Date.now() - t0;
+    let tRail = -1;
+    try { await page.locator('#rail-list .ri').first().waitFor({ state: 'visible', timeout: 150_000 }); tRail = Date.now() - t0; } catch { /* */ }
+    console.log(`[warm] load #${i + 1}: goto=${tLoad}ms firstRailRow=${tRail}ms (${tRail > 20000 ? 'OVER the 20s session-test budget' : 'within 20s'})`);
+    await ctx.close();
+  }
+});

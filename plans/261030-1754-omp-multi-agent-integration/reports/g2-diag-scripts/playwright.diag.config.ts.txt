@@ -1,0 +1,17 @@
+// Diagnostic-only config (ignored by git): same server/viewport/timeouts as the repo config, own testDir.
+import path from 'node:path';
+import base from '../playwright.config';
+
+const repo = path.resolve(import.meta.dirname, '..');
+export default {
+  ...base,
+  testDir: import.meta.dirname,
+  workers: 1,
+  retries: 0,
+  webServer: { ...(base as any).webServer, cwd: repo },
+  use: {
+    ...(base as any).use,
+    launchOptions: { ...(process.env.DIAG_ARGS ? { args: process.env.DIAG_ARGS.split(' ') } : {}) },
+    ...(process.env.DIAG_CHANNEL ? { channel: process.env.DIAG_CHANNEL } : {}),
+  },
+};

@@ -1,0 +1,26 @@
+// Diagnostic only: where does one office frame spend its time? Uses the app's own ?debug hooks (core/loop.js frameTimes).
+import { test } from '@playwright/test';
+
+test('diag: frame cost breakdown (?debug hooks)', async ({ page }) => {
+  test.setTimeout(Number(process.env.DIAG_TIMEOUT) || 120_000);
+  await page.addInitScript(() => {
+    try { localStorage.setItem('office-tips', 'seen'); } catch { /* */ }
+    try { localStorage.setItem('office-quality', 'low'); } catch { /* */ }
+  });
+  await page.goto('/?demo&debug&layout=pro');
+  await page.waitForFunction(() => !!(window as any).__office?.frameTimes, null, { timeout: 60_000 });
+  const gl = await page.evaluate(() => {
+    const r = (window as any).__office.renderer; const g = r.getContext(); const e = g.getExtension('WEBGL_debug_renderer_info');
+    return { renderer: e ? g.getParameter(e.UNMASKED_RENDERER_WEBGL) : '?', pixelRatio: r.getPixelRatio(), size: [r.domElement.width, r.domElement.height], shadows: r.shadowMap.enabled };
+  });
+  console.log('[frame] GL', JSON.stringify(gl));
+  const snap = () => page.evaluate(() => { const o = (window as any).__office; return { ...o.frameTimes, info: { calls: o.renderer.info.render.calls, tris: o.renderer.info.render.triangles, programs: o.renderer.info.programs?.length, geoms: o.renderer.info.memory.geometries, tex: o.renderer.info.memory.textures }, t: performance.now() }; });
+  await page.waitForTimeout(5000);
+  const a = await snap();
+  await page.waitForTimeout(Number(process.env.DIAG_WINDOW) || 20_000);
+  const b = await snap();
+  const frames = b.frames - a.frames, secs = (b.t - a.t) / 1000;
+  const per = (k: string) => ((b as any)[k] - (a as any)[k]) / Math.max(1, frames);
+  console.log(`[frame] window=${secs.toFixed(1)}s frames=${frames} fps=${(frames / secs).toFixed(2)} | per-frame ms: people=${per('people').toFixed(1)} life=${per('life').toFixed(1)} street=${per('street').toFixed(1)} world=${per('world').toFixed(1)} draw=${per('draw').toFixed(1)} labels=${per('labels').toFixed(1)}`);
+  console.log(`[frame] renderer.info: ${JSON.stringify(b.info)}`);
+});

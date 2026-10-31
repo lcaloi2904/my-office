@@ -27,10 +27,31 @@ Claude Code ──hooks (curl, loopback only)──▶ server/index.mjs ──SS
 | `git.mjs` | Git per session folder (branch, uncommitted files, commits and pushes by watching HEAD and the upstream) and the latest CI run through `gh`. |
 | `wrapped.mjs` | The weekly recap: totals over the last seven replay logs. |
 | `tasks.mjs` | "Give work": a `claude -p` run on this Mac from the chat or a phone, carrying on a tagged conversation (`--resume --fork-session`) or new in a known folder; caps, photos, its answer back to the chat. |
+| `agents/` | The seam between the server and agent harnesses: a registry that unions adapters (`registry.mjs`), the public projection and capability rules (`projection.mjs`, `schema.mjs`), the Claude wrapper (`claude/compat.mjs`) and the optional file-only OMP adapter (`omp/`, see below). |
 | `prefs.mjs` | The office's language (`data/prefs.json`, `OFFICE_LANG`) and the server's translator `tr()`. |
 
 `bin/cli.mjs` installs the hooks (curl on macOS and Linux, `hooks/send.mjs` on Windows) and, through `bin/service.mjs`, the
 background service: launchd, a systemd user service, or a script in the Windows Startup folder.
+
+### Optional: OMP history (file-only, off by default)
+
+`OFFICE_OMP=files` plus `OFFICE_OMP_CONFIG=<absolute path to a JSON file>` lets the office list saved OMP session files. Without both,
+nothing is read: no home or profile discovery, no OMP process, no SDK. `hybrid` is not implemented and stays off.
+
+The config is `{ "version": 1, "sources": [{ "id", "root", "pathStyle": "win32"|"posix", "conversation": false, "projectMappings": [{ "from", "projectId", "worktreeId" }] }], "limits": {…} }`.
+Each `root` is an absolute folder with no symlink or junction in its path; files are opened read-only and only inside it. `limits` can
+only lower the defaults in `server/agents/omp/paths.mjs`. `conversation` is off unless set to `true` for that source.
+
+- Saved sessions are *history*, never presumed running. `GET /api/omp/catalog` (this computer only) pages through them with
+  metadata only; pinning one (`POST /api/omp/pin { id, on }`, public ids only, this computer only) makes it a persisted-only actor
+  with a "History · not live" label. At most 8 pins; they are kept in `data/omp-pins.json`. A pinned session is
+  shown to this computer's own pages only: it is not streamed to phone or tunnel pages, left out of their snapshots and
+  `/api/live` polls, and never written to the replay log (`broadcast(msg, true)` marks such messages local-only).
+- Pinned files are polled one at a time with an incremental reader (`omp/reader.mjs`); a rewritten file is rebuilt, never double-counted.
+- A pin's conversation is read on demand by `/api/log` (this computer only) and only for sources with `conversation: true`.
+- Nested child transcripts are counted as historical candidates only; subagent, advisor and tombstone semantics are not interpreted.
+- Controls (open, close, account, remote, tasks) stay Claude-only. Tests: `tests/unit/omp-*.test.mjs`; browser smoke:
+  `playwright test -c playwright.omp.config.ts` (synthetic folders from `tests/e2e/omp-fixture.mjs`).
 
 Runtime state lives in `data/` (git-ignored): the access token, phone PIN, replay logs (7 days), totals, caches.
 
@@ -148,6 +169,7 @@ engine switches to demo mode and talks to no API.
 | `ui/group-chat.js` | 165 | The company group chat, on the page (the window: group-chat-view.js; the people and what they say: src/shared/chat-engine.js). |
 | `ui/icons.js` | 85 | Stroke icons (24 px grid) and the icon helper. |
 | `ui/image-view.js` | 28 | Images in the feed: a session that read, wrote or edited an image gets a thumbnail on that line (activity.js), and a click opens it here, large, over the office (the server serves it by id: GET /api/image). |
+| `ui/omp-history.js` | 99 | OMP files mode: the history picker (a dialog listing saved sessions) and the pin / unpin calls. |
 | `ui/lite.js` | 47 | List mode: the sessions as cards, no 3D. |
 | `ui/look-switch.js` | 19 | Switching the character look. |
 | `ui/mac-drawer.js` | 673 | The Mac drawer: memory, CPU, dev servers, plan limits, cleanup. |

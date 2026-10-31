@@ -1,0 +1,12 @@
+// Local wrapper for the exported HEAD tree (test-results-win-head/src): same options as the repo config, own root.
+import path from 'node:path';
+const root = process.env.DIAG_ROOT!;
+const base = (await import(path.join(root, 'playwright.config.ts'))).default;
+export default {
+  ...base,
+  testDir: process.env.DIAG_TESTDIR || path.join(root, 'tests/e2e'),
+  workers: 1,
+  retries: 0,
+  webServer: { ...base.webServer, cwd: root },
+  use: { ...base.use, launchOptions: { args: process.env.DIAG_ARGS ? process.env.DIAG_ARGS.split(' ') : [] } },
+};
