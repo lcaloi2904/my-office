@@ -346,3 +346,40 @@ body:has(.drawer:not([hidden])) .zc-peek { display: none; }
 .zc-md-table table { border-collapse: collapse; font-size: 13px; }
 .zc-md-table th, .zc-md-table td { padding: 4px 8px; border: 1px solid var(--zc-line); text-align: left; vertical-align: top; }
 .zc-md-table th { background: #F4F6F9; font-weight: 600; }
+
+.zc-work-acts { display: flex; flex-wrap: wrap; gap: 6px; }
+.zc .zc-work-btn { all: unset; padding: 6px 14px; border-radius: 999px; font-size: 13px; font-weight: 600; cursor: pointer; }
+.zc .zc-work-btn:disabled { opacity: .5; cursor: default; }
+.zc .zc-work-btn.is-ok { background: var(--zc-blue); color: #fff; }
+.zc .zc-work-btn.is-no { background: #FDECEC; color: #C31818; }
+.zc .zc-work-btn.is-stop { background: #F1F3F6; color: var(--zc-ink); margin-left: auto; }
+
+/* one conversation on its own screen (over the group's messages) */
+.zc-conv { flex: 1; min-height: 0; display: flex; flex-direction: column; background: var(--zc-ground); }
+.zc-conv-h { flex: none; display: flex; align-items: center; gap: 10px; padding: 8px 10px; background: #fff; border-bottom: 1px solid var(--zc-line); }
+.zc-conv-h .zc-ib { width: 34px; height: 34px; }
+.zc-conv-h .zc-ib .ic { transform: rotate(180deg); }
+.zc-conv-list { flex: 1; min-height: 0; overflow-y: auto; padding: 10px 10px 14px; display: flex; flex-direction: column; gap: 6px; }
+.zc-conv-row .zc-bub { max-width: 86%; }
+.zc-conv-steps { align-self: flex-start; margin-left: 40px; padding: 4px 8px; border-left: 2px solid #C9D3E0; color: var(--zc-grey); font-size: 12px; line-height: 1.5; display: grid; gap: 1px; max-width: 86%; }
+.zc-conv-steps > div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.zc-conv-sum { padding: 8px 10px; border-radius: 8px; background: #fff; font-size: 12.5px; white-space: pre-wrap; max-height: 40vh; overflow-y: auto; }
+.zc-sys.is-click, .zc-av-slot.is-click { cursor: pointer; }
+.zc-to-conv { width: 30px; height: 30px; font-size: 15px; }
+.zc-to-see { flex: none; padding: 4px 6px; border-radius: 8px; font-size: 16px; }
+.zc-to-see:hover { background: var(--zc-hover); }
+/* quick commands over the input; photos waiting to go */
+.zc-quick { flex: none; display: flex; gap: 6px; padding: 6px 10px 0; overflow-x: auto; background: #fff; scrollbar-width: none; }
+.zc-quick::-webkit-scrollbar { display: none; }
+.zc .zc-quick-c { all: unset; flex: none; padding: 5px 11px; border-radius: 999px; background: #F1F3F6; color: var(--zc-ink); font-size: 13px; font-weight: 500; white-space: nowrap; cursor: pointer; }
+.zc .zc-quick-c:hover { background: #E5F1FF; color: var(--zc-blue); }
+.zc .zc-quick-c.is-edit { color: var(--zc-grey); }
+.zc .zc-quick-c.is-save { background: var(--zc-blue); color: #fff; }
+.zc-quick-ed { display: grid; gap: 8px; }
+.zc-quick-row { display: grid; grid-template-columns: 1fr auto; gap: 4px; padding: 8px; border-radius: 8px; background: #F7F8FA; }
+.zc-quick-row textarea { grid-column: 1 / -1; resize: vertical; font: inherit; font-size: 13px; }
+.zc-quick-acts { display: flex; gap: 6px; justify-content: flex-end; }
+.zc-attach { flex: none; display: flex; gap: 6px; padding: 6px 10px 0; background: #fff; }
+.zc-attach-t { position: relative; width: 54px; height: 54px; border-radius: 8px; overflow: hidden; }
+.zc-attach-t img { width: 100%; height: 100%; object-fit: cover; }
+.zc .zc-attach-t button { all: unset; position: absolute; top: 2px; right: 2px; width: 18px; height: 18px; display: grid; place-items: center; border-radius: 50%; background: rgba(0, 0, 0, .55); color: #fff; font-size: 10px; cursor: pointer; }

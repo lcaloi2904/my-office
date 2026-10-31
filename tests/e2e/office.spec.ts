@@ -430,6 +430,20 @@ test('giving Claude work from the chat: a folder or a tagged conversation, the r
   await expect(zc.locator('.zc-work.is-done').first()).toBeVisible({ timeout: 20_000 });
   await zc.locator('.zc-work.is-done .zc-readmore').first().click();
   await expect(zc.locator('.zc-work-steps').first()).toContainText('README.md');
+  // its conversation on a screen of its own: what was said (Claude's laid out) and the steps, from its transcript
+  fs.writeFileSync(base.transcript_path, [
+    { type: 'user', timestamp: new Date().toISOString(), message: { content: 'fix the header please' } },
+    { type: 'assistant', timestamp: new Date().toISOString(), message: { content: [{ type: 'tool_use', name: 'Read', input: { file_path: '/e2e/Header.tsx' } }] } },
+    { type: 'assistant', timestamp: new Date().toISOString(), message: { content: [{ type: 'text', text: '**Fixed** the header:\n- smaller logo' }] } },
+  ].map((x) => JSON.stringify(x)).join('\n') + '\n');
+  await zc.locator('.zc-to-chip').click();
+  await zc.locator(`.zc-to-pick .zc-to-o[data-sid="${base.session_id}"] .zc-to-see`).click();
+  const convo = zc.locator('.zc-conv');
+  await expect(convo.locator('.zc-conv-row.is-mine')).toContainText('fix the header please', { timeout: 20_000 });
+  await expect(convo.locator('.zc-md b')).toHaveText('Fixed');
+  await expect(convo.locator('.zc-conv-steps')).toBeVisible();
+  await convo.locator('.zc-conv-h .zc-ib').click();
+  await expect(convo).toBeHidden();
   // writing to that conversation ("To", over the input): that very conversation carried on (no branch), the answer from
   // its person, marked Claude; and again
   const asked = () => { try { return fs.readFileSync(path.join(HOME_DIR, '.fake-claude.log'), 'utf8'); } catch { return ''; } };
@@ -471,6 +485,32 @@ test('giving Claude work from the chat: a folder or a tagged conversation, the r
   await expect(zc.locator('.zc-md').last()).toContainText('📸');
   await expect(zc.locator('.zc-photo img').last()).toBeVisible({ timeout: 60_000 });
   expect(asked().trim().split('\n').pop()).toContain('--append-system-prompt');
+  // stopped from its card, on purpose: "Stopped", not an error
+  await expect.poll(claudeSaid, { timeout: 30_000 }).toBeGreaterThan(5);
+  await zc.locator('.zc-in').fill('take it slowly');
+  await zc.locator('.zc-in').press('Enter');
+  await zc.locator('.zc-work.is-work .zc-work-btn.is-stop').last().click({ timeout: 20_000 });
+  await expect(zc.locator('.zc-work.is-stopped').last()).toBeVisible({ timeout: 20_000 });
+  await expect(zc.locator('.zc-row', { hasText: 'Stopped, as you asked' }).last()).toBeVisible({ timeout: 20_000 });
+  // quick commands: a tap fills the input; ✎ changes them (kept on the Mac, for the phones too)
+  await zc.locator('.zc-quick .zc-quick-c').first().click();
+  await expect(zc.locator('.zc-in')).toHaveValue(/tests/);
+  await zc.locator('.zc-quick .zc-quick-c.is-edit').click();
+  await zc.locator('.zc-quick-ed .zc-quick-c', { hasText: 'Add' }).click();
+  await zc.locator('.zc-quick-row input').last().fill('Lint');
+  await zc.locator('.zc-quick-row textarea').last().fill('Run the linter.');
+  await zc.locator('.zc-quick-ed .zc-quick-c.is-save').click();
+  await expect(zc.locator('.zc-quick .zc-quick-c', { hasText: 'Lint' })).toBeVisible();
+  expect((await (await request.get('/api/quick')).json()).list.at(-1).prompt).toBe('Run the linter.');
+  // a photo with what you write: from this device, made smaller, read by Claude from its path
+  const chooser = page.waitForEvent('filechooser');
+  await zc.locator('.zc-bar .zc-photo-btn, .zc-toolbar .zc-photo-btn').first().click();
+  await (await chooser).setFiles({ name: 'shot.png', mimeType: 'image/png', buffer: fs.readFileSync(path.resolve('public/icon-512.png')) });
+  await expect(zc.locator('.zc-attach-t')).toHaveCount(1);
+  await zc.locator('.zc-in').fill('what is in this picture');
+  await zc.locator('.zc-in').press('Enter');
+  await expect.poll(() => asked().trim().split('\n').pop(), { timeout: 20_000 }).toContain('task-images');   // (its path, under "Attached image")
+  expect(asked()).toContain('Attached image');
   await zc.locator('.zc-to-x').click();
   await expect(zc.locator('.zc-to-chip')).not.toHaveClass(/is-on/);
   // from a phone (through the tunnel's listener, with the PIN): refused until the Mac allows it

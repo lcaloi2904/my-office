@@ -15,14 +15,14 @@ import { icon } from './icons.js';
 import { avatar } from './chat-avatars.js';
 import { photoOn } from './photo.js';
 import { dn, sessions } from '../people/workers.js';
-import { openTaskSheet, dictate } from './task-sheet.js';
+import { openTaskSheet, dictate, shrink } from './task-sheet.js';
 import { toast } from './activity.js';
 import { TOKEN } from '../net/live.js';
 import { pushOn, pushState, pushTest } from './notify.js';
 import { REACTIONS, byId, chat, chatPoll, chatSend, chatSendPhoto, onChat, people, react, recall, rsvp, setOpen, vote, who } from './group-chat.js';
 import { t as tr, locale } from '../../i18n/index.js';
 
-let root, body, typingEl, pinEl, newBtn, input, bar, stickersEl, membersEl, mentionEl, moreEl, replyEl, headSub, headAv, toEl, pickEl;
+let root, body, typingEl, pinEl, newBtn, input, bar, stickersEl, membersEl, mentionEl, moreEl, replyEl, headSub, headAv, toEl, pickEl, quickEl, attachEl, convEl;
 let replyTo = null, readTo = null, stickTab = 'sticker';   // the message you answer; the last one read when the window shut; the panel's tab
 const RUN_MS = 3 * 60e3, GAP_MS = 20 * 60e3;   // one run of bubbles: the same person within 3 minutes; a time line after 20 quiet minutes
 const seeVotes = new Set();   // polls whose voters are listed
@@ -205,11 +205,24 @@ const clock = (ms) => { const s = Math.max(0, Math.round(ms / 1000)); return s <
 function workCard(m) {
   const w = m.work || {}, state = w.state || 'work', live = state === 'work' || state === 'wait';
   const box = el('div', `zc-work is-${state}`), head = el('div', 'zc-work-h');
-  head.append(el('i', 'zc-work-ic', state === 'done' ? '✅' : state === 'fail' ? '⚠️' : state === 'wait' ? '⏳' : ''), el('b', null, tr(`chat.card.${state}`)),
+  head.append(el('i', 'zc-work-ic', state === 'done' ? '✅' : state === 'fail' ? '⚠️' : state === 'stopped' ? '⏹' : state === 'wait' ? '⏳' : ''), el('b', null, tr(`chat.card.${state}`)),
     el('small', null, tr('chat.card.meta', { n: w.n || 0, took: clock((w.end || Date.now()) - (w.at || m.at)) })));
   if (live) Object.assign(head.lastChild.dataset, { at: String(w.at || m.at), n: String(w.n || 0) });   // (its clock runs on: tick())
   box.append(head);
-  if (state === 'wait' && w.ask) box.append(el('div', 'zc-work-ask', tr('chat.card.ask', { what: w.ask })));
+  if (state === 'wait' && w.ask) box.append(el('div', 'zc-work-ask', tr(w.perm ? 'chat.card.askHere' : 'chat.card.ask', { what: w.ask })));
+  // right here: allow or deny what it waits for (a risky command: deny only, as on any phone), stop it
+  if (live) {
+    const acts = el('div', 'zc-work-acts');
+    const btn = (label, cls, fn) => { const b = el('button', `zc-work-btn ${cls}`, label); b.type = 'button'; b.addEventListener('click', async (e) => { e.stopPropagation(); b.disabled = true; const r = await fn(); if (!r?.ok) { b.disabled = false; toast(r?.message || tr('drawer.unreachable'), 6000); } }); return b; };
+    const call = (url, body) => fetch(`${url}${tq()}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then((x) => x.json()).catch(() => null);
+    if (state === 'wait' && w.perm) {
+      if (!w.risky) acts.append(btn(tr('chat.card.allow'), 'is-ok', () => call('/api/perm', { id: w.perm, choice: 'allow' })));
+      acts.append(btn(tr('chat.card.deny'), 'is-no', () => call('/api/perm', { id: w.perm, choice: 'deny' })));
+    }
+    if (w.task) acts.append(btn(tr('chat.card.stop'), 'is-stop', () => call('/api/tasks/stop', { id: w.task })));
+    if (acts.children.length) box.append(acts);
+    if (state === 'wait' && w.perm && w.risky) box.append(el('small', 'zc-work-none', tr('chat.card.risky')));
+  }
   const steps = w.steps || [], all = opened.has(m.id);
   const list = el('ol', 'zc-work-steps');
   for (const st of all ? steps : live ? steps.slice(-4) : []) list.append(el('li', null, st));
@@ -231,7 +244,12 @@ function row(m, prev, nextM) {
   const run = (a, b) => a && b && a.kind !== 'sys' && a.kind !== 'poll' && a.kind !== 'remind' && a.from === b.from && Math.abs(b.at - a.at) <= RUN_MS;
   const mine = m.from === 'me', first = !run(prev, m), last = !run(m, nextM);
   const r = el('div', `zc-row${mine ? ' is-mine' : ''}${first ? ' is-first' : ''}${last ? ' is-last' : ''}`); r.dataset.id = m.id;
-  if (!mine) { const slot = el('span', 'zc-av-slot'); if (first) slot.append(avatar(faceOf(m.from, m.name), 32)); r.append(slot); }
+  if (!mine) {
+    const slot = el('span', 'zc-av-slot'); if (first || m.tag === 'claude') slot.append(avatar(faceOf(m.from, m.name), 32));
+    const s = m.tag === 'claude' && sessions.get(m.from);   // (Claude's answer: a tap on its face opens that conversation)
+    if (s?.sid) { slot.classList.add('is-click'); slot.title = tr('chat.conv.open'); slot.addEventListener('click', () => openConv({ id: s.id, sid: s.sid, name: dn(s), folder: folderOf(s) })); }
+    r.append(slot);
+  }
   const bare = !m.recalled && (m.kind === 'sticker' || m.kind === 'photo' || (m.kind === 'text' && bigEmoji(m.text)));
   const bub = el('div', `zc-bub${bare ? ' is-bare' : ''}`);
   // (Claude's answer: always named and marked, under its card too)
@@ -359,7 +377,7 @@ function setReply(m) {
 }
 function send() {
   const v = input.value; input.value = ''; syncBar(); mentionEl.hidden = true; input.style.height = '';
-  if (target && v.trim()) { sendTo(v.trim()); setReply(null); return; }
+  if (target && (v.trim() || attach.length)) { sendTo(v.trim() || tr('chat.to.photoOnly')); setReply(null); return; }
   if (v.trim()) chatSend(v, { replyTo: replyTo?.id });
   setReply(null);
   // @ a conversation: give it this as work? (one tap opens the sheet with it filled in: its folder, photos, send)
@@ -399,8 +417,115 @@ function drawTarget() {
     const x = el('button', 'zc-ib zc-to-x'); x.type = 'button'; x.title = tr('chat.to.clear'); x.append(icon('x')); x.addEventListener('click', () => setTarget(null));
     toEl.append(el('small', 'zc-to-sub', tr(target.dir ? (target.fresh ? 'chat.to.subNew' : 'chat.to.subMine') : 'chat.to.sub', { folder: target.folder })), x);
   }
-  input.placeholder = target ? tr('chat.to.placeholder', { name: target.name }) : tr(matchMedia('(max-width: 640px)').matches ? 'chat.placeholder' : 'chat.placeholderPc', { group: tr('chat.group') });
+  const narrow = matchMedia('(max-width: 640px)').matches;   // (a phone: the short one; whom it goes to is on the "To" chip just above)
+  input.placeholder = target ? tr(narrow ? 'chat.to.placeholderShort' : 'chat.to.placeholder', { name: target.name }) : tr(narrow ? 'chat.placeholder' : 'chat.placeholderPc', { group: tr('chat.group') });
   root.classList.toggle('is-to', !!target);
+  if (target?.sid) { const c = el('button', 'zc-ib zc-to-conv'); c.type = 'button'; c.title = tr('chat.conv.open'); c.append(el('span', null, '📜')); c.addEventListener('click', () => openConv(target)); toEl.insertBefore(c, toEl.querySelector('.zc-to-x')); }
+  for (const b of root.querySelectorAll('.zc-photo-btn')) b.hidden = !state.isLocal && !target;   // (to Claude: a photo from this device; to the group: a photo of the office, the Mac's)
+  drawQuick(); if (!target) { attach = []; drawAttach(); }
+}
+
+/* ---------- quick commands over the input (to a conversation or a project): a tap fills the input, ✎ changes them ----------
+   Shared by the Mac and the phones (data/quick.json); the office's own until you change them. */
+let quick = null;
+const QUICK0 = () => ['test', 'commit', 'deploy', 'today', 'errors'].map((k) => ({ label: tr(`chat.quick.${k}`), prompt: tr(`chat.quick.${k}Prompt`) }));
+async function loadQuick() { const r = await fetch(`/api/quick${tq()}`).then((x) => x.json()).catch(() => null); quick = r?.list?.length ? r.list : QUICK0(); drawQuick(); }
+function drawQuick() {
+  if (!quickEl) return;
+  quickEl.hidden = !target || !quick;
+  if (quickEl.hidden) return;
+  const chip = (label, fn, cls = '') => { const b = el('button', `zc-quick-c ${cls}`, label); b.type = 'button'; b.addEventListener('click', fn); return b; };
+  quickEl.replaceChildren(...quick.map((q) => chip(q.label, () => { input.value = q.prompt; syncBar(); input.dispatchEvent(new Event('input')); input.focus(); })),
+    chip('✎', editQuick, 'is-edit'));
+}
+function editQuick() {
+  mentionEl.hidden = moreEl.hidden = stickersEl.hidden = true;
+  const rows = el('div', 'zc-quick-ed'), list = quick.map((q) => ({ ...q }));
+  const draw = () => {
+    rows.replaceChildren(el('small', 'zc-to-h', tr('chat.quick.edit')), ...list.map((q, i) => {
+      const r = el('div', 'zc-quick-row'), l = el('input', 'zc-more-in'), p = el('textarea', 'zc-more-in'), x = el('button', 'zc-ib zc-reply-x');
+      l.value = q.label; l.maxLength = 24; l.placeholder = tr('chat.quick.label'); p.value = q.prompt; p.rows = 2; p.maxLength = 2000; p.placeholder = tr('chat.quick.prompt');
+      for (const f of [l, p]) f.addEventListener('keydown', (e) => e.stopPropagation());
+      l.addEventListener('input', () => { q.label = l.value; }); p.addEventListener('input', () => { q.prompt = p.value; });
+      x.type = 'button'; x.append(icon('x')); x.addEventListener('click', () => { list.splice(i, 1); draw(); });
+      r.append(l, x, p); return r;
+    }));
+    const acts = el('div', 'zc-quick-acts'), add = el('button', 'zc-quick-c', tr('chat.quick.add')), reset = el('button', 'zc-quick-c', tr('chat.quick.reset')), save = el('button', 'zc-quick-c is-save', tr('chat.quick.save'));
+    for (const b of [add, reset, save]) b.type = 'button';
+    add.addEventListener('click', () => { if (list.length < 12) { list.push({ label: '', prompt: '' }); draw(); } });
+    reset.addEventListener('click', () => { list.splice(0, list.length, ...QUICK0()); draw(); });
+    save.addEventListener('click', async () => {
+      const r = await fetch(`/api/quick${tq()}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ list }) }).then((x) => x.json()).catch(() => null);
+      if (!r?.ok) { toast(tr('drawer.unreachable')); return; }
+      quick = r.list.length ? r.list : QUICK0(); pickEl.hidden = true; drawQuick(); toast(tr('chat.quick.saved'));
+    });
+    acts.append(add, reset, save); rows.append(acts);
+  };
+  draw(); pickEl.replaceChildren(rows); pickEl.hidden = false;
+}
+
+/* ---------- photos with what you write to Claude: from the camera or the gallery, made smaller here ---------- */
+let attach = [];
+function drawAttach() {
+  if (!attachEl) return;
+  attachEl.hidden = !attach.length;
+  attachEl.replaceChildren(...attach.map((u, i) => { const t = el('span', 'zc-attach-t'), img = el('img'), x = el('button', null, '✕'); img.src = u; x.type = 'button'; x.addEventListener('click', () => { attach.splice(i, 1); drawAttach(); }); t.append(img, x); return t; }));
+}
+function pickPhotos() {
+  const f = el('input'); f.type = 'file'; f.accept = 'image/*'; f.multiple = true;
+  f.addEventListener('change', async () => { for (const file of [...f.files].slice(0, 4 - attach.length)) { try { attach.push(await shrink(file)); } catch { /* not an image it can read */ } } drawAttach(); input.focus(); });
+  f.click();
+}
+
+/* ---------- one conversation on its own screen: everything said in it and what Claude did, as in the Claude app, kept up to
+   date while open; what you write goes to it (server: GET /api/log, the session's transcript) ---------- */
+let conv = null;   // { id, sid, name, folder, timer, sig }
+function openConv(t) {
+  const s = sessions.get(t.id); if (!s) { toast(tr('chat.conv.gone')); return; }
+  closeConv();
+  if (target?.sid !== t.sid) setTarget({ id: t.id, sid: t.sid, name: t.name, folder: t.folder });
+  conv = { ...t, sig: '' };
+  const head = el('div', 'zc-conv-h'), back = el('button', 'zc-ib'); back.type = 'button'; back.title = tr('chat.conv.back'); back.append(icon('chevron'));
+  back.addEventListener('click', closeConv);
+  const who = el('span', 'zc-men-t'); who.append(el('b', null, t.name), el('small', null, `📁 ${t.folder}`));
+  head.append(back, avatar(faceOf(t.id, t.name), 30), who);
+  const list = el('div', 'zc-conv-list');
+  convEl.replaceChildren(head, list); convEl.hidden = false; body.hidden = true;
+  const load = async () => {
+    if (!conv || document.hidden) return;
+    const p = new URLSearchParams({ id: t.id }); if (TOKEN) p.set('k', TOKEN);
+    const r = await fetch(`/api/log?${p}`).then((x) => x.json()).catch(() => null);
+    if (!conv || !r?.items) return;
+    const sig = `${r.items.length}:${r.items.at(-1)?.ts}:${r.items.at(-1)?.text?.length || 0}`; if (sig === conv.sig) return; conv.sig = sig;
+    const atEnd = list.scrollHeight - list.scrollTop - list.clientHeight < 60;
+    list.replaceChildren(...convItems(r.items));
+    if (atEnd || !list.dataset.seen) { list.scrollTop = list.scrollHeight; list.dataset.seen = '1'; }
+  };
+  load(); conv.timer = setInterval(load, 5000);
+}
+function closeConv() { if (!conv) return; clearInterval(conv.timer); conv = null; convEl.hidden = true; convEl.replaceChildren(); body.hidden = false; body.scrollTop = body.scrollHeight; }
+// the transcript's items as the conversation: yours on the right, Claude's (laid out) on the left, its steps as small lines
+const STEP_IC = { read: '📖', grep: '🔍', glob: '🔍', edit: '✏️', write: '📝', bash: '▶', cmd: '▶', test: '🧪', web: '🌐', fetch: '🌐', search: '🌐', agent: '🤖', mcp: '🔌', plan: '📋', skill: '📚', todo: '☑️' };
+function convItems(items) {
+  const out = []; let steps = null;
+  for (const it of items) {
+    if (it.role === 'tool') {
+      if (!steps) { steps = el('div', 'zc-conv-steps'); out.push(steps); }
+      steps.append(el('div', null, `${STEP_IC[it.type] || '⚙️'} ${it.label}${it.desc ? ` · ${it.desc}` : ''}`));
+      continue;
+    }
+    steps = null;
+    if (it.role === 'note' || it.role === 'summary') {
+      const n = el('div', 'zc-sys', it.role === 'summary' ? tr('chat.conv.summary') : it.text);
+      if (it.role === 'summary') { n.classList.add('is-click'); n.addEventListener('click', () => { n.replaceWith(Object.assign(el('div', 'zc-conv-sum'), { textContent: it.text })); }); }
+      out.push(n); continue;
+    }
+    const mine = it.role === 'user', r = el('div', `zc-row zc-conv-row${mine ? ' is-mine' : ''} is-first is-last`), b = el('div', 'zc-bub'), txt = el('span', 'zc-text');
+    if (mine) txt.textContent = it.text + (it.imgs ? `  🖼×${it.imgs}` : ''); else { txt.classList.add('zc-md'); txt.append(md(it.text)); }
+    if (!mine) r.append(el('span', 'zc-av-slot'));
+    b.append(txt, el('span', 'zc-time', it.ts ? fmtTime(it.ts) : '')); r.append(b); out.push(r);
+  }
+  return out;
 }
 // the list: the group, then each conversation open now (its folder, what it's doing)
 async function openPick() {
@@ -421,7 +546,10 @@ async function openPick() {
   for (const s of list) {
     const folder = s.dir.split('/').slice(-2).join('/'), st = tr(s.status === 'rest' ? 'chat.memberRest' : s.status === 'wait' ? 'chat.memberWait' : 'chat.memberWork');
     const o = opt(avatar(faceOf(s.id, s.name), 30), s.name, `📁 ${folder} · ${st}`, target?.sid === s.sid, () => { setTarget({ id: s.id, sid: s.sid, name: s.name, folder }); input.focus(); }, r && !r.allowed);
-    o.dataset.sid = s.sid; items.push(o);
+    o.dataset.sid = s.sid;
+    const see = el('span', 'zc-to-see', '📜'); see.title = tr('chat.conv.open');
+    see.addEventListener('click', (e) => { e.stopPropagation(); pickEl.hidden = true; openConv({ id: s.id, sid: s.sid, name: s.name, folder }); });
+    o.append(see); items.push(o);
   }
   // a new conversation in a project (the folders sessions have worked in, the latest first): Claude starts fresh there
   if (r?.projects?.length) {
@@ -435,9 +563,12 @@ async function openPick() {
   pickEl.replaceChildren(...items);
 }
 async function sendTo(text) {
-  const to = target, body = to.dir ? { dir: to.dir, text, chat: true, fresh: !!to.fresh } : { sid: to.sid, text, chat: true };
+  const to = target, images = attach.slice(), body = to.dir ? { dir: to.dir, text, images, chat: true, fresh: !!to.fresh } : { sid: to.sid, text, images, chat: true };
+  attach = []; drawAttach();
   const r = await fetch(`/api/tasks${tq()}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then((x) => x.json()).catch(() => null);
+  if (!r?.ok && images.length) { attach = images; drawAttach(); }   // (not sent: the photos stay)
   if (r?.ok) {
+    if (conv) setTimeout(() => { if (conv) conv.sig = ''; }, 1500);   // (the conversation screen: drawn again with it)
     if (to.fresh && target === to) setTarget({ ...to, fresh: false });   // (what you write next carries on that new conversation)
     notifyNudge();
     return;
@@ -574,7 +705,7 @@ function build() {
   const replyText = el('span', 'zc-reply-q'); replyText.append(el('b'), el('span', 'zc-reply-t'));
   replyEl.append(icon('reply'), replyText, replyX);
   // a computer's toolbar over the input: stickers, a photo of the office, a file, a card, a poll, @, more
-  const photoBtn = (cls) => { const b = ib('image', tr('chat.sendPhoto'), () => chatSendPhoto(), cls); b.hidden = !state.isLocal; return b; };   // (a photo of the office as it is now: taken on the Mac)
+  const photoBtn = (cls) => { const b = ib('image', tr('chat.sendPhoto'), () => (target ? pickPhotos() : chatSendPhoto()), `${cls} zc-photo-btn`); b.hidden = !state.isLocal; return b; };   // (to the group: a photo of the office as it is now, taken on the Mac; to Claude: one of yours)
   const atBtn = () => { moreEl.hidden = true; input.focus(); input.setRangeText(input.value && !/\s$/.test(input.value) ? ' @' : '@', input.selectionStart, input.selectionEnd, 'end'); mentions(); };
   const toolbar = el('div', 'zc-toolbar zc-pc');
   toolbar.append(ib('smile', tr('chat.stickerTab'), () => openStickers('sticker')), photoBtn(''), ib('clip', ''), ib('card', ''), ib('chart', tr('chat.newPoll'), openMore), ib('at', tr('chat.mention'), atBtn),
@@ -600,8 +731,11 @@ function build() {
   try { hint.hidden = localStorage.getItem('office-chat-hint') === 'seen'; } catch { /* storage blocked */ }
   hintX.addEventListener('click', () => { hint.hidden = true; try { localStorage.setItem('office-chat-hint', 'seen'); } catch { /* storage blocked */ } });
   toEl = el('div', 'zc-to'); toEl.hidden = DEMO_CHAT; pickEl = el('div', 'zc-to-pick'); pickEl.hidden = true;
+  quickEl = el('div', 'zc-quick'); quickEl.hidden = true; attachEl = el('div', 'zc-attach'); attachEl.hidden = true;
+  convEl = el('div', 'zc-conv'); convEl.hidden = true;
+  if (!DEMO_CHAT) loadQuick();
   notifyBar = el('div', 'zc-nbar'); notifyBar.hidden = true;
-  root.append(head, notifyBar, pinEl, body, newBtn, typingEl, mentionEl, replyEl, hint, stickersEl, moreEl, toolbar, pickEl, toEl, bar, membersEl);
+  root.append(head, notifyBar, pinEl, body, convEl, newBtn, typingEl, mentionEl, replyEl, hint, stickersEl, moreEl, toolbar, pickEl, quickEl, attachEl, toEl, bar, membersEl);
   drawTarget();
   $('app').append(root);
 }

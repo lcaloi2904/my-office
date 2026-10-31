@@ -542,14 +542,14 @@ const tasks = createTasks({
   onDone: (t) => {
     if (t.sid) taskSids.add(t.sid);
     const card = cards.get(t.id); cards.delete(t.id);
-    if (card) { clearTimeout(card.timer); chat.setWork(card.id, { state: t.error && !t.result ? 'fail' : 'done', steps: card.steps, n: card.n, end: Date.now() }); }
+    if (card) { clearTimeout(card.timer); chat.setWork(card.id, { state: t.stopped ? 'stopped' : t.error && !t.result ? 'fail' : 'done', steps: card.steps, n: card.n, end: Date.now(), perm: null, ask: null }); }
     for (const x of sessions.values()) if (x.viaOffice === t.id) delete x.viaOffice;   // (its events are its own again)
     const dm = t.from?.chat, folder = path.basename(t.dir);
     // the answer from whoever you asked (the conversation's person; Claude itself for a new conversation, or if that one has gone)
     const all = [...sessions.values()], who = (t.from?.id && all.some((x) => x.id === t.from.id) && t.from.id) || (dm ? 'claude' : t.sid && all.find((x) => x.sid === t.sid)?.id);
     // the pages it changed (its SCREENSHOT lines): named under the answer, then their pictures at a phone's size
     const { text: said, urls } = shotsIn(t.result);
-    const text = t.error && !t.result ? tr('chat.task.failed', { folder, error: clip(oneLine(t.error), 200) }) : clip(`${said || tr('chat.task.doneEmpty')}${urls.length ? `\n\n📸 ${tr('chat.task.shots', { pages: urls.map((u) => new URL(u).pathname).join(', ') })}` : ''}`, dm ? 3800 : 560);
+    const text = t.stopped && !t.result ? tr('chat.task.stopped') : t.error && !t.result ? tr('chat.task.failed', { folder, error: clip(oneLine(t.error), 200) }) : clip(`${said || tr('chat.task.doneEmpty')}${urls.length ? `\n\n📸 ${tr('chat.task.shots', { pages: urls.map((u) => new URL(u).pathname).join(', ') })}` : ''}`, dm ? 3800 : 560);
     const quote = taskQuote.get(t.id) || null; taskQuote.delete(t.id);
     if (dm) { chat.working(t.from.id || 'claude', false); if (t.sid) threads.set(t.from.orig, { sid: t.sid, at: Date.now(), running: false }); else threads.delete(t.from.orig); }   // (no branch made: the next message makes one)
     if (who) chat.say(who, text, { now: true, long: true, reply: quote, tag: 'claude', react: ['❤️', '👍'], reacts: 2 });
@@ -561,6 +561,7 @@ const tasks = createTasks({
 /* ---------- notifications on the phones that said yes (server/push.mjs): Claude's answers, and an approval a run started
    from the office needs while nobody has the office open; none while an office page is looked at ---------- */
 const push = createPush({ dataDir: DATA_DIR, log: (l) => fsp.appendFile(ACTION_LOG, `${new Date().toISOString()} ${l}\n`).catch(() => {}) });
+const QUICK_FILE = path.join(DATA_DIR, 'quick.json');   // the chat's quick commands, once you change them (shared by the Mac and the phones)
 const pushOut = (msg) => { if (push.count() && !officeFocused()) push.notify(msg).catch(() => {}); };
 
 /* Writing to a conversation from the chat ("Gửi tới"): the first message branches it (its whole context, the one open in
@@ -571,7 +572,7 @@ const cards = new Map();
 function cardStep(taskId, step) {
   const c = cards.get(taskId); if (!c) return;
   c.steps.push(step); c.n++; if (c.steps.length > 40) c.steps.shift();
-  if (!c.timer) c.timer = setTimeout(() => { c.timer = 0; chat.setWork(c.id, { steps: c.steps, n: c.n, state: c.wait ? 'wait' : 'work', ask: c.wait || null }); }, 700);   // (a burst of steps: one update)
+  if (!c.timer) c.timer = setTimeout(() => { c.timer = 0; chat.setWork(c.id, { steps: c.steps, n: c.n }); }, 700);   // (a burst of steps: one update; its state is set where it changes)
 }
 // one line for a step on the card: what Claude does (its tool), on what (a file, a command, a search)
 function stepOf(name, i = {}) {
@@ -1145,8 +1146,8 @@ async function onPermission(p, res) {
   broadcast({ k: 'perm', p: permPub(entry) });
   if (ours) pushOut({ title: tr('server.push.permTitle', { name: entry.name }), body: clip(`${c.label}: ${oneLine(entry.detail)}`, 180), tag: `perm-${id}`, url: '/', urgent: true });
   { const run = tasks.list().find((t) => t.sid === p.session_id || t.from?.sid === p.session_id), card = run && cards.get(run.id);
-    if (card) { card.wait = clip(`${c.label}: ${oneLine(entry.detail)}`, 120); chat.setWork(card.id, { state: 'wait', ask: card.wait, steps: card.steps, n: card.n });
-      res.on('close', () => { if (cards.get(run.id) === card) { card.wait = null; chat.setWork(card.id, { state: 'work', ask: null }); } }); } }
+    if (card) { card.wait = clip(`${c.label}: ${oneLine(entry.detail)}`, 120); chat.setWork(card.id, { state: 'wait', ask: card.wait, perm: id, risky: !!dangerKey(entry), steps: card.steps, n: card.n });   // (perm: its Allow / Deny buttons)
+      res.on('close', () => { if (cards.get(run.id) === card) { card.wait = null; chat.setWork(card.id, { state: 'work', ask: null, perm: null }); } }); } }
 }
 
 /* ---------- questions and plans from Claude, answered in the office ----------
@@ -1809,7 +1810,7 @@ const server = http.createServer((req, res) => {
   if (!hostAllowed(req)) { res.writeHead(421).end(); return; }
   // through the tunnel (the internet), only what a phone may send: the PIN (and a new one, with the one it has now), its
   // answers to approvals (when the Mac allows them), the page's presence, the chat and work (when the Mac allows it). Everything else that changes something stays on the Mac and the home network.
-  if (req.viaTunnel && req.method !== 'GET' && req.method !== 'HEAD' && !['/pin', '/api/pin', '/api/perm', '/api/presence', '/api/chat', '/api/tasks', '/api/tasks/stop', '/api/push'].includes(url.pathname)) { json(res, 403, { ok: false, message: tr('server.api.approveOnMac') }); return; }
+  if (req.viaTunnel && req.method !== 'GET' && req.method !== 'HEAD' && !['/pin', '/api/pin', '/api/perm', '/api/presence', '/api/chat', '/api/tasks', '/api/tasks/stop', '/api/push', '/api/quick'].includes(url.pathname)) { json(res, 403, { ok: false, message: tr('server.api.approveOnMac') }); return; }
   if (url.pathname === '/pin' && (req.method === 'GET' || req.method === 'POST')) {
     const ip = clientIp(req);
     if (isLoopback(req) || cookieOk(req)) { res.writeHead(303, { Location: '/' }).end(); return; }
@@ -1906,6 +1907,15 @@ const server = http.createServer((req, res) => {
     });
     return;
   }
+  if (url.pathname === '/api/quick' && req.method === 'POST') {   // the quick commands over the chat's input, yours: { list: [{ label, prompt }] }
+    if (!authorized(req, url) || !sameOriginOf(req) || !String(req.headers['content-type'] || '').startsWith('application/json')) { json(res, 403, { ok: false }); return; }
+    readJson(req).then((b) => {
+      const list = (Array.isArray(b?.list) ? b.list : []).slice(0, 12).map((q) => ({ label: clip(oneLine(String(q?.label || '')), 24), prompt: String(q?.prompt || '').trim().slice(0, 2000) })).filter((q) => q.label && q.prompt);
+      try { fs.writeFileSync(QUICK_FILE, JSON.stringify(list)); } catch { json(res, 500, { ok: false }); return; }
+      json(res, 200, { ok: true, list });
+    });
+    return;
+  }
   if (url.pathname === '/api/push' && req.method === 'POST') {   // a phone saying yes ({ op: 'add', sub }) or no ({ op: 'remove', endpoint }); { op: 'test', endpoint? }
     if (!authorized(req, url) || !sameOriginOf(req) || !String(req.headers['content-type'] || '').startsWith('application/json')) { json(res, 403, { ok: false }); return; }
     readJson(req).then(async (b) => {
@@ -1969,7 +1979,7 @@ const server = http.createServer((req, res) => {
       if (r.ok) {
         threads.set(key, { sid: from.sid, at: Date.now(), running: true });
         if (s) s.viaOffice = r.task.id;
-        const card = chat.workCard(s ? s.id : 'claude', { state: 'work', steps: [], n: 0, at: Date.now() });
+        const card = chat.workCard(s ? s.id : 'claude', { state: 'work', steps: [], n: 0, at: Date.now(), task: r.task.id });   // (task: its Stop button)
         if (card) cards.set(r.task.id, { id: card.id, steps: [], n: 0, at: Date.now(), timer: 0 });
         taskQuote.set(r.task.id, mine ? { id: mine.id, name: tr('chat.boss'), text: clip(text, 90) } : null);
       } else chat.system(tr('chat.task.notStarted', { why: tr(`chat.task.why.${r.code}`) }));
@@ -2137,6 +2147,7 @@ const server = http.createServer((req, res) => {
   }
   if (url.pathname === '/api/chat') { json(res, 200, chatOut()); return; }
   if (url.pathname === '/api/tasks') { json(res, 200, tasksOut(isLoopback(req))); return; }
+  if (url.pathname === '/api/quick') { let list = null; try { list = JSON.parse(fs.readFileSync(QUICK_FILE, 'utf8')); } catch { /* the page's own until you change them */ } json(res, 200, { ok: true, list }); return; }
   if (url.pathname === '/api/push') { json(res, 200, { ok: true, key: push.publicKey, count: push.count(), on: push.has(String(url.searchParams.get('endpoint') || '')) }); return; }
   if (url.pathname === '/api/image') {   // (sandboxed and never sniffed: an SVG can't run anything opened on its own)
     const file = images.get(String(url.searchParams.get('id') || '')), type = file && IMG_EXT[path.extname(file).slice(1).toLowerCase()];
