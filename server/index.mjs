@@ -31,15 +31,17 @@ import { pickLang, createT } from '../src/i18n/index.js';
 import { createAgentRegistry } from './agents/registry.mjs';
 import { createClaudeAdapter } from './agents/claude/compat.mjs';
 import { createOmpAdapter } from './agents/omp/index.mjs';
+import { createOmpBridge, loadIngestTokens } from './agents/omp/bridge.mjs';
 import { projectClaudeSession } from './agents/projection.mjs';
 import { isClaudeRequest, resolveOmpMode } from './agents/schema.mjs';
 
 // OMP is off unless OFFICE_OMP=files names an explicit config (OFFICE_OMP_CONFIG, absolute path). No home discovery.
-// hybrid needs the realtime ingress, which is not built: it stays effectively off.
+// hybrid = files + the observer ingress (loopback only, a token per configured source). Anything else adds no listener.
 const OMP_MODE = resolveOmpMode(process.env.OFFICE_OMP);
-const OMP_CONFIG = OMP_MODE === 'files' ? process.env.OFFICE_OMP_CONFIG || '' : '';   // (read only when files mode asks for it)
-const ompAdapter = OMP_MODE === 'files' && OMP_CONFIG ? createOmpAdapter({
-  configFile: OMP_CONFIG,
+const OMP_CONFIG = OMP_MODE !== 'off' ? process.env.OFFICE_OMP_CONFIG || '' : '';   // (read only when files or hybrid asks for it)
+let ompBridge = null, ompIngressFailed = false;   // (the bridge exists only in hybrid, once the configured sources are known)
+const ompAdapter = OMP_MODE !== 'off' && OMP_CONFIG ? createOmpAdapter({
+  configFile: OMP_CONFIG, live: OMP_MODE === 'hybrid',
   pinStore: {
     load: async () => { try { const d = JSON.parse(await fsp.readFile(path.join(DATA_DIR, 'omp-pins.json'), 'utf8')); return Array.isArray(d?.ids) ? d.ids : []; } catch { return []; } },
     save: async (ids) => { const file = path.join(DATA_DIR, 'omp-pins.json'); await fsp.writeFile(file + '.tmp', JSON.stringify({ ids })); await fsp.rename(file + '.tmp', file); },
@@ -49,9 +51,22 @@ const ompAdapter = OMP_MODE === 'files' && OMP_CONFIG ? createOmpAdapter({
 }) : null;
 function ompAvailability() {
   const status = ompAdapter?.status(), files = !!status && !['config-invalid', 'disposed'].includes(status.state);
-  return { requestedMode: OMP_MODE, effectiveMode: files ? 'files' : 'off',
-    reason: OMP_MODE === 'off' ? 'disabled' : OMP_MODE === 'hybrid' ? 'hybrid-not-implemented' : !OMP_CONFIG ? 'config-missing' : files ? 'files' : 'config-invalid',
-    ...(status && { state: status.state, sources: status.sources, pins: status.pins }) };
+  const effectiveMode = !files ? 'off' : OMP_MODE === 'hybrid' && ompBridge ? 'hybrid' : 'files';
+  return { requestedMode: OMP_MODE, effectiveMode,
+    reason: OMP_MODE === 'off' ? 'disabled' : !OMP_CONFIG ? 'config-missing' : !files ? 'config-invalid' : OMP_MODE === 'hybrid' && !ompBridge ? (ompIngressFailed ? 'ingress-failed' : 'ingress-starting') : effectiveMode,
+    ...(status && { state: status.state, sources: status.sources, pins: status.pins, live: status.live }),
+    ...(ompBridge && { ingress: ompBridge.status() }) };
+}
+const ompFilesOn = () => ompAvailability().effectiveMode !== 'off';   // (history catalogue and pins: files and hybrid)
+// The ingress needs the configured source ids, known once the adapter has read its config.
+async function startOmpIngress() {
+  if (OMP_MODE !== 'hybrid' || !ompAdapter) return;
+  const ids = ompAdapter.sourceIds();
+  if (!ids.length || !ompAdapter.lifecycle) { ompIngressFailed = true; return; }
+  try {
+    const tokens = await loadIngestTokens({ file: path.join(DATA_DIR, 'omp-ingest.json'), sourceIds: ids });
+    ompBridge = createOmpBridge({ lifecycle: ompAdapter.lifecycle, tokens });
+  } catch { ompBridge = null; ompIngressFailed = true; }   // (no token, no ingress: files mode carries on)
 }
 /* end OMP wiring */
 
@@ -482,7 +497,7 @@ const REPLAY_KEEP_DAYS = 7;
 const RECORDED = new Set(['ev', 'sess', 'gone', 'stats']);
 fs.mkdirSync(REPLAY_DIR, { recursive: true });
 let rec = { day: '', out: null, snapAt: 0 };
-const replaySnap = () => ({ k: 'snap', sessions: agents.list().filter((s) => !s.persistedOnly), feed: feed.slice(-40), stats });
+const replaySnap = () => ({ k: 'snap', sessions: agents.list().filter((s) => s.agentKind !== 'omp'), feed: feed.slice(-40), stats });
 function record(m) {
   const t = Date.now(), day = today();
   if (day !== rec.day) {
@@ -1794,6 +1809,14 @@ async function openWindow(s) {
 
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
+  if (url.pathname === '/ingest/omp/v1') {   // the OMP observer: telemetry only, loopback, a token per source, never a reply that acts
+    if (!ompBridge) { json(res, 404, { ok: false, code: 'off' }); return; }
+    ompBridge.handle({ method: req.method, headers: req.headers, loopback: isLoopback(req), viaTunnel: !!req.viaTunnel, body: req,
+      abort: () => { req.pause(); res.once('finish', () => req.destroy()); } })
+      .then((r) => { res.setHeader('Connection', 'close'); json(res, r.status, r.body); })
+      .catch(() => { if (!res.headersSent) json(res, 500, { ok: false, code: 'error' }); });
+    return;
+  }
   if (req.method === 'POST' && url.pathname === '/event') {
     if (!isLoopback(req)) { res.writeHead(403).end(); return; }
     const chunks = []; let size = 0;
@@ -1926,7 +1949,7 @@ const server = http.createServer((req, res) => {
     return;
   }
   if (url.pathname === '/api/omp/pin' && req.method === 'POST') {   // { id, on }: a public catalogue id only, never a path
-    if (!ompAdapter || ompAvailability().effectiveMode !== 'files') { json(res, 404, { ok: false, code: 'ompOff' }); return; }
+    if (!ompAdapter || !ompFilesOn()) { json(res, 404, { ok: false, code: 'ompOff' }); return; }
     if (!isLoopback(req) || !sameOriginOf(req) || !String(req.headers['content-type'] || '').startsWith('application/json')) { json(res, 403, { ok: false, code: 'agentLocalOnly' }); return; }
     readJson(req).then(async (b) => {
       const r = await ompAdapter.pin(String(b?.id ?? ''), b?.on !== false);
@@ -2191,8 +2214,8 @@ const server = http.createServer((req, res) => {
   // everything as it is now, the first message a page gets (the Mac's own addresses and PIN only for the Mac)
   const snapNow = (local) => {
     const lanOn = lanIsOn();
-    const omp = ompAvailability().effectiveMode === 'files' ? { on: true, local, conversation: !!ompAdapter.catalog({ limit: 1 }).conversation } : null;   // (whether the history picker is offered; the list itself is this computer only)
-    return { k: 'snap', lang: prefs.lang(), omp, sessions: local ? agents.list() : agents.list().filter((s) => !s.persistedOnly), perms: [...pending.values()].map(permPub), feed, stats, local, todos, limits: limitsOut(), limitsNote: noteText(), trophies: trophies.pub(),
+    const omp = ompFilesOn() ? { on: true, local, conversation: !!ompAdapter.catalog({ limit: 1 }).conversation } : null;   // (whether the history picker is offered; the list itself is this computer only)
+    return { k: 'snap', lang: prefs.lang(), omp, sessions: local ? agents.list() : agents.list().filter((s) => s.agentKind !== 'omp'), perms: [...pending.values()].map(permPub), feed, stats, local, todos, limits: limitsOut(), limitsNote: noteText(), trophies: trophies.pub(),
       lan: local && lanOn ? lanUrl() : null, lanBase: local && lanOn ? lanUrl(false) : null, pin: local ? currentPin() : null,
       ts: local && lanOn ? tsUrl() : null, tsHere: !!tsUrl(), phoneApprove: !!prefs.get('phoneApprove'), phoneTasks: !!prefs.get('phoneTasks'), lanFixed: local && lanFixed, build: BUILD };
   };
@@ -2230,7 +2253,7 @@ const server = http.createServer((req, res) => {
     return;
   }
   if (url.pathname === '/api/omp/catalog' && req.method === 'GET') {   // paged history of the approved sources (metadata only, this computer only)
-    if (!ompAdapter || ompAvailability().effectiveMode !== 'files') { json(res, 404, { items: [], code: 'ompOff' }); return; }
+    if (!ompAdapter || !ompFilesOn()) { json(res, 404, { items: [], code: 'ompOff' }); return; }
     if (!isLoopback(req)) { json(res, 403, { items: [], code: 'agentLocalOnly' }); return; }
     json(res, 200, ompAdapter.catalog({ cursor: url.searchParams.get('cursor') || 0, limit: url.searchParams.get('limit') || 25, kind: url.searchParams.get('kind') || 'all' }));
     return;
@@ -2460,7 +2483,7 @@ process.on('exit', () => { try { awakeProc?.kill(); } catch { /* gone */ } });
 for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => process.exit(0));
 
 server.listen(PORT, HOST, () => {
-  agents.start().catch(() => {});   // (OMP files mode only: nothing is opened while it is off)
+  agents.start().then(startOmpIngress).catch(() => {});   // (OMP files/hybrid only: nothing is opened while it is off)
   syncLan();
   if (prefs.get('tunnel')) startTunnel(); else killStaleTunnel();
   scanSessions();

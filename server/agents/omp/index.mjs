@@ -5,6 +5,7 @@ import fsp from 'node:fs/promises';
 import { approveRoot, containedPath, openContained, projectIdentity, readConfigFile, validateConfig, errorCode, DEFAULT_LIMITS } from './paths.mjs';
 import { createReader } from './reader.mjs';
 import { createNormalizer } from './normalize.mjs';
+import { createOmpLifecycle } from './lifecycle.mjs';
 import { ompSessionIdentity } from '../schema.mjs';
 
 const PREFIX_BYTES = 8192, PREFIX_READS_PER_SCAN = 64, RECENT_COUNT = 16, MAX_PAGE = 50;
@@ -20,13 +21,18 @@ const baseName = (source, cwd) => {
 };
 const sourceStateOf = (e) => e?.code === 'ENOENT' ? 'absent' : ['EACCES', 'EPERM', 'PATH_DENIED'].includes(e?.code) ? 'denied' : e?.code === 'SOURCE_CHANGED' ? 'changed' : 'degraded';
 
-export function createOmpAdapter({ config, configFile, io = fsp, now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout, pinStore = null, onChange = () => {} } = {}) {
-  let cfg = null, started = false, disposed = false, state = 'idle', timer = null, running = null, controller = new AbortController();
+const SWEEP_MS = 5000;
+
+// `live` (hybrid mode) adds runtime evidence from the observer ingress. It lives next to the file state so one
+// conversation is one actor; without it nothing below the file reader exists.
+export function createOmpAdapter({ config, configFile, io = fsp, now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout, pinStore = null, live = false, onChange = () => {} } = {}) {
+  let cfg = null, started = false, disposed = false, state = 'idle', timer = null, sweepTimer = null, running = null, controller = new AbortController();
   let lastScan = 0, failures = 0, activeConversations = 0, pinsLoaded = false;
   const sources = new Map(), catalog = new Map(), byId = new Map(), conflicts = new Set(), pins = new Set(), runtimes = new Map();
   const issues = new Set();
   const report = (code) => { if (issues.size < 24) issues.add(code); };
   const safe = (fn) => { try { fn(); } catch { /* a change listener never breaks the observer */ } };
+  const lifecycle = live ? createOmpLifecycle({ now, onChange: (ids) => { if (!disposed) safe(() => onChange(ids)); } }) : null;
 
   async function loadConfig() {
     try { cfg = config ? validateConfig(config) : await readConfigFile(configFile, io); }
@@ -248,7 +254,13 @@ export function createOmpAdapter({ config, configFile, io = fsp, now = Date.now,
     timer?.unref?.();
   }
 
-  function recordOf(id) {
+  function armSweep() {
+    if (disposed || !started || !lifecycle) return;
+    sweepTimer = setTimer(() => { sweepTimer = null; lifecycle.sweep(); armSweep(); }, SWEEP_MS);
+    sweepTimer?.unref?.();
+  }
+
+  function fileRecordOf(id) {
     const entry = byId.get(id), rt = runtimes.get(id), source = entry && sources.get(entry.sourceId);
     if (!entry || !rt || !source) return null;
     const info = rt.reader.info(), snap = info.snapshot;
@@ -258,6 +270,24 @@ export function createOmpAdapter({ config, configFile, io = fsp, now = Date.now,
       model: snap.model, metrics: snap.metrics, counts: snap.counts, persistedOnly: true, readerState: info.state, incomplete: snap.incomplete === true,
       project: baseName(source.cfg, entry.header.cwd), projectKey, worktreeKey, conversation: source.cfg.conversation === true };
   }
+
+  // One record per conversation. The runtime owns liveness; a persisted file owns history and durable usage.
+  function recordOf(id) {
+    const file = pins.has(id) ? fileRecordOf(id) : null, runtime = lifecycle?.resolve(id) ?? null;
+    if (!runtime) return file;
+    const entry = byId.get(id), source = sources.get(runtime.sourceNamespace);
+    if (!source) return file;
+    const identity = file || (entry?.header?.supported ? { ...projectIdentity(source.cfg, entry.header.cwd), project: baseName(source.cfg, entry.header.cwd) } : {});
+    const recorded = file?.metrics && (file.metrics.cost || file.metrics.tokens?.provenance === 'recorded');
+    return { sourceNamespace: runtime.sourceNamespace, sourceSessionId: runtime.sourceSessionId,
+      observedAt: runtime.observedAt, model: runtime.model ?? file?.model ?? null,
+      // The durable file replaces a provisional runtime snapshot; the two are never added together.
+      metrics: recorded ? file.metrics : runtime.metrics ?? file?.metrics ?? null,
+      counts: file?.counts, readerState: file?.readerState, incomplete: file?.incomplete === true, filePersisted: !!file,
+      project: identity.project, projectKey: identity.projectKey, worktreeKey: identity.worktreeKey,
+      conversation: !!file && file.conversation === true, persistedOnly: false, live: runtime };
+  }
+  const knownIds = () => new Set([...pins, ...(lifecycle?.ids() ?? [])]);
 
   async function savePins() { try { await pinStore?.save?.([...pins]); } catch { report('pin-store-failed'); } }
 
@@ -271,9 +301,13 @@ export function createOmpAdapter({ config, configFile, io = fsp, now = Date.now,
       if (disposed) return;
       state =[...sources.values()].some((s) => s.state === 'ok') ? 'ready' : 'degraded';
       run().finally(arm);
+      armSweep();
     },
-    list() { return disposed ? [] : [...pins].map(recordOf).filter(Boolean); },
-    resolve(id) { return disposed || !pins.has(id) ? null : recordOf(id); },
+    list() { return disposed ? [] : [...knownIds()].map(recordOf).filter(Boolean); },
+    resolve(id) { return disposed || !knownIds().has(id) ? null : recordOf(id); },
+    // The runtime evidence store (hybrid only). The ingress bridge feeds it; nothing else writes to it.
+    lifecycle,
+    sourceIds: () => disposed ? [] : [...sources.keys()],
     // Run one reconciliation now (forced scan). Tests and the pin endpoint use it; the timer keeps the normal cadence.
     async refresh({ rescan = true } = {}) {
       if (disposed || !started || !cfg) return;
@@ -343,13 +377,16 @@ export function createOmpAdapter({ config, configFile, io = fsp, now = Date.now,
 
     status() {
       return { state, sources: [...sources.values()].map((s) => ({ id: s.cfg.id, state: s.state })), catalog: catalog.size,
-        pins: pins.size, runtimes: runtimes.size, timers: timer ? 1 : 0, issues: [...issues] };
+        pins: pins.size, runtimes: runtimes.size, timers: (timer ? 1 : 0) + (sweepTimer ? 1 : 0),
+        live: lifecycle ? lifecycle.status().instances : 0, issues: [...issues, ...(lifecycle?.diagnostics() ?? [])] };
     },
 
     async dispose() {
       if (disposed) return;
       disposed = true; controller.abort();
       if (timer) { clearTimer(timer); timer = null; }
+      if (sweepTimer) { clearTimer(sweepTimer); sweepTimer = null; }
+      lifecycle?.dispose();
       await running;
       for (const id of [...runtimes.keys()]) { const rt = runtimes.get(id); runtimes.delete(id); await rt.reader.dispose().catch(() => {}); }
       catalog.clear(); byId.clear(); conflicts.clear(); sources.clear(); pins.clear();

@@ -1,7 +1,7 @@
 // Schema 3 at OMP 6a86df8539fccf3ad7818081266e554022fc21bc. Inert JSON only.
 import { redact } from '../../redact.mjs';
 import { ompSessionIdentity } from '../schema.mjs';
-import { aggregateUsage, usageRecord } from './usage.mjs';
+import { aggregateUsage, usageRecord, provisionalUsage } from './usage.mjs';
 
 const idOf = (v) => typeof v === 'string' && v.length > 0 && v.length <= 256 && !/[\x00-\x1f\x7f]/.test(v) ? v : null;
 const modelOf = (v) => typeof v === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,95}$/.test(v) ? v : null;
@@ -126,4 +126,51 @@ export function createNormalizer({ sourceNamespace, includeContent = false, maxE
     };
   }
   return { push, value };
+}
+
+// Strict ingress v1 allowlist. Unknown producer fields are never kept, logged or projected.
+const LIVE_TYPES = new Set(['snapshot', 'session_start', 'session_end', 'heartbeat', 'turn_start', 'turn_end',
+  'tool_start', 'tool_end', 'approval_requested', 'approval_resolved', 'input_requested', 'input_resolved']);
+const LIVE_CATEGORIES = new Set(['read', 'edit', 'cmd', 'web', 'other']);
+const boundedId = (s, max = 128) => typeof s === 'string' && s.length > 0 && s.length <= max
+  && !/[\u0000-\u001f\u007f]/.test(s);
+const boundedInteger = (n) => Number.isSafeInteger(n) && n >= 0 ? n : null;
+const liveCategory = (s) => LIVE_CATEGORIES.has(s) ? s : 'other';
+const safeLiveModel = (s) => typeof s === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,95}$/.test(s) ? s : null;
+
+export function normalizeOmpLiveEvent(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw) || raw.version !== 1 ||
+    typeof raw.sourceId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/.test(raw.sourceId) ||
+    !boundedId(raw.sessionId, 256) || !boundedId(raw.runtimeInstanceId, 96) ||
+    !Number.isSafeInteger(raw.generation) || raw.generation < 1 ||
+    !Number.isSafeInteger(raw.sequence) || raw.sequence < 1 || !LIVE_TYPES.has(raw.type)) return null;
+  const d = raw.data;
+  if (d != null && (typeof d !== 'object' || Array.isArray(d))) return null;
+  const data = {};
+  if (['snapshot', 'session_start', 'heartbeat'].includes(raw.type)) {
+    data.isIdle = typeof d?.isIdle === 'boolean' ? d.isIdle : null;
+    data.pendingMessages = boundedInteger(d?.pendingMessages);
+    data.pendingJobs = boundedInteger(d?.pendingJobs);
+    data.model = safeLiveModel(d?.model);
+    data.metrics = provisionalUsage(d?.usage);
+    if (raw.type !== 'heartbeat') {
+      data.waitReasons = Array.isArray(d?.waitReasons) ? d.waitReasons.filter((x) => x === 'approval' || x === 'input').slice(0, 24) : [];
+      data.tools = Array.isArray(d?.tools) ? d.tools.slice(0, 96).filter((x) => boundedId(x?.id))
+        .map((x) => ({ id: x.id, category: liveCategory(x.category) })) : [];
+    }
+  }
+  if (raw.type === 'tool_start' || raw.type === 'tool_end') {
+    if (!boundedId(d?.toolCallId)) return null;
+    data.toolCallId = d.toolCallId;
+    data.category = liveCategory(d?.category);
+    if (raw.type === 'tool_end') data.phase = ['completed', 'error', 'aborted'].includes(d?.phase) ? d.phase : 'completed';
+  }
+  if (['approval_requested', 'approval_resolved', 'input_requested', 'input_resolved'].includes(raw.type)) {
+    if (!boundedId(d?.requestId)) return null;
+    data.requestId = d.requestId;
+  }
+  if (raw.type === 'turn_end') data.outcome = ['success', 'error', 'aborted'].includes(d?.outcome) ? d.outcome : 'unknown';
+  return { version: 1, sourceId: raw.sourceId, sessionId: raw.sessionId,
+    runtimeInstanceId: raw.runtimeInstanceId, generation: raw.generation,
+    sequence: raw.sequence, type: raw.type, data };
 }

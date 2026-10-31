@@ -39,15 +39,41 @@ function ompMetrics(raw) {
 const count = (n) => Number.isSafeInteger(n) && n >= 0 ? n : 0;
 const READER_STATES = new Set(['loading', 'refreshing', 'ready', 'absent', 'degraded', 'unsupported']);
 const HEX64 = /^[0-9a-f]{64}$/;
-// Persisted-only facts: counts from history, a display basename and opaque keys. Never prompts, titles, paths or output.
+// A display basename and opaque keys. Never prompts, titles, paths or output.
+function projectFields(record) {
+  const name = typeof record.project === 'string' ? record.project.replace(/[^\p{L}\p{N} ._-]/gu, '').slice(0, 40) : '';
+  return { name: name || null,
+    projectKey: HEX64.test(record.projectKey) ? record.projectKey : null, worktreeKey: HEX64.test(record.worktreeKey) ? record.worktreeKey : null };
+}
+// Persisted facts: counts from history.
 function persistedFields(record) {
   const c = record.counts && typeof record.counts === 'object' ? record.counts : {};
-  const name = typeof record.project === 'string' ? record.project.replace(/[^\p{L}\p{N} ._-]/gu, '').slice(0, 40) : '';
   return {
-    persistedOnly: true, lifecycle: 'historical', name: name || null,
+    ...projectFields(record), persistedOnly: true, lifecycle: 'historical',
     readerState: READER_STATES.has(record.readerState) ? record.readerState : 'loading', incomplete: record.incomplete === true,
     counts: { read: count(c.read), edit: count(c.edit), cmd: count(c.cmd), web: count(c.web) },
-    projectKey: HEX64.test(record.projectKey) ? record.projectKey : null, worktreeKey: HEX64.test(record.worktreeKey) ? record.worktreeKey : null,
+  };
+}
+
+const ACTIVITIES = new Set(['active', 'waiting', 'idle', 'unknown']);
+const CONNECTIONS = new Set(['connected', 'stale', 'disconnected']);
+const OUTCOMES = new Set(['success', 'error', 'aborted', 'unknown']);
+const TOOL_KINDS = new Set(['read', 'edit', 'cmd', 'web', 'other']);
+// Only a fresh, connected runtime maps onto the legacy work/wait/rest axis. Stale or ended never claims to be resting.
+const LEGACY_STATUS = { active: 'work', waiting: 'wait', idle: 'rest' };
+function liveFields(live) {
+  if (!live || typeof live !== 'object') return null;
+  const connection = CONNECTIONS.has(live.connection) ? live.connection : 'disconnected';
+  const ended = live.lifecycle === 'ended';
+  const activity = !ended && connection === 'connected' && ACTIVITIES.has(live.activity) ? live.activity : 'unknown';
+  return {
+    persistedOnly: false, lifecycle: ended ? 'ended' : 'open', activity, connection,
+    status: LEGACY_STATUS[activity] || 'unknown',
+    lastTurnOutcome: OUTCOMES.has(live.lastTurnOutcome) ? live.lastTurnOutcome : 'unknown',
+    pendingTools: count(live.pendingTools),
+    toolCategories: Array.isArray(live.toolCategories) ? live.toolCategories.filter((k) => TOOL_KINDS.has(k)).slice(0, 5) : [],
+    waitReasons: Array.isArray(live.waitReasons) ? live.waitReasons.filter((k) => k === 'approval' || k === 'input').slice(0, 2) : [],
+    eventGap: live.gap === true,
   };
 }
 
@@ -57,7 +83,9 @@ export function projectOmpSession(record) {
   if (!identity) return null;
   // No certified runtime heartbeat or approved content access in Phase 02.
   // Drop arbitrary titles, prompts, paths, links, PIDs, accounts and capabilities.
-  const persisted = record.persistedOnly === true ? persistedFields(record) : null;
+  const live = liveFields(record.live);
+  // A live row that also has a file keeps the file's counts and project; its liveness comes only from the runtime.
+  const persisted = record.persistedOnly === true || record.filePersisted === true ? persistedFields(record) : null;
   const base = {
     ...identity, agentKind: 'omp', agent: 'omp',
     name: 'OMP ' + identity.id.slice(4, 12), title: '', dir: '', origin: 'OMP',
@@ -69,8 +97,10 @@ export function projectOmpSession(record) {
     usage: null, model: safeModel(record.model), metrics: ompMetrics(record.metrics),
     projectKey: null, worktreeKey: null, capabilities: capabilitiesFor('omp'),
   };
-  if (!persisted) return base;
-  return { ...base, ...persisted, name: persisted.name ? persisted.name : base.name, capabilities: ompCapabilities(record.conversation) };
+  if (!persisted && !live) return base;
+  const named = persisted ?? projectFields(record);
+  return { ...base, ...named, ...live, name: named.name ? named.name : base.name,
+    capabilities: ompCapabilities(record.conversation && persisted ? record.conversation : false) };
 }
 
 export function projectAgentSession(kind, record) {

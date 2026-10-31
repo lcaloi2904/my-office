@@ -171,7 +171,7 @@ function ompWiring(env, status = 'ready') {
 }
 
 test('production mode and registration do not read config or activate an OMP adapter unless files mode is configured', () => {
-  for (const requested of [undefined, 'off', 'hybrid', 'bad-mode']) {
+  for (const requested of [undefined, 'off', 'bad-mode']) {
     const w = ompWiring({ OFFICE_OMP: requested, OFFICE_OMP_CONFIG: '/must/not/be/read' });
     const availability = w.ompAvailability();
     assert.equal(availability.effectiveMode, 'off');
@@ -182,7 +182,12 @@ test('production mode and registration do not read config or activate an OMP ada
     assert.deepEqual(agents.list().map((s) => s.agentKind), ['claude']);
     assert.deepEqual(agents.diagnostics(), []);
   }
-  assert.equal(ompWiring({ OFFICE_OMP: 'hybrid' }).ompAvailability().reason, 'hybrid-not-implemented');
+  // hybrid is files plus the observer ingress: without a config it reads nothing either, and the ingress waits for the sources.
+  const hybridMissing = ompWiring({ OFFICE_OMP: 'hybrid' });
+  assert.deepEqual([hybridMissing.ompAvailability().effectiveMode, hybridMissing.ompAvailability().reason, hybridMissing.ompAdapter], ['off', 'config-missing', null]);
+  const hybrid = ompWiring({ OFFICE_OMP: 'hybrid', OFFICE_OMP_CONFIG: '/synthetic/omp.json' });
+  assert.equal(hybrid.created.length, 1); assert.equal(hybrid.created[0].live, true);
+  assert.deepEqual([hybrid.ompAvailability().effectiveMode, hybrid.ompAvailability().reason], ['files', 'ingress-starting']);
   const missing = ompWiring({ OFFICE_OMP: 'files' });
   assert.deepEqual([missing.ompAvailability().effectiveMode, missing.ompAvailability().reason, missing.ompAdapter], ['off', 'config-missing', null]);
   const on = ompWiring({ OFFICE_OMP: 'files', OFFICE_OMP_CONFIG: '/synthetic/omp.json' });
@@ -220,7 +225,7 @@ async function requestCallback(fixture, url, body, method = 'POST', extra = {}) 
     prefs: { get: () => false }, ...extra,
   };
   const handler = vm.runInNewContext('(' + callback + ')', context, { timeout: 1000 });
-  handler({ url, method, headers: { 'content-type': 'application/json' }, socket: {} }, {});
+  handler({ url, method, headers: { 'content-type': 'application/json' }, socket: {}, ...extra.req }, extra.res || {});
   for (let i = 0; i < 20 && !responses.length; i++) await new Promise((resolve) => setImmediate(resolve));
   assert.equal(responses.length, 1, 'one response from the real handler, without server startup');
   return { ...responses[0], calls };
@@ -559,7 +564,7 @@ function ompRouteFixture(conversation) {
   const ompAdapter = { catalog: (o) => { calls.catalog.push(o); return { items: [], sources: [], next: null }; },
     pin: async (id, on) => { calls.pin.push([id, on]); return /^omp:[0-9a-f]{64}$/.test(id) ? { ok: true, pinned: on } : { ok: false, code: 'invalid-id' }; },
     refresh: async () => { calls.refresh++; } };
-  return { ...f, persisted, calls, extra: (loopback, mode = 'files') => ({ ompAdapter, ompAvailability: () => ({ effectiveMode: mode }), isLoopback: () => loopback }) };
+  return { ...f, persisted, calls, extra: (loopback, mode = 'files') => ({ ompAdapter, ompAvailability: () => ({ effectiveMode: mode }), ompFilesOn: () => mode !== 'off', isLoopback: () => loopback }) };
 }
 
 test('actual OMP catalogue and pin routes are local-only, off-aware and id-only', async () => {
@@ -613,6 +618,19 @@ test('a pinned saved session is shown to this computer only: not streamed to rem
   assert.deepEqual(recorded, ['sess'], 'ordinary messages are still recorded and sent to everyone');
   // the polling and snapshot paths use the same flag
   assert.match(serverSource, /backlog\.filter\(\(\[n, , only\]\) => n > since && \(local \|\| !only\)\)/);
-  assert.match(serverSource, /sessions: local \? agents\.list\(\) : agents\.list\(\)\.filter\(\(s\) => !s\.persistedOnly\)/);
-  assert.match(serverSource, /sessions: agents\.list\(\)\.filter\(\(s\) => !s\.persistedOnly\), feed: feed\.slice\(-40\)/);
+  assert.match(serverSource, /sessions: local \? agents\.list\(\) : agents\.list\(\)\.filter\(\(s\) => s\.agentKind !== 'omp'\)/);
+  assert.match(serverSource, /sessions: agents\.list\(\)\.filter\(\(s\) => s\.agentKind !== 'omp'\), feed: feed\.slice\(-40\)/);
+});
+
+test('actual OMP ingress route: absent unless hybrid, and the HTTP layer only forwards facts', async () => {
+  const f = routeFixture();
+  const none = await requestCallback(f, '/ingest/omp/v1', null, 'POST', { ompBridge: null, req: { viaTunnel: false } });
+  assert.equal(none.status, 404, 'no bridge: refused before anything is read');
+  const seen = [];
+  const res = { setHeader() {}, once() {} };
+  const bridge = { handle: async (r) => { seen.push(r); return { status: 403, body: { ok: false, code: 'forbidden' } }; } };
+  const tunnelled = await requestCallback(f, '/ingest/omp/v1', null, 'POST', { ompBridge: bridge, isLoopback: () => false, res, req: { viaTunnel: true, headers: { origin: 'http://x' } } });
+  assert.equal(tunnelled.status, 403);
+  assert.equal(seen[0].loopback, false); assert.equal(seen[0].viaTunnel, true); assert.equal(seen[0].headers.origin, 'http://x');
+  assert.equal(typeof seen[0].abort, 'function');
 });

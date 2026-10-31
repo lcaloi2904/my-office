@@ -21,3 +21,16 @@ export function aggregateUsage(entries, { inherited = false, incomplete = false 
     context: null,
   };
 }
+
+// Runtime token accounting is a snapshot, not an increment. File-normalized metrics always replace it.
+export function provisionalUsage(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const tokens = {
+    input: numeric(raw.input), output: numeric(raw.output),
+    cacheRead: numeric(raw.cacheRead), cacheWrite: numeric(raw.cacheWrite),
+  };
+  const cost = numeric(raw.cost);
+  if (cost === null && Object.values(tokens).every((n) => n === null)) return null;
+  return { cost: cost === null ? null : { value: cost, currency: 'USD', scope: 'self', provenance: 'provisional' },
+    tokens: { ...tokens, provenance: 'provisional' }, context: null };
+}
