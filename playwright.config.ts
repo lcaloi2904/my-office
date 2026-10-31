@@ -9,6 +9,7 @@ export const HOME_DIR = path.resolve(OUT, 'home');
 export const DATA_DIR = path.resolve(OUT, 'office-data');
 export default defineConfig({
   testDir: 'tests/e2e',
+  testIgnore: '**/omp-files.spec.ts',   // (the file-only OMP smoke has its own config: playwright.omp.config.ts)
   outputDir: OUT,
   timeout: 90_000,
   retries: process.env.CI ? 1 : 0,
