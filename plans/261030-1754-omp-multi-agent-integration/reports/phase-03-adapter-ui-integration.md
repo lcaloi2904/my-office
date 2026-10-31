@@ -132,6 +132,17 @@ Phát hiện mới từ dữ liệu thật:
 3. **Đã xử lý.** `projectKey` là null cho cả 588 vì chưa có `projectMappings`. Đã tạo config thật `data/omp-config.json` (thư mục `data/` đã gitignore, không vào repo): một nguồn `omp-local`, `conversation: false`, 13 ánh xạ thư mục dự án (mỗi dự án một `projectId` theo tên thư mục, `worktreeId: main`). Kiểm bằng chính `readConfigFile` của server và adapter chỉ-đọc: 583/588 session có `projectKey` thuộc 13 project (nhóm lớn nhất 272 session); 5 session còn lại ở thư mục tạm (`C:\tmp`, `AppData\Local\Temp`) cố ý chưa ánh xạ. Thư mục con (`chia-tien-tro\apps\api`) rơi vào project cha theo tiền tố dài nhất. Muốn dùng: `OFFICE_OMP=files` và `OFFICE_OMP_CONFIG=E:\vide-code\my-office\data\omp-config.json`; mặc định vẫn tắt.
 4. Normalizer đánh nhãn `parentSession` là `fork`/`inherited`. Trên dữ liệu thật, `parentSession` chỉ xuất hiện ở con trỏ về session chính của nó. Hiện không ảnh hưởng vì con không bao giờ được đọc làm actor, nhưng cần sửa nếu sau này đọc con.
 
+## Chạy thật: office + giao diện trên cây OMP thật (31/10/2026, sau khi đóng G3)
+
+Server `node server/index.mjs` với `OFFICE_OMP=files`, `OFFICE_OMP_CONFIG=data/omp-config.json`, cổng 4310, bản dựng `.next-win-p3`. `/api/doctor`: `effectiveMode: files`, nguồn `omp-local` `ok`. Catalogue qua API: 588 session, 583 có project, 785 con, 16 `recent`, 0 header chờ. Giao diện (Playwright headless, GPU, chỉ in boolean và số đếm):
+
+- Nút lịch sử hiện; bộ chọn 25 hàng ở trang đầu, cả 25 ghi "Not live", nút Pin bật, 0 hàng "Not read yet"/"Unsupported", có "Load more".
+- Ghim session mới nhất: thẻ "History · not live", không có `NaN`/`undefined`; drawer ghi "History · not live", "Read-only observation", đúng 1 nút (Unpin), 0 liên kết, và "Conversation access is disabled" (đúng với `conversation: false`).
+- Bản ghi `persistedOnly` trong snapshot `/api/live` không chứa chuỗi giống đường dẫn hay `.jsonl`.
+- Bỏ ghim: thẻ biến mất, catalogue không còn mục ghim. Không có lỗi trang hay lỗi console.
+
+Chưa chạy: đọc hội thoại thật (`conversation: false`), quan sát lúc OMP đang chạy, client từ xa thật. Lần chạy đầu có một lỗi của script kiểm (bộ chọn không phân biệt hoa thường khớp nhầm một thẻ Claude, và script dừng trước bước bỏ ghim); phiên ghim được bỏ ngay và script được sửa trước lần chạy cuối.
+
 ## Claude regression (đối chứng baseline)
 
 Không có assertion nào bị đổi. Để biết 24 fail của `office.spec.ts` có do Phase 03 không, tôi xuất HEAD sạch (`git archive` → thư mục tạm gitignored trong repo, build riêng `.next-base`, cùng cổng/HOME cô lập, cùng `--workers=1`, nay đã xóa) và chạy cùng test:

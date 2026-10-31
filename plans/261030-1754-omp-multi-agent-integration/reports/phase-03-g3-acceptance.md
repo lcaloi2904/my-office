@@ -35,7 +35,7 @@ Chi tiết và số đo: [adapter/UI report](./phase-03-adapter-ui-integration.m
 | G3-E3 | Bài Mixue (`office.spec`) fail 5/5 trên cây hiện tại và 3/3 trên baseline HEAD sạch `4f5858a`; nguyên nhân chưa tìm ra. Không phải hồi quy Phase 03. | Điều tra riêng nếu cần. |
 | G3-E4 | Group chat và phone window fail trong một lượt suite đầy đủ trên GPU, pass khi chạy riêng; chưa đối chứng trên baseline ở lượt đầy đủ. Lượt GPU trước đó (54/58) pass hai bài này. | Theo dõi độ ổn định; không coi là PASS đã xác nhận ở lượt đầy đủ gần nhất. |
 | G3-E5 | Suite Claude trên SwiftShader (24 fail) giống baseline HEAD sạch; kế thừa G2-E1. | Không miễn regression mới. |
-| G3-E6 | Chưa chạy: đọc hội thoại thật (`conversation` giữ `false`), UI trên dữ liệu thật, phát metadata pin tới client từ xa thật (chỉ có test hợp đồng + review), benchmark CPU/RAM/soak. | Đánh giá lại trước rollout (G6). |
+| G3-E6 | Chưa chạy: đọc hội thoại thật (`conversation` giữ `false`), phát metadata pin tới client từ xa thật (chỉ có test hợp đồng + review), benchmark CPU/RAM/soak. UI trên dữ liệu thật đã được chạy sau khi đóng G3 (xem mục "Chạy thật" trong báo cáo adapter/UI). | Đánh giá lại trước rollout (G6). |
 | G3-E7 | 3/588 session chính lớn hơn 8 MiB (lớn nhất 8,5 MiB) sẽ báo vượt giới hạn khi ghim. Trần 8 MiB là quyết định của người dùng. | Giữ nguyên. |
 | G3-E8 | Working tree chưa commit; không có tag/revision bất biến cho bằng chứng. | Commit/push chỉ khi người dùng yêu cầu. |
 
