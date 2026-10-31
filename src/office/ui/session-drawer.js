@@ -4,7 +4,8 @@ import { $, el, fmtBytes, fmtClock, hhmm, nowMs, pad2, reduceMotion, short, smal
 import { STATUS_LABEL, verb } from './event-text.js';
 import { TYPE_ICON, icon } from './icons.js';
 import { BASE_ZOOM } from '../scene/renderer.js';
-import { AGENT_NAME, agentOf, canSession, claudeCost, colorOf, contextPercent, dn, sessions, workers } from '../people/workers.js';
+import { AGENT_NAME, agentOf, canSession, claudeCost, colorOf, contextPercent, dn, sessions, unknownLabel, workers } from '../people/workers.js';
+import { setOmpPin } from './omp-history.js';
 import { cap, feedRow, fmtTok, fmtUsd, openFromRow, queueUi, toast } from './activity.js';
 import { goView, setView } from './camera-bar.js';
 import { closeMac, doAction, loadMac, macSnap } from './mac-drawer.js';
@@ -43,7 +44,7 @@ export function renderSessionHead() {
   $('ds-dot').style.background = colorOf(s);
   $('ds-name').textContent = dn(s);
   $('ds-dir').textContent = s.origin ? `${s.dir} · ${s.origin}` : s.dir;
-  const st = $('ds-status'); st.textContent = STATUS_LABEL[s.status] || tr('drawer.unknownState'); st.dataset.status = s.status;
+  const st = $('ds-status'); st.textContent = STATUS_LABEL[s.status] || unknownLabel(s); st.dataset.status = s.status;
   $('ds-read').textContent = s.counts?.read ?? 0; $('ds-edit').textContent = s.counts?.edit ?? 0; $('ds-cmd').textContent = s.counts?.cmd ?? 0;
   $('ds-time').textContent = s.taskStart && ['work', 'wait'].includes(s.status) ? fmtClock((nowMs() - s.taskStart) / 1000) : '–';
   const u = s.usage, pct = contextPercent(s), cost = claudeCost(s);
@@ -64,12 +65,20 @@ export async function openWindowOf(s) {
 }
 // what the buttons below depend on
 let drawnSig = '', qrFor = null;   // (qrFor: the session whose Remote Control QR code is shown)
-const actionsSig = (s) => [s.id, agentOf(s), JSON.stringify(s.capabilities), s.link, s.status === 'rest', s.pid, s.moved?.to, s.acct, state.limits?.others?.length].join('|');
+const actionsSig = (s) => [s.id, agentOf(s), s.persistedOnly, s.incomplete, state.isLocal, JSON.stringify(s.capabilities), s.link, s.status === 'rest', s.pid, s.moved?.to, s.acct, state.limits?.others?.length].join('|');
 function renderActions() {
   const s = sessions.get(state.selectedId); if (!s) return;
   const box = $('ds-actions'); box.replaceChildren(); drawnSig = actionsSig(s);
   if (agentOf(s) !== 'claude') {
     box.append(el('p', 'dr-note', tr(agentOf(s) === 'omp' ? 'drawer.readOnly' : 'drawer.unsupportedAgent')));
+    if (agentOf(s) === 'omp' && s.persistedOnly === true) {   // a pinned history file: say so, and offer the way back out
+      box.append(el('p', 'dr-note', tr(s.incomplete ? 'drawer.persistedIncomplete' : 'drawer.persistedNote')));
+      if (state.isLocal) {
+        const b = el('button', 'btn btn--sm', tr('activity.omp.unpin')); b.type = 'button';
+        b.addEventListener('click', async () => { b.disabled = true; if (!(await setOmpPin(s.id, false))) b.disabled = false; });
+        box.append(b);
+      }
+    }
     return;
   }
   if (state.isLocal && s.pid && canSession(s, 'openWindow')) {

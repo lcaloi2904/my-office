@@ -50,7 +50,11 @@ export const AGENT_NAME = { claude: 'Claude Code', codex: 'Codex', gemini: 'Gemi
   get unknown() { return tr('drawer.unknownAgent'); } };
 const SESSION_CAPABILITIES = new Set(['openWindow', 'closeSession', 'changeAccount', 'remoteControl', 'startTask', 'readConversation']);
 // UI hints only: server ownership checks remain authoritative. Old replay records keep legacy defaults.
+// A persisted OMP history actor may read its conversation when the server's source config allowed it; nothing else.
+export const isPersisted = (s) => agentOf(s) === 'omp' && s.persistedOnly === true && s.capabilities?.readConversation === true;
+export const unknownLabel = (s) => tr(agentOf(s) === 'omp' && s?.persistedOnly === true ? 'drawer.persistedState' : 'drawer.unknownState');
 export function canSession(s, capability) {
+  if (capability === 'readConversation' && isPersisted(s) && /^omp:[0-9a-f]{64}$/.test(String(s.id || ''))) return true;
   if (agentOf(s) !== 'claude' || !SESSION_CAPABILITIES.has(capability) || /^(?:omp|agent):/i.test(String(s.id || ''))) return false;
   if (!Object.hasOwn(s, 'capabilities')) return !Object.hasOwn(s, 'agentKind');
   const caps = s.capabilities;

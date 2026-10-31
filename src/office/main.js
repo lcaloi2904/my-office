@@ -70,6 +70,7 @@ import * as lifeAltar from './life/altar.js';
 import * as lifeTests from './life/tests.js';
 import * as lifePost from './life/post.js';
 import * as uiLite from './ui/lite.js';
+import * as uiOmpHistory from './ui/omp-history.js';
 import * as worldRoomUpdate from './world/room-update.js';
 import * as uiActivity from './ui/activity.js';
 import * as uiSessionDrawer from './ui/session-drawer.js';
@@ -174,6 +175,7 @@ const MODULES = [
   lifeTests,
   lifePost,
   uiLite,
+  uiOmpHistory,
   worldRoomUpdate,
   uiActivity,
   uiSessionDrawer,

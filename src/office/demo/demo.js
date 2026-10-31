@@ -13,6 +13,7 @@ import { TOKEN, freeDesk, removeSession, setConn, upsertSession } from '../net/l
 import { onEvent } from '../life/incidents.js';
 import { onPerm, perms, renderPerms, reportPresence } from '../ui/permissions.js';
 import { renderPhone } from '../ui/topbar.js';
+import { syncOmpEntry } from '../ui/omp-history.js';
 import { t as tr } from '../../i18n/index.js';
 
 export let DEMO;
@@ -199,14 +200,15 @@ export function applyMsg(d, quiet = false) {
       state.isLocal = !!d.local; state.lanUrl = d.lan || null; state.lanBase = d.lanBase || null; state.phonePin = d.pin || null; state.tsUrl = d.ts || null; state.tsHere = !!d.tsHere; state.phoneApprove = !!d.phoneApprove; state.phoneTasks = !!d.phoneTasks; state.lanFixed = !!d.lanFixed;
       if (d.build) { if (state.build && d.build !== state.build) reloadSoon(); else state.build = d.build; }   // (the office was updated: this page is an older one)
       state.todos = d.todos || []; onTodos();
+      state.omp = d.omp || null; syncOmpEntry();
       if (d.trophies) setTrophies(d.trophies);
       state.limits = d.limits || null; state.limitsNote = d.limitsNote || ''; for (const w of liveWindows()) if (w.pct >= 80) limitWarned.add(`${w.key}:${w.resetsAt}:${w.pct >= 95 ? 95 : 80}`); renderLimits();
       $('btn-phone').hidden = false; if ($('btn-phone-top')) $('btn-phone-top').hidden = !state.isLocal;   // (on a phone: its PIN, and what the Mac allows it)
       $('btn-bell').hidden = !('Notification' in window) || !window.isSecureContext;
     }
     state.connectedOnce = true; queueUi();
-  } else if (d.k === 'sess') { upsertSession(d.s, !quiet); if (d.stats) state.stats = d.stats; }
-  else if (d.k === 'gone') { if (!quiet) chatLeft(sessions.get(d.id)); (quiet ? dropSessionNow : removeSession)(d.id); }
+  } else if (d.k === 'sess') { upsertSession(d.s, !quiet && d.s?.persistedOnly !== true); if (d.stats) state.stats = d.stats; }   // (saved OMP history is pinned, not arriving: no walk-in)
+  else if (d.k === 'gone') { const history = sessions.get(d.id)?.persistedOnly === true; if (!quiet && !history) chatLeft(sessions.get(d.id)); (quiet || history ? dropSessionNow : removeSession)(d.id); }   // (unpinned history just disappears: no goodbye)
   else if (d.k === 'ev') {
     if (d.stats) state.stats = d.stats; upsertSession(d.s, !quiet);
     if (!quiet) onEvent(d.e); else if (!d.e.quiet && d.e.type !== 'start') addFeed(d.e);

@@ -4,7 +4,7 @@ import { $, el, fmtBytes, fmtClock, hhmm, nowMs } from '../core/env.js';
 import { STATUS_LABEL, verb } from './event-text.js';
 import { TYPE_ICON, TYPE_TONE, icon } from './icons.js';
 import { hoverRing, selRing } from '../interact/rings.js';
-import { AGENT_NAME, agentMark, agentOf, canSession, claudeCost, colorOf, contextPercent, dn, dnOf, sessions, workers } from '../people/workers.js';
+import { AGENT_NAME, agentMark, agentOf, canSession, claudeCost, colorOf, contextPercent, dn, dnOf, sessions, unknownLabel, workers } from '../people/workers.js';
 import { renderLite } from './lite.js';
 import { openSession, renderActivity, renderSessionHead, renderSubs, tab, toggleSession } from './session-drawer.js';
 import { macSnap } from './mac-drawer.js';
@@ -102,7 +102,7 @@ function ago(ts) {
   return tr('time.day', { n: Math.floor(s / 86400) });
 }
 export function doingOf(s) {
-  if (railGroupOf(s) === 'unknown') return { ic: 'sparkle', text: tr('drawer.unknownState') };
+  if (railGroupOf(s) === 'unknown') return { ic: s.persistedOnly === true ? 'file' : 'sparkle', text: unknownLabel(s) };
   if (s.status === 'wait') return { ic: 'alert', text: tr('activity.doing.wait') };
   const where = whereabouts(workers.get(s.id));   // out of the office: at the shop, on the way home…
   if (where) return where;
@@ -210,7 +210,7 @@ function renderRail() {
     r.li.hidden = !match || (railFilter && group !== railFilter) || folded;
     r.c.dataset.status = group; r.c.setAttribute('aria-current', cur); r.cd.style.background = color;
     if (r.cn.textContent !== dn(s)) r.cn.textContent = dn(s);
-    r.cs.textContent = group === 'unknown' ? tr('drawer.unknownState') : STATUS_LABEL[group];
+    r.cs.textContent = group === 'unknown' ? unknownLabel(s) : STATUS_LABEL[group];
   }
   for (const [k] of GROUPS) { const g = grpEls[k]; g.n.textContent = count[k] || 0; g.li.hidden = !count[k] || (railFilter && railFilter !== k); }
   grpEls.rest.b.setAttribute('aria-expanded', String(!restCollapsed || !!q || railFilter === 'rest'));

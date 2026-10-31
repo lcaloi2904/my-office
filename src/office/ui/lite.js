@@ -1,6 +1,7 @@
 // List mode: the sessions as cards, no 3D.
 import { $, el, fmtClock, nowMs, short } from '../core/env.js';
-import { AGENT_NAME, agentOf, colorOf, contextPercent, dn, sessions } from '../people/workers.js';
+import { AGENT_NAME, agentOf, colorOf, contextPercent, dn, sessions, unknownLabel } from '../people/workers.js';
+import { ompButton } from './omp-history.js';
 import { doingOf } from './activity.js';
 import { openSession } from './session-drawer.js';
 import { closePlace } from '../interact/place-cards.js';
@@ -21,13 +22,14 @@ export function renderLite() {
   const groups = [['wait', tr('lite.wait'), (s) => s.status === 'wait'], ['work', tr('lite.work'), (s) => s.status === 'work'], ['rest', tr('lite.rest'), (s) => s.status === 'rest'],
     ['unknown', tr('drawer.unknownState'), (s) => !['wait', 'work', 'rest'].includes(s.status)]];
   const frag = document.createDocumentFragment();
+  { const history = ompButton(); if (!history.hidden) frag.append(history); }   // (OMP files mode: the picker for persisted history)
   if (!list.length) frag.append(el('p', 'lite-empty', tr('lite.empty')));
   for (const [key, title, f] of groups) {
     const rows = list.filter(f).sort((a, b) => (b.lastAt || 0) - (a.lastAt || 0)); if (!rows.length) continue;
     frag.append(el('h3', 'lite-h', `${title} · ${rows.length}`));
     for (const s of rows) {
       const c = el('button', 'lite-card'); c.type = 'button'; c.dataset.status = key; c.style.setProperty('--c', colorOf(s));
-      const st = key === 'unknown' ? { text: tr('drawer.unknownState') } : doingOf(s), top = el('div', 'lite-top');
+      const st = key === 'unknown' ? { text: unknownLabel(s) } : doingOf(s), top = el('div', 'lite-top');
       top.append(el('i'), el('b', null, dn(s)));
       const kind = agentOf(s);
       if (kind !== 'claude') top.append(el('span', 'ri-proj', AGENT_NAME[kind]));
