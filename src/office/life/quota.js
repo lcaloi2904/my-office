@@ -6,7 +6,7 @@ import { scene } from '../scene/renderer.js';
 import { canvasTex, fitText, put, rbox } from '../scene/blocks.js';
 import { LAY } from '../world/layout.js';
 import { STATIONS } from '../people/navigation.js';
-import { hash, sessions, workers } from '../people/workers.js';
+import { claudeQuotaAccount, hash, sessions, workers } from '../people/workers.js';
 import { asleep, free, later, quip } from '../people/errands.js';
 import { dingBell } from '../people/gatherings.js';
 import { liveWindows, resetText } from '../ui/mac-drawer.js';
@@ -24,7 +24,7 @@ const W = 512, H = 200;
 let board = null, tex = null, drawn = '', grow = 0;
 let out = new Map();   // account ('' = the main one) -> when it can be used again (ms; 0 if not known), the accounts that are out
 let checkAt = 0, chatAt = 0;
-const acctOf = (w) => sessions.get(w.id)?.acct || '';
+const acctOf = (w) => claudeQuotaAccount(sessions.get(w.id));
 
 // the accounts whose limit is used up now, each with the latest reset among its full windows
 function readOut() {
@@ -110,7 +110,7 @@ export function updateQuota(dt) {
   for (const w of workers.values()) {   // breaks that end by themselves: work came in, gone home, out on the street
     if (!w.onBreak) continue;
     const s = sessions.get(w.id);
-    if (!s || s.status !== 'rest' || w.leaving || w.away || w.street || w.homeBound) w.onBreak = false;
+    if (!s || claudeQuotaAccount(s) === null || s.status !== 'rest' || w.leaving || w.away || w.street || w.homeBound) w.onBreak = false;
     else if (w.lateRest(s) && w.phase !== 'walk' && !w.want) { w.onBreak = false; w.goHomeAndRest(); }   // (late at night: the desk, then home)
   }
   if (!out.size) return;
@@ -118,7 +118,7 @@ export function updateQuota(dt) {
   let n = 0;
   if (!napOn) for (const w of workers.values()) {
     const s = sessions.get(w.id);
-    if (w.sub || w.onBreak || !s || s.status !== 'rest' || s.bg?.length || !out.has(s.acct || '')) continue;
+    if (w.sub || w.onBreak || !s || s.status !== 'rest' || s.bg?.length || !out.has(claudeQuotaAccount(s))) continue;
     if (!(free(w) || asleep(w)) || w.anim === 'eat' || w.mealBox || w.queued || w.outing || w.street || w.lateRest(s)) continue;
     w.onBreak = true;
     later(0.4 + n++ * rand(0.7, 1.5), () => goOnBreak(w));

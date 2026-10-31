@@ -3,6 +3,7 @@
 // carries on on that account as soon as you write in it again; one in a terminal gets the command that resumes it
 // there, to copy. A moved one says where it went until it starts again.
 import { state } from '../core/state.js';
+import { canSession, sessions } from '../people/workers.js';
 import { el, hhmm } from '../core/env.js';
 import { icon } from './icons.js';
 import { toast } from './activity.js';
@@ -19,6 +20,8 @@ function accounts() {
     ...(l.others || []).map((o) => ({ slug: o.name, label: o.label, until: o.until, pct: five(o.windows) }))];
 }
 async function move(s, slug, redraw) {
+  s = sessions.get(s.id);
+  if (!canSession(s, 'changeAccount')) return;
   moving = s.id; openFor = null; redraw();
   const r = await fetch('/api/accounts/move', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: s.id, to: slug }) })
     .then((x) => x.json()).catch(() => ({ ok: false, message: tr('drawer.unreachable') }));
@@ -28,6 +31,7 @@ async function move(s, slug, redraw) {
 }
 // the drawer's buttons and notes for it (redraw: the drawer draws its actions again)
 export function acctActions(s, redraw) {
+  if (!canSession(s, 'changeAccount')) return [];
   const list = accounts();
   if (DEMO || !state.isLocal || list.length < 2) return [];
   if (s.moved) return [el('p', 'dr-note', tr('drawer.acct.moved', { to: s.moved.to }))];

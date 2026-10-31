@@ -8,7 +8,7 @@ import { canvasTex, fitText, mat, put, rbox } from '../scene/blocks.js';
 import { officeChair } from '../world/desks.js';
 import { liftArrive } from '../world/entrance.js';
 import { DESK_SPOTS, DOOR_IN, DOOR_OUT, faceTo } from './navigation.js';
-import { Worker, nearBoss, npcs, sessions, workers } from './workers.js';
+import { Worker, claudeCost, nearBoss, npcs, sessions, workers } from './workers.js';
 import { director } from './director.js';
 import { quip } from './errands.js';
 import { liveWindows } from '../ui/mac-drawer.js';
@@ -90,7 +90,7 @@ function buildDesk() {
 // the open sessions' API cost, by project, and the total
 function costs() {
   const by = new Map();
-  for (const s of sessions.values()) { const c = s.usage?.cost || 0; if (c > 0) by.set(projOf(s), (by.get(projOf(s)) || 0) + c); }
+  for (const s of sessions.values()) { const c = claudeCost(s); if (c > 0) by.set(projOf(s), (by.get(projOf(s)) || 0) + c); }
   const rows = [...by].sort((a, b) => b[1] - a[1]);
   return { rows, total: rows.reduce((a, r) => a + r[1], 0) };
 }
@@ -166,8 +166,8 @@ function nearLimit() {
 function spender() {
   let best = null, bc = 0;
   for (const w of workers.values()) {
-    const s = sessions.get(w.id), c = s?.usage?.cost || 0;
-    if (w.sub || !w.root.visible || w.away || w.street || w.offstage || w.leaving || w.outing || w.onBreak || w.phase === 'walk' || c <= bc) continue;
+    const s = sessions.get(w.id), c = claudeCost(s);
+    if (c === null || w.sub || !w.root.visible || w.away || w.street || w.offstage || w.leaving || w.outing || w.onBreak || w.phase === 'walk' || c <= bc) continue;
     best = w; bc = c;
   }
   return best;

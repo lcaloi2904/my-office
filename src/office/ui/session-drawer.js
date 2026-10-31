@@ -4,7 +4,7 @@ import { $, el, fmtBytes, fmtClock, hhmm, nowMs, pad2, reduceMotion, short, smal
 import { STATUS_LABEL, verb } from './event-text.js';
 import { TYPE_ICON, icon } from './icons.js';
 import { BASE_ZOOM } from '../scene/renderer.js';
-import { colorOf, dn, sessions, workers } from '../people/workers.js';
+import { AGENT_NAME, agentOf, canSession, claudeCost, colorOf, contextPercent, dn, sessions, workers } from '../people/workers.js';
 import { cap, feedRow, fmtTok, fmtUsd, openFromRow, queueUi, toast } from './activity.js';
 import { goView, setView } from './camera-bar.js';
 import { closeMac, doAction, loadMac, macSnap } from './mac-drawer.js';
@@ -43,17 +43,19 @@ export function renderSessionHead() {
   $('ds-dot').style.background = colorOf(s);
   $('ds-name').textContent = dn(s);
   $('ds-dir').textContent = s.origin ? `${s.dir} · ${s.origin}` : s.dir;
-  const st = $('ds-status'); st.textContent = STATUS_LABEL[s.status]; st.dataset.status = s.status;
+  const st = $('ds-status'); st.textContent = STATUS_LABEL[s.status] || tr('drawer.unknownState'); st.dataset.status = s.status;
   $('ds-read').textContent = s.counts?.read ?? 0; $('ds-edit').textContent = s.counts?.edit ?? 0; $('ds-cmd').textContent = s.counts?.cmd ?? 0;
-  $('ds-time').textContent = s.taskStart && s.status !== 'rest' ? fmtClock((nowMs() - s.taskStart) / 1000) : '–';
-  const u = s.usage;
-  $('ds-ctx').textContent = u ? `${Math.round((u.ctx / u.ctxMax) * 100)}%` : '–'; $('ds-ctx').parentElement.title = u ? tr('drawer.tokens', { used: fmtTok(u.ctx), max: fmtTok(u.ctxMax), model: u.model }) : '';
-  $('ds-cost').textContent = u ? fmtUsd(u.cost) : '–'; $('ds-cost').parentElement.title = tr('drawer.priceNote');
+  $('ds-time').textContent = s.taskStart && ['work', 'wait'].includes(s.status) ? fmtClock((nowMs() - s.taskStart) / 1000) : '–';
+  const u = s.usage, pct = contextPercent(s), cost = claudeCost(s);
+  $('ds-ctx').textContent = pct !== null ? `${pct}%` : '–'; $('ds-ctx').parentElement.title = pct !== null ? tr('drawer.tokens', { used: fmtTok(u.ctx), max: fmtTok(u.ctxMax), model: u.model }) : tr('drawer.metricsUnavailable');
+  $('ds-cost').textContent = cost !== null ? fmtUsd(cost) : '–'; $('ds-cost').parentElement.title = cost !== null ? tr('drawer.priceNote') : tr('drawer.metricsUnavailable');
   const n = s.subs?.length || 0;
   $('tab-subs').textContent = n ? tr('drawer.tabSubsN', { n }) : tr('drawer.tabSubs');
   if (actionsSig(s) !== drawnSig) renderActions();   // (it came to rest, went to work, or moved to another account)
 }
 export async function openWindowOf(s) {
+  s = sessions.get(s?.id);
+  if (!canSession(s, 'openWindow')) { toast(tr('drawer.readOnly')); return; }
   if (DEMO) { toast(tr('drawer.demoNoWindow')); return; }
   try {
     const r = await (await fetch(`/api/open${TOKEN ? `?k=${encodeURIComponent(TOKEN)}` : ''}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: s.id }) })).json();
@@ -62,16 +64,21 @@ export async function openWindowOf(s) {
 }
 // what the buttons below depend on
 let drawnSig = '', qrFor = null;   // (qrFor: the session whose Remote Control QR code is shown)
-const actionsSig = (s) => [s.id, s.status === 'rest', s.pid, s.moved?.to, s.acct, state.limits?.others?.length].join('|');
+const actionsSig = (s) => [s.id, agentOf(s), JSON.stringify(s.capabilities), s.link, s.status === 'rest', s.pid, s.moved?.to, s.acct, state.limits?.others?.length].join('|');
 function renderActions() {
   const s = sessions.get(state.selectedId); if (!s) return;
   const box = $('ds-actions'); box.replaceChildren(); drawnSig = actionsSig(s);
-  if (state.isLocal && s.pid) {
+  if (agentOf(s) !== 'claude') {
+    box.append(el('p', 'dr-note', tr(agentOf(s) === 'omp' ? 'drawer.readOnly' : 'drawer.unsupportedAgent')));
+    return;
+  }
+  if (state.isLocal && s.pid && canSession(s, 'openWindow')) {
     const b = el('button', 'btn btn--sm'); b.type = 'button'; b.append(icon('monitor'), tr(s.origin === 'Terminal' ? 'drawer.openWindowTerminal' : s.origin ? 'drawer.openWindowIde' : 'drawer.openWindow'));
     b.title = tr('drawer.openWindowTitle'); b.addEventListener('click', () => openWindowOf(s)); box.append(b);
   }
-  if (state.isLocal && s.pid && s.status === 'rest') box.append(closeSessionButton(s));
+  if (state.isLocal && s.pid && s.status === 'rest' && canSession(s, 'closeSession')) box.append(closeSessionButton(s));
   box.append(...acctActions(s, renderActions));
+  if (!canSession(s, 'remoteControl')) return;
   if (s.link) {
     const a = el('a', 'btn btn--primary btn--sm', tr('drawer.openOnClaude')); a.href = s.link; a.target = '_blank'; a.rel = 'noopener';
     box.append(a);
@@ -101,12 +108,14 @@ function closeSessionButton(s) {
   b.title = mem ? tr('drawer.close.titleMem', { mem: fmtBytes(mem) }) : tr('drawer.close.title');
   b.disabled = closing.has(key);
   b.addEventListener('click', async () => {
+    const current = sessions.get(s.id);
+    if (!canSession(current, 'closeSession') || current.pid !== s.pid || current.status !== 'rest') return;
     if (!armed) { closeArm = key; clearTimeout(closeArmTimer); closeArmTimer = setTimeout(() => { closeArm = null; renderActions(); }, 4500); renderActions(); return; }
     closeArm = null; closing.add(key); renderActions();
     let proc = macSnap?.claude?.find((x) => x.pid === s.pid);
     if (!proc) { await loadMac(); proc = macSnap?.claude?.find((x) => x.pid === s.pid); }
     if (!proc) toast(tr('drawer.close.gone'));
-    else await doAction(`kill:${s.pid}`, { action: 'kill', target: s.pid, start: proc.start });
+    else if (canSession(sessions.get(s.id), 'closeSession') && sessions.get(s.id)?.pid === s.pid && sessions.get(s.id)?.status === 'rest') await doAction(`kill:${s.pid}`, { action: 'kill', target: s.pid, start: proc.start });
     closing.delete(key); loadMac(); if (state.selectedId === s.id) renderActions();
   });
   return b;
@@ -124,6 +133,11 @@ async function loadLog(scrollEnd = false) {
   const agent = tab === 'subs' ? state.subView : null;
   if (tab === 'subs' && !agent) return;
   if (tab === 'act') return;
+  if (!canSession(sessions.get(id), 'readConversation')) {
+    logItems = []; subItems = [];
+    $('ds-body').replaceChildren(el('p', 'chat-empty', tr('drawer.conversationDisabled')));
+    return;
+  }
   if (DEMO) {
     const items = (demoLog.get(agent || id) || []).slice(-120);
     if (agent) { subItems = items; renderSubs(scrollEnd); } else { logItems = items; if (tab === 'chat') renderChat(scrollEnd); }
@@ -132,7 +146,7 @@ async function loadLog(scrollEnd = false) {
   try {
     const r = await fetch(`/api/log?id=${encodeURIComponent(id)}${agent ? `&agent=${encodeURIComponent(agent)}` : ''}${TOKEN ? `&k=${encodeURIComponent(TOKEN)}` : ''}`);
     const d = await r.json();
-    if (id !== state.selectedId) return;
+    if (id !== state.selectedId || !canSession(sessions.get(id), 'readConversation')) return;
     if (agent) { if (agent !== state.subView || tab !== 'subs') return; subItems = d.items || []; renderSubs(scrollEnd); }
     else { logItems = d.items || []; if (tab === 'chat') renderChat(scrollEnd); }
   } catch { if (id === state.selectedId && tab === 'chat' && !logItems.length) $('ds-body').replaceChildren(el('p', 'chat-empty', tr('drawer.chatUnreadable'))); }
@@ -248,7 +262,7 @@ function foldable(details, key) {
   details.addEventListener('toggle', () => { if (details.open) chatOpen.add(key); else chatOpen.delete(key); });
   return details;
 }
-function buildChat(items, who = 'Claude') {
+function buildChat(items, who = 'Claude', isSub = false) {
   const chat = el('div', 'chat');
   if (!items.length) chat.append(el('p', 'chat-empty', tr('drawer.chatEmpty')));
   let steps = null, lastTs = 0;
@@ -280,7 +294,7 @@ function buildChat(items, who = 'Claude') {
     if (it.role === 'summary') {
       const d = foldable(el('details', 'msg-summary'), chatKey(it, 'sum')), sm = el('summary');
       const ic = el('span', 'sum-ico'); ic.append(icon('list'));
-      const tx = el('span', 'sum-txt'); tx.append(el('b', null, tr('drawer.summaryTitle')), el('small', null, tr('drawer.summaryNote')));
+      const tx = el('span', 'sum-txt'); tx.append(el('b', null, tr('drawer.summaryTitle')), el('small', null, tr(agentOf(sessions.get(state.selectedId)) === 'claude' ? 'drawer.summaryNote' : 'drawer.summaryNoteGeneric')));
       const chev = el('span', 'st-chev'); chev.append(icon('chevron'));
       sm.append(ic, tx, chev);
       const body = el('div', 'md'); body.append(mdBlocks(it.text.replace(/^This session is being continued[^\n]*\n+/, '').replace(/^Summary:\s*\n?/, '')));
@@ -288,8 +302,8 @@ function buildChat(items, who = 'Claude') {
     }
     const mine = it.role === 'user', m = el('div', 'msg msg--' + (mine ? 'user' : 'claude'));
     const head = el('div', 'msg-head');
-    if (!mine) { const av = el('span', 'msg-av', who === 'Claude' ? 'C' : tr('drawer.subAvatar')); if (who !== 'Claude') av.dataset.tone = 'blue'; head.append(av); }
-    head.append(el('b', null, mine ? (who === 'Claude' ? tr('drawer.you') : tr('drawer.fromMain')) : who));
+    if (!mine) { const av = el('span', 'msg-av', who === 'Claude' ? 'C' : isSub ? tr('drawer.subAvatar') : who.slice(0, 1).toUpperCase()); if (who !== 'Claude') av.dataset.tone = 'blue'; head.append(av); }
+    head.append(el('b', null, mine ? (isSub ? tr('drawer.fromMain') : tr('drawer.you')) : who));
     if (it.ts) head.append(el('time', null, hhmm(it.ts)));
     if (!mine) { const cp = el('button', 'msg-copy', tr('drawer.copy')); cp.type = 'button'; cp.title = tr('drawer.copyMessage'); cp.addEventListener('click', () => copyText(it.text, cp)); head.append(cp); }
     const body = el('div', 'msg-body md');
@@ -314,7 +328,9 @@ export function renderChat(scrollEnd) {
   const body = $('ds-body');
   const nearEnd = body.scrollHeight - body.scrollTop - body.clientHeight < 80;
   const top = body.scrollTop;
-  body.replaceChildren(buildChat(logItems));
+  const s = sessions.get(state.selectedId), kind = agentOf(s);
+  if (!canSession(s, 'readConversation')) { body.replaceChildren(el('p', 'chat-empty', tr('drawer.conversationDisabled'))); return; }
+  body.replaceChildren(buildChat(logItems, kind === 'claude' ? 'Claude' : AGENT_NAME[kind] || tr('drawer.assistant')));
   if (scrollEnd || nearEnd) body.scrollTop = body.scrollHeight; else body.scrollTop = top;
   syncJump();
 }
@@ -325,6 +341,7 @@ export function renderSubs(scrollEnd = false) {
   if (tab !== 'subs') return;
   const s = sessions.get(state.selectedId), body = $('ds-body');
   if (state.subView) {
+    if (!canSession(s, 'readConversation')) { body.replaceChildren(el('p', 'chat-empty', tr('drawer.conversationDisabled'))); return; }
     const x = subInfo(s, state.subView);
     const nearEnd = body.scrollHeight - body.scrollTop - body.clientHeight < 80;
     const head = el('div', 'sub-head');
@@ -332,7 +349,7 @@ export function renderSubs(scrollEnd = false) {
     back.addEventListener('click', () => { state.subView = null; renderSubs(); });
     const pill = el('span', 'pill', x && !x.endedAt ? tr('drawer.working') : tr('drawer.done')); pill.dataset.status = x && !x.endedAt ? 'work' : 'rest';
     head.append(back, el('b', null, x ? `${x.type}${x.desc ? ': ' + x.desc : ''}` : tr('drawer.subagent')), pill);
-    const wrap = el('div'); wrap.append(head, subItems.length ? buildChat(subItems, x?.type || tr('drawer.subagent')) : el('p', 'chat-empty', tr('drawer.loadingSub')));
+    const wrap = el('div'); wrap.append(head, subItems.length ? buildChat(subItems, x?.type || tr('drawer.subagent'), true) : el('p', 'chat-empty', tr('drawer.loadingSub')));
     body.replaceChildren(wrap);
     if (scrollEnd || nearEnd) body.scrollTop = body.scrollHeight;
     syncJump();
@@ -340,7 +357,7 @@ export function renderSubs(scrollEnd = false) {
   }
   const frag = document.createDocumentFragment();
   const act = s?.subs || [], done = s?.doneSubs || [];
-  if (!act.length && !done.length) frag.append(el('p', 'chat-empty', tr('drawer.noSubs')));
+  if (!act.length && !done.length) frag.append(el('p', 'chat-empty', tr(agentOf(s) === 'claude' ? 'drawer.noSubs' : 'drawer.noObservedSubs')));
   const card = (x, running) => {
     const b = el('button', 'sub-card'); b.type = 'button';
     const ic = el('span', 'fi-ico'); if (running) ic.dataset.tone = 'blue'; ic.append(icon(running ? 'sparkle' : 'check'));

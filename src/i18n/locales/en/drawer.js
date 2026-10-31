@@ -1,5 +1,14 @@
 // The session drawer (ui/session-drawer.js): the conversation, steps, subagents and the session's actions.
 export default {
+  unknownAgent: 'Unknown agent',
+  unknownState: 'Activity unknown',
+  readOnly: 'Read-only observation. Agent controls are not available here.',
+  unsupportedAgent: 'Controls are unavailable for this agent.',
+  conversationDisabled: 'Conversation access is disabled for this agent. No transcript is being read.',
+  metricsUnavailable: 'Not available. Unknown usage is not zero.',
+  assistant: 'Assistant',
+  summaryNoteGeneric: 'A summary of the conversation so far.',
+  noObservedSubs: 'No subagent information has been observed.',
   tokens: '{used} / {max} tokens · {model}',
   priceNote: 'Equivalent list API price (from the price table in azorkai/claude-code-office). On a Pro/Max plan this is not what you pay.',
   tabSubs: 'Subagents',

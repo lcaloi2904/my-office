@@ -4,7 +4,7 @@ import { $, el, fmtBytes, fmtClock, hhmm, nowMs } from '../core/env.js';
 import { STATUS_LABEL, verb } from './event-text.js';
 import { TYPE_ICON, TYPE_TONE, icon } from './icons.js';
 import { hoverRing, selRing } from '../interact/rings.js';
-import { AGENT_NAME, agentMark, agentOf, colorOf, dn, dnOf, sessions, workers } from '../people/workers.js';
+import { AGENT_NAME, agentMark, agentOf, canSession, claudeCost, colorOf, contextPercent, dn, dnOf, sessions, workers } from '../people/workers.js';
 import { renderLite } from './lite.js';
 import { openSession, renderActivity, renderSessionHead, renderSubs, tab, toggleSession } from './session-drawer.js';
 import { macSnap } from './mac-drawer.js';
@@ -102,6 +102,7 @@ function ago(ts) {
   return tr('time.day', { n: Math.floor(s / 86400) });
 }
 export function doingOf(s) {
+  if (railGroupOf(s) === 'unknown') return { ic: 'sparkle', text: tr('drawer.unknownState') };
   if (s.status === 'wait') return { ic: 'alert', text: tr('activity.doing.wait') };
   const where = whereabouts(workers.get(s.id));   // out of the office: at the shop, on the way home…
   if (where) return where;
@@ -120,11 +121,13 @@ export function queueUi() {
   });
 }
 // Rows are keyed by session id and updated in place, so keyboard focus and hover survive live updates. Sessions are
-// grouped (needs you → working → resting, resting can fold away), each row shows how long the current task has run,
+// grouped (needs you, working, resting, unknown; only resting can fold away). Known states show task time,
 // the session's RAM (from the Mac snapshot, by pid) and a 30-minute activity sparkline.
 const railRows = new Map();
 let railOrder = '', railFilter = null, restCollapsed = false;
-const GROUPS = [['wait'], ['work'], ['rest']];   // labels: activity.group.<key>
+const GROUPS = [['wait'], ['work'], ['rest'], ['unknown']]; // Unknown reuses drawer.unknownState.
+const RAIL_STATUSES = new Set(['wait', 'work', 'rest']);
+const railGroupOf = (s) => RAIL_STATUSES.has(s.status) ? s.status : 'unknown';
 let grpEls;
 const SVGNS = 'http://www.w3.org/2000/svg';
 function sparkEl() {
@@ -137,7 +140,7 @@ function setSpark(svg, counts) {
   const max = Math.max(1, ...counts);
   counts.forEach((c, i) => { const h = c ? 2 + Math.round((c / max) * 11) : 1, r = svg.children[i]; r.setAttribute('y', 14 - h); r.setAttribute('height', h); r.classList.toggle('on', c > 0); });
 }
-const metaTime = (s) => (s.status === 'work' && s.taskStart ? fmtClock((nowMs() - s.taskStart) / 1000) : s.status === 'wait' ? tr('activity.waitingFor', { time: ago(s.lastAt) }) : ago(s.lastAt));
+const metaTime = (s) => (railGroupOf(s) === 'unknown' ? '' : s.status === 'work' && s.taskStart ? fmtClock((nowMs() - s.taskStart) / 1000) : s.status === 'wait' ? tr('activity.waitingFor', { time: ago(s.lastAt) }) : ago(s.lastAt));
 function railRow(s) {
   const li = el('li', 'ri-li');
   const b = el('button', 'ri'); b.type = 'button'; b.dataset.sess = s.id;
@@ -168,42 +171,46 @@ function renderRail() {
   const q = query.trim().toLowerCase();
   const rail = $('rail-list'), chips = $('chips');
   const ram = new Map((macSnap?.claude || []).map((c) => [c.pid, c.mem]));
-  const count = { wait: 0, work: 0, rest: 0 };
+  const count = { wait: 0, work: 0, rest: 0, unknown: 0 };
   for (const [id, r] of railRows) if (!sessions.has(id)) { r.li.remove(); r.c.remove(); railRows.delete(id); }
   for (const s of all) {
-    count[s.status] = (count[s.status] || 0) + 1;
+    const group = railGroupOf(s);
+    count[group]++;
     let r = railRows.get(s.id);
     if (!r) { r = railRow(s); railRows.set(s.id, r); }
     const color = colorOf(s), cur = String(s.id === state.selectedId);
-    r.b.dataset.status = s.status; r.b.dataset.done = unseenDone.has(s.id) ? '1' : ''; r.b.setAttribute('aria-current', cur); r.av.style.setProperty('--c', color);
+    r.b.dataset.status = group; r.b.dataset.done = unseenDone.has(s.id) ? '1' : ''; r.b.setAttribute('aria-current', cur); r.av.style.setProperty('--c', color);
     { const k = agentOf(s); if (r.avTxt.firstChild?.dataset?.agent !== k) { r.avTxt.replaceChildren(agentMark(k)); r.av.title = AGENT_NAME[k]; } }
-    const nk = dn(s) + '|' + (s.dir || '') + '|' + (s.origin || '') + (s.link ? '|rc' : '');
+    const remote = canSession(s, 'remoteControl') && s.link;
+    const nk = dn(s) + '|' + (s.dir || '') + '|' + (s.origin || '') + (remote ? '|rc' : '');
     if (r.nameKey !== nk) {
       r.nameKey = nk; r.name.textContent = dn(s); r.top.querySelector('.ri-rc')?.remove(); r.top.querySelector('.ri-proj')?.remove();
       const proj = String(s.dir || '').split('/').filter(Boolean).pop();
       if (proj && proj !== dn(s)) { const pj = el('span', 'ri-proj', proj); pj.title = s.origin ? tr('activity.runsIn', { dir: s.dir, origin: s.origin }) : `${s.dir}`; r.name.after(pj); }
-      if (s.link) { const rc = el('span', 'ri-rc'); rc.title = tr('activity.remoteOn'); rc.append(icon('phone')); r.top.append(rc); }
+      if (remote) { const rc = el('span', 'ri-rc'); rc.title = tr('activity.remoteOn'); rc.append(icon('phone')); r.top.append(rc); }
     }
     r.b.title = `${dn(s)}${s.title ? ` (${s.name})` : ''} · ${s.dir || ''}`;
     const d = doingOf(s);
     if (r.dIcoName !== d.ic) { r.dIcoName = d.ic; r.dIco.replaceChildren(icon(d.ic)); }
     if (r.dTxt.textContent !== d.text) r.dTxt.textContent = d.text;
     r.time.textContent = metaTime(s);
-    const mem = ram.get(s.pid); r.ram.textContent = mem ? fmtBytes(mem) : ''; r.ram.title = mem ? tr('activity.ramTitle') : '';
+    const mem = agentOf(s) === 'claude' ? ram.get(s.pid) : null; r.ram.textContent = mem ? fmtBytes(mem) : ''; r.ram.title = mem ? tr('activity.ramTitle') : '';
     setSpark(r.spark, sparkOf(s.id));
-    const u = s.usage, f = u ? Math.min(1, u.ctx / u.ctxMax) : 0;
+    const u = contextPercent(s) !== null ? s.usage : null;
+    const f = u ? Math.min(1, u.ctx / u.ctxMax) : 0;
     r.ctx.hidden = !u; r.ctxB.style.width = `${Math.round(f * 100)}%`; r.ctxB.className = f > 0.85 ? 'hi' : f > 0.6 ? 'mid' : '';
-    r.ctx.title = u ? tr('activity.ctxTitle', { used: fmtTok(u.ctx), max: fmtTok(u.ctxMax), cost: fmtUsd(u.cost) }) : '';
+    const cost = claudeCost(s);
+    r.ctx.title = u ? tr('activity.ctxTitle', { used: fmtTok(u.ctx), max: fmtTok(u.ctxMax), cost: cost === null ? '–' : fmtUsd(cost) }) : '';
     const subsNow = s.subs || [];
     const sig = subsNow.map((x) => `${x.id}:${x.last?.label || ''}:${x.desc}`).join('|');
     if (sig !== r.subSig) { r.subSig = sig; r.subList.replaceChildren(...subsNow.map((x) => subRow(s, x))); }
     r.subList.hidden = !subsNow.length;
     const match = !q || s.name.toLowerCase().includes(q) || String(s.title || '').toLowerCase().includes(q) || String(s.dir || '').toLowerCase().includes(q);
     const folded = s.status === 'rest' && restCollapsed && !q && railFilter !== 'rest';
-    r.li.hidden = !match || (railFilter && s.status !== railFilter) || folded;
-    r.c.dataset.status = s.status; r.c.setAttribute('aria-current', cur); r.cd.style.background = color;
+    r.li.hidden = !match || (railFilter && group !== railFilter) || folded;
+    r.c.dataset.status = group; r.c.setAttribute('aria-current', cur); r.cd.style.background = color;
     if (r.cn.textContent !== dn(s)) r.cn.textContent = dn(s);
-    r.cs.textContent = STATUS_LABEL[s.status];
+    r.cs.textContent = group === 'unknown' ? tr('drawer.unknownState') : STATUS_LABEL[group];
   }
   for (const [k] of GROUPS) { const g = grpEls[k]; g.n.textContent = count[k] || 0; g.li.hidden = !count[k] || (railFilter && railFilter !== k); }
   grpEls.rest.b.setAttribute('aria-expanded', String(!restCollapsed || !!q || railFilter === 'rest'));
@@ -212,7 +219,7 @@ function renderRail() {
   const ord = all.map((s) => s.id + s.status).join();
   if (ord !== railOrder) {
     railOrder = ord;
-    for (const [k] of GROUPS) { rail.append(grpEls[k].li); for (const s of all) if (s.status === k) rail.append(railRows.get(s.id).li); }
+    for (const [k] of GROUPS) { rail.append(grpEls[k].li); for (const s of all) if (railGroupOf(s) === k) rail.append(railRows.get(s.id).li); }
     for (const s of all) chips.append(railRows.get(s.id).c);
   }
   $('empty').hidden = all.length > 0 || !state.connectedOnce;
@@ -234,7 +241,7 @@ export function renderHud() {
   $('feed-stats').replaceChildren(...KPIS.map(([k, ic]) => {
     const label = tr(`activity.kpi.${k}`);
     const d = el('div', k === 'cost' ? 'kpi kpi--cost' : 'kpi'), i = el('span', 'kpi-ic'); i.append(icon(ic));
-    const b = el('b', null, k === 'cost' ? fmtUsd(list.reduce((a, s) => a + (s.usage?.cost || 0), 0)) : num(state.stats[k] || 0));
+    const b = el('b', null, k === 'cost' ? fmtUsd(list.reduce((a, s) => a + (claudeCost(s) ?? 0), 0)) : num(state.stats[k] || 0));
     if (k === 'cost') b.prepend(el('small', null, '≈'));   // (an estimate: the list price, not a bill)
     d.append(i, b, el('span', null, label)); d.title = k === 'cost' ? tr('activity.costTitle') : tr('activity.kpiToday', { label });
     return d;
@@ -282,7 +289,7 @@ export function setup() {
   grpEls = Object.fromEntries(GROUPS.map(([k]) => {
     const li = el('li', 'grp'); li.dataset.g = k;
     const b = el('button', 'grp-btn'); b.type = 'button'; b.dataset.g = k;
-    const n = el('b'); b.append(el('span', null, tr(`activity.group.${k}`)), n);
+    const n = el('b'); b.append(el('span', null, tr(k === 'unknown' ? 'drawer.unknownState' : `activity.group.${k}`)), n);
     if (k === 'rest') { const ch = el('span', 'grp-chev'); ch.append(icon('chevron')); b.append(ch); } else b.disabled = true;
     li.append(b); return [k, { li, b, n }];
   }));

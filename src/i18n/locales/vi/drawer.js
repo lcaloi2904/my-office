@@ -1,4 +1,13 @@
 export default {
+  unknownAgent: 'Agent chưa xác định',
+  unknownState: 'Chưa xác định hoạt động',
+  readOnly: 'Chỉ quan sát. Không hỗ trợ điều khiển agent tại đây.',
+  unsupportedAgent: 'Chưa hỗ trợ điều khiển agent này.',
+  conversationDisabled: 'Quyền xem hội thoại của agent này đang tắt. Không có transcript nào được đọc.',
+  metricsUnavailable: 'Chưa có dữ liệu. Usage chưa xác định không phải bằng 0.',
+  assistant: 'Trợ lý',
+  summaryNoteGeneric: 'Bản tóm tắt hội thoại đến thời điểm này.',
+  noObservedSubs: 'Chưa quan sát được thông tin subagent.',
   tokens: '{used} / {max} token · {model}',
   priceNote: 'Giá API niêm yết tương đương (theo bảng giá của azorkai/claude-code-office). Với gói Pro/Max đây không phải số tiền bạn trả.',
   tabSubs: 'Trợ lý',

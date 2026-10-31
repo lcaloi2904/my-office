@@ -1,6 +1,6 @@
 // List mode: the sessions as cards, no 3D.
 import { $, el, fmtClock, nowMs, short } from '../core/env.js';
-import { colorOf, dn, sessions } from '../people/workers.js';
+import { AGENT_NAME, agentOf, colorOf, contextPercent, dn, sessions } from '../people/workers.js';
 import { doingOf } from './activity.js';
 import { openSession } from './session-drawer.js';
 import { closePlace } from '../interact/place-cards.js';
@@ -18,7 +18,8 @@ export function setLite(on) {
 export function renderLite() {
   if (!lite) return;
   const box = $('lite'), list = [...sessions.values()];
-  const groups = [['wait', tr('lite.wait'), (s) => s.status === 'wait'], ['work', tr('lite.work'), (s) => s.status === 'work'], ['rest', tr('lite.rest'), (s) => s.status === 'rest']];
+  const groups = [['wait', tr('lite.wait'), (s) => s.status === 'wait'], ['work', tr('lite.work'), (s) => s.status === 'work'], ['rest', tr('lite.rest'), (s) => s.status === 'rest'],
+    ['unknown', tr('drawer.unknownState'), (s) => !['wait', 'work', 'rest'].includes(s.status)]];
   const frag = document.createDocumentFragment();
   if (!list.length) frag.append(el('p', 'lite-empty', tr('lite.empty')));
   for (const [key, title, f] of groups) {
@@ -26,12 +27,15 @@ export function renderLite() {
     frag.append(el('h3', 'lite-h', `${title} · ${rows.length}`));
     for (const s of rows) {
       const c = el('button', 'lite-card'); c.type = 'button'; c.dataset.status = key; c.style.setProperty('--c', colorOf(s));
-      const st = doingOf(s), top = el('div', 'lite-top');
+      const st = key === 'unknown' ? { text: tr('drawer.unknownState') } : doingOf(s), top = el('div', 'lite-top');
       top.append(el('i'), el('b', null, dn(s)));
+      const kind = agentOf(s);
+      if (kind !== 'claude') top.append(el('span', 'ri-proj', AGENT_NAME[kind]));
       const proj = String(s.dir || '').split('/').filter(Boolean).pop(); if (proj && proj !== dn(s)) top.append(el('span', 'ri-proj', proj));
       c.append(top, el('span', 'lite-now', st.text));
       if (s.lastPrompt) c.append(el('span', 'lite-task', `“${short(s.lastPrompt, 90)}”`));
-      const meta = [s.subs?.length ? tr('lite.subs', { n: s.subs.length }) : '', s.usage ? tr('lite.ctx', { pct: Math.round((s.usage.ctx / s.usage.ctxMax) * 100) }) : '', s.taskStart && s.status !== 'rest' ? fmtClock((nowMs() - s.taskStart) / 1000) : ''].filter(Boolean).join(' · ');
+      const pct = contextPercent(s);
+      const meta = [s.subs?.length ? tr('lite.subs', { n: s.subs.length }) : '', pct !== null ? tr('lite.ctx', { pct }) : '', s.taskStart && s.status !== 'rest' && key !== 'unknown' ? fmtClock((nowMs() - s.taskStart) / 1000) : ''].filter(Boolean).join(' · ');
       if (meta) c.append(el('small', null, meta));
       c.addEventListener('click', () => openSession(s.id));
       frag.append(c);

@@ -28,6 +28,16 @@ import { createGit } from './git.mjs';
 import { weekSummary } from './wrapped.mjs';
 import { createPrefs } from './prefs.mjs';
 import { pickLang, createT } from '../src/i18n/index.js';
+import { createAgentRegistry } from './agents/registry.mjs';
+import { createClaudeAdapter } from './agents/claude/compat.mjs';
+import { projectClaudeSession } from './agents/projection.mjs';
+import { isClaudeRequest, resolveOmpMode } from './agents/schema.mjs';
+
+// Phase 02 is a compatibility seam only: requesting files/hybrid never opens agent data.
+// Config/roots/ingress are intentionally not loaded until a live adapter is approved.
+const OMP_MODE = resolveOmpMode(process.env.OFFICE_OMP);
+const ompAvailability = Object.freeze({ requestedMode: OMP_MODE, effectiveMode: 'off',
+  reason: OMP_MODE === 'off' ? 'disabled' : 'adapter-not-implemented' });
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = Number(process.env.OFFICE_PORT) || 4310;
@@ -267,7 +277,7 @@ function freeDesk() {
   return -1;
 }
 const pubSub = (x) => ({ id: x.id, type: x.type, desc: x.desc || '', last: x.last || null, startedAt: x.startedAt, endedAt: x.endedAt || null, steps: x.steps || 0 });
-const pub = (s) => ({ id: s.id, pid: s.pid, name: s.name, title: s.title || '', dir: tilde(s.cwd), link: s.link, desk: s.desk, status: s.status, lastPrompt: s.lastPrompt && oneLine(unwrapPaste(s.lastPrompt)),
+const legacyPub = (s) => ({ id: s.id, pid: s.pid, name: s.name, title: s.title || '', dir: tilde(s.cwd), link: s.link, desk: s.desk, status: s.status, lastPrompt: s.lastPrompt && oneLine(unwrapPaste(s.lastPrompt)),
   taskStart: s.taskStart, counts: s.counts, subs: Object.values(s.subs).map(pubSub), doneSubs: (s.doneSubs || []).map(pubSub), last: s.last, acct: acctOf(s),
   entry: s.entry || '', moved: s.parked ? { to: acctShown(s.parked.to), at: s.parked.at } : null,
   lastAt: s.lastEventAt || s.createdAt, doneAt: s.doneAt || 0, todos: s.todos || [], lastReply: s.lastReply || '', origin: s.origin || '',
@@ -275,6 +285,14 @@ const pub = (s) => ({ id: s.id, pid: s.pid, name: s.name, title: s.title || '', 
   dayFirst: s.dayFirst || null,
   git: gitOf(s),
   usage: s.usage?.model ? { cost: Math.round(s.usage.cost * 100) / 100, ...liveCtx(s), model: s.usage.model, out: s.usage.out } : null });
+// Keep the legacy projection intact; only add server-owned agent metadata.
+const pub = (s) => projectClaudeSession(legacyPub(s));
+const agents = createAgentRegistry({ adapters: [createClaudeAdapter({
+  listSessions: () => [...sessions.values()],
+  resolveSession: (id) => [...sessions.values()].find((s) => s.id === id) || null,
+  publicSession: legacyPub,
+  readLog,
+})] });
 function gitOf(s) { const r = s.cwd && git.repoOf(s.cwd); return r ? { repo: r.name, branch: r.branch, dirty: r.dirty, ahead: r.ahead, ci: r.ci, ciName: r.ciName, ciUrl: r.ciUrl, born: r.born || null } : null; }
 // context: exact from the status line while it reports (last 15 min), else estimated from the transcript
 const liveCtx = (s) => (s.live?.ctxMax && s.live.ctx != null && Date.now() - s.live.at < 15 * 60e3 ? { ctx: s.live.ctx, ctxMax: s.live.ctxMax, exact: true } : { ctx: s.usage.ctx, ctxMax: ctxMax(s.usage) });
@@ -446,7 +464,7 @@ const REPLAY_KEEP_DAYS = 7;
 const RECORDED = new Set(['ev', 'sess', 'gone', 'stats']);
 fs.mkdirSync(REPLAY_DIR, { recursive: true });
 let rec = { day: '', out: null, snapAt: 0 };
-const replaySnap = () => ({ k: 'snap', sessions: [...sessions.values()].map(pub), feed: feed.slice(-40), stats });
+const replaySnap = () => ({ k: 'snap', sessions: agents.list(), feed: feed.slice(-40), stats });
 function record(m) {
   const t = Date.now(), day = today();
   if (day !== rec.day) {
@@ -1770,7 +1788,7 @@ const server = http.createServer((req, res) => {
   }
   if (req.method === 'GET' && url.pathname === '/api/doctor') {
     if (!isLoopback(req)) { res.writeHead(403).end(); return; }
-    json(res, 200, { uptime: Math.round((Date.now() - startedAt) / 1000), lastEventAt: lastHookAt, sessions: sessions.size, pending: pending.size, node: process.versions.node, statusAt, limitsAt: planLimits?.at || 0, limitsSource: planLimits?.source || null, usageNote: noteText() });
+    json(res, 200, { uptime: Math.round((Date.now() - startedAt) / 1000), lastEventAt: lastHookAt, sessions: sessions.size, pending: pending.size, node: process.versions.node, statusAt, limitsAt: planLimits?.at || 0, limitsSource: planLimits?.source || null, usageNote: noteText(), agents: { omp: ompAvailability, diagnostics: agents.diagnostics() } });
     return;
   }
   if (req.method === 'POST' && url.pathname === '/hook/question') {
@@ -1922,7 +1940,12 @@ const server = http.createServer((req, res) => {
       if (!mac && !prefs.get('phoneTasks')) { json(res, 403, { ok: false, code: 'notAllowed', message: tr('chat.task.notAllowed') }); return; }
       // who it goes to: a conversation the office knows (carried on itself, the very one), or a project folder (a new
       // conversation there, or the one you started there); one way for both the chat's "Gửi tới" and 📋 Giao việc
-      const s = b?.sid && [...sessions.values()].find((x) => x.sid === String(b.sid) && x.cwd);
+      if (!isClaudeRequest(b)) { json(res, 403, { ok: false, code: 'agentReadOnly' }); return; }
+      const target = b.id ? agents.resolveForControl(String(b.id), 'startTask') : null;
+      if (b.id && (!target || (b.sid && String(b.sid) !== target.session.sid))) { json(res, 403, { ok: false, code: 'agentReadOnly' }); return; }
+      const s = target?.session || (b.sid && [...sessions.values()].find((x) => x.sid === String(b.sid) && x.cwd));
+      // An explicit session target may not fall back to launching a new task in a directory.
+      if ((b.id || b.sid) && (!s?.sid || !s.cwd)) { json(res, 400, { ok: false, code: 'noDir', message: tr('chat.task.noDir') }); return; }
       const want = String(b?.dir || '').replace(/^~(?=$|\/)/, os.homedir()), pdir = !s && knownDirs.find((d) => d === want);
       if (!s && !pdir) { json(res, 400, { ok: false, code: 'noDir', message: tr('chat.task.noDir') }); return; }
       const text = String(b?.text || '').trim().slice(0, 4000), images = (Array.isArray(b?.images) ? b.images : []).slice(0, 4).map(String);
@@ -2035,7 +2058,9 @@ const server = http.createServer((req, res) => {
     const sameOrigin = sameOriginOf(req);
     if (!isLoopback(req) || !sameOrigin || !String(req.headers['content-type'] || '').startsWith('application/json')) { json(res, 403, { ok: false, message: tr('server.api.openOnMac') }); return; }
     readJson(req).then(async (b) => {
-      const s = [...sessions.values()].find((x) => x.id === String(b?.id || ''));
+      const target = isClaudeRequest(b) && agents.resolveForControl(String(b.id || ''), 'openWindow');
+      if (!target) { json(res, 403, { ok: false, code: 'agentReadOnly' }); return; }
+      const s = target.session;
       const r = await openWindow(s);
       fsp.appendFile(ACTION_LOG, `${new Date().toISOString()} open ${s?.name || '?'} -> ${r.ok ? r.app : r.message}\n`).catch(() => {});
       json(res, 200, r);
@@ -2049,7 +2074,9 @@ const server = http.createServer((req, res) => {
       if (url.pathname === '/api/accounts') { json(res, 200, await prepareAccount(b?.name)); return; }
       if (url.pathname === '/api/accounts/auto') { json(res, 200, setSwitch({ ...(b?.on !== undefined && { auto: !!b.on }), ...(b?.move !== undefined && { move: !!b.move }) })); return; }
       if (url.pathname === '/api/accounts/move') {   // { id: the session, to: the account ('' = the main one) }
-        const s = [...sessions.values()].find((x) => x.id === String(b?.id || '')), to = b?.to ? slugOf(b.to) : '';
+        const target = isClaudeRequest(b) && agents.resolveForControl(String(b.id || ''), 'changeAccount');
+        if (!target) { json(res, 403, { ok: false, code: 'agentReadOnly' }); return; }
+        const s = target.session, to = b.to ? slugOf(b.to) : '';
         json(res, 200, s ? await moveSession(s, to) : { ok: false, message: tr('server.move.notOpen') });
         return;
       }
@@ -2124,7 +2151,7 @@ const server = http.createServer((req, res) => {
   // everything as it is now, the first message a page gets (the Mac's own addresses and PIN only for the Mac)
   const snapNow = (local) => {
     const lanOn = lanIsOn();
-    return { k: 'snap', lang: prefs.lang(), sessions: [...sessions.values()].map(pub), perms: [...pending.values()].map(permPub), feed, stats, local, todos, limits: limitsOut(), limitsNote: noteText(), trophies: trophies.pub(),
+    return { k: 'snap', lang: prefs.lang(), sessions: agents.list(), perms: [...pending.values()].map(permPub), feed, stats, local, todos, limits: limitsOut(), limitsNote: noteText(), trophies: trophies.pub(),
       lan: local && lanOn ? lanUrl() : null, lanBase: local && lanOn ? lanUrl(false) : null, pin: local ? currentPin() : null,
       ts: local && lanOn ? tsUrl() : null, tsHere: !!tsUrl(), phoneApprove: !!prefs.get('phoneApprove'), phoneTasks: !!prefs.get('phoneTasks'), lanFixed: local && lanFixed, build: BUILD };
   };
@@ -2161,9 +2188,10 @@ const server = http.createServer((req, res) => {
     return;
   }
   if (url.pathname === '/api/log') {
-    const s = [...sessions.values()].find((x) => x.id === url.searchParams.get('id'));
-    if (!s) { json(res, 404, { items: [] }); return; }
-    readLog(s, 120, url.searchParams.get('agent')).then((items) => json(res, 200, { items })).catch(() => json(res, 200, { items: [] }));
+    const id = url.searchParams.get('id'), owner = agents.resolve(id);
+    if (!owner) { json(res, 404, { items: [] }); return; }
+    if (!owner.publicSession.capabilities.readConversation) { json(res, 403, { items: [], code: 'agentReadOnly' }); return; }
+    agents.readConversation(id, 120, url.searchParams.get('agent')).then((items) => json(res, 200, { items })).catch(() => json(res, 200, { items: [] }));
     return;
   }
   if (url.pathname === '/api/timeline') {
@@ -2209,6 +2237,7 @@ const server = http.createServer((req, res) => {
 const DEV = process.argv.includes('--dev');
 // this build's id: a page from an older one (the office was updated and restarted) loads the new one by itself
 const BUILD = (() => { try { return fs.readFileSync(path.join(ROOT, process.env.OFFICE_DIST_DIR || '.next', 'BUILD_ID'), 'utf8').trim(); } catch { return ''; } })();
+server.on('close', () => { void agents.dispose(); });
 const nextApp = next({ dev: DEV, dir: ROOT, hostname: HOST, port: PORT, httpServer: server });
 const nextHandle = nextApp.getRequestHandler();
 try { await nextApp.prepare(); }
