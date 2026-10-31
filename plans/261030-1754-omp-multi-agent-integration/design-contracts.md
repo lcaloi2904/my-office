@@ -4,7 +4,7 @@
 
 Đây là thiết kế mục tiêu; các phần chưa triển khai vẫn **PROPOSED**, không phải API đã tồn tại. Cập nhật 31/10/2026: người dùng đã phê duyệt Phase 02 synthetic-only và unit/lint/typecheck; bốn module schema/registry/projection/Claude facade, source guards và test files đã được tạo. Chi tiết source facts và giới hạn ở [Phase 02 implementation](./reports/phase-02-implementation.md). OMP decoder/store/bridge/extension chưa tồn tại; không có live activation.
 
-Production chỉ đăng ký Claude. `OFFICE_OMP` được parse, nhưng `files`/`hybrid` vẫn effective off với diagnostic `adapter-not-implemented`; config/roots không được đọc. Claude `sessionKey` hiện là compatibility key theo public ID cũ, chưa phải durable source key qua restart. OMP opaque identity đã có cho synthetic records. Không suy các điểm này thành full contract completion.
+[Lịch sử Phase 02 — đã lỗi thời từ Phase 03/04: `files` và `hybrid` hiện có adapter; hybrid thêm ingress loopback, xem Phase 04 report.] Production chỉ đăng ký Claude. `OFFICE_OMP` được parse, nhưng `files`/`hybrid` vẫn effective off với diagnostic `adapter-not-implemented`; config/roots không được đọc. Claude `sessionKey` hiện là compatibility key theo public ID cũ, chưa phải durable source key qua restart. OMP opaque identity đã có cho synthetic records. Không suy các điểm này thành full contract completion.
 
 G1 live vẫn BLOCKED; G2 còn verification gap (lint/typecheck thiếu dependencies, build/E2E chưa chạy). Các permission/decision records của lượt Phase 01 ở mục 10 là lịch sử; approval mới chỉ mở source synthetic + nhóm U, không mở roots/privacy dữ liệu thật, install hoặc các phase sau.
 
@@ -125,7 +125,7 @@ Người dùng đã yêu cầu `ak:cook` với `phase-01-start.md`: **chỉ Phas
 
 | ID | Quyết định | Evidence / contract đề nghị | Gate / trạng thái hiện tại |
 |---|---|---|---|
-| D1 | Version/build OMP thực tế | Public source pin `6a86df8539fccf3ad7818081266e554022fc21bc` có package version `18.14.0`, schema `3`; không phải version binary của người dùng. Chưa có metadata path được phép để xác minh bản cài | G1 BLOCKED: installed version/build UNKNOWN |
+| D1 | Version/build OMP thực tế (31/10: `omp --version` = 18.14.1, đã cài ở máy này) | Public source pin `6a86df8539fccf3ad7818081266e554022fc21bc` có package version `18.14.0`, schema `3`; không phải version binary của người dùng. Chưa có metadata path được phép để xác minh bản cài | G1 BLOCKED: installed version/build UNKNOWN |
 | D2 | OMP chạy Windows, WSL hay cả hai | My Office root và Cloud Harness Linux/WSL đã xác nhận; môi trường Windows 11 + WSL2 do người dùng cung cấp. Không suy ra host/profile của OMP | G1 BLOCKED: OMP topology UNKNOWN |
 | D3 | Approved roots/profiles/path mappings | Allowlist thực tế vẫn rỗng; cần source ID, host/profile, root tuyệt đối và mapping cụ thể. Path trong fixture là chuỗi giả, không phải quyền đọc | G1 BLOCKED: NEEDS APPROVAL |
 | D4 | Privacy | Metadata allowlist; conversation opt-in riêng; không arbitrary title, prompt, args/output, credential/cache identity hoặc outbound translation. Mới là thiết kế, chưa bật đọc dữ liệu | G1 PROPOSED / NEEDS APPROVAL |

@@ -36,7 +36,7 @@ background service: launchd, a systemd user service, or a script in the Windows 
 ### Optional: OMP history (file-only, off by default)
 
 `OFFICE_OMP=files` plus `OFFICE_OMP_CONFIG=<absolute path to a JSON file>` lets the office list saved OMP session files. Without both,
-nothing is read: no home or profile discovery, no OMP process, no SDK. `hybrid` is not implemented and stays off.
+nothing is read: no home or profile discovery, no OMP process, no SDK. `OFFICE_OMP=hybrid` is the same plus the live observer ingress (below).
 
 The config is `{ "version": 1, "sources": [{ "id", "root", "pathStyle": "win32"|"posix", "conversation": false, "projectMappings": [{ "from", "projectId", "worktreeId" }] }], "limits": {…} }`.
 Each `root` is an absolute folder with no symlink or junction in its path; files are opened read-only and only inside it. `limits` can
@@ -52,6 +52,25 @@ only lower the defaults in `server/agents/omp/paths.mjs`. `conversation` is off 
 - Nested child transcripts are counted as historical candidates only; subagent, advisor and tombstone semantics are not interpreted.
 - Controls (open, close, account, remote, tasks) stay Claude-only. Tests: `tests/unit/omp-*.test.mjs`; browser smoke:
   `playwright test -c playwright.omp.config.ts` (synthetic folders from `tests/e2e/omp-fixture.mjs`).
+
+### Optional: OMP live observer (`hybrid`, off by default)
+
+`OFFICE_OMP=hybrid` (with the same config) adds `POST /ingest/omp/v1`, fed by `integrations/omp/office-observer.js` (see its
+README; the office never installs it into OMP). The ingress is telemetry only:
+
+- It answers 404 unless hybrid is on. Otherwise a request must come from this computer's loopback, not through the
+  tunnel, with no `Origin` header, and carry `Authorization: Bearer <token>`. Tokens are per configured source
+  (`data/omp-ingest.json`, created on first start) and a token can only report sessions of its own source `id`. Bodies are
+  capped (64 KiB, 32 events, 5 s) and rate limited per source before they are parsed; unknown fields are dropped.
+  Nothing it returns is a command or a path (`server/agents/omp/bridge.mjs`).
+- Events go through `omp/lifecycle.mjs`: runtime instance + generation + sequence (a retry is idempotent, a late event of an
+  old generation is refused, a reconnect snapshot replaces volatile state), a pending-tool set, waiting reasons, and
+  heartbeat staleness judged by the office's own clock (30 s stale, 90 s disconnected; never "finished").
+- One conversation is one actor. The runtime owns liveness; a pinned file owns history, counts and recorded usage, which
+  replace the runtime's provisional usage instead of adding to it. Live rows are sent to this computer's pages only, like
+  pinned history.
+- Delivery is not guaranteed and not durable: an acknowledgement means "applied in memory". Tests: `omp-lifecycle`,
+  `omp-bridge`, `omp-live-merge`, `omp-observer`. The observer has only been run against a fake `pi`.
 
 Runtime state lives in `data/` (git-ignored): the access token, phone PIN, replay logs (7 days), totals, caches.
 

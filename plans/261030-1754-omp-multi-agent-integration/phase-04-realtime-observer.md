@@ -1,7 +1,7 @@
 ---
 phase: 4
 title: "Observer extension và hybrid realtime"
-status: pending
+status: in-progress
 priority: P1
 effort: "Chưa ước lượng"
 dependencies: [3]
@@ -70,12 +70,14 @@ JS factory không bị typecheck đầy đủ trong cấu hình hiện tại; sc
 
 ## Todo
 
-- [ ] Versioned event emission/support matrix.
-- [ ] Factory isolation + bounded sender + cleanup.
-- [ ] Ingress auth/limits và ownership negative tests.
-- [ ] Lifecycle + idempotent reconciliation + reconnect.
-- [ ] Optional live smoke sau D6; report unsupported modes rõ ràng.
-- [ ] G4 evidence và approval Phase 5.
+Kết quả và bằng chứng: [Phase 04 implementation](./reports/phase-04-implementation.md).
+
+- [x] Versioned event emission/support matrix — viết trong `integrations/omp/README.md`; emission trên bản thật **chưa xác minh** (R10).
+- [x] Factory isolation + bounded sender + cleanup — `omp-observer.test.mjs` (fake pi).
+- [x] Ingress auth/limits và ownership negative tests — `omp-bridge.test.mjs` + smoke server thật.
+- [x] Lifecycle + idempotent reconciliation + reconnect — `omp-lifecycle`, `omp-live-merge`.
+- [~] Optional live smoke sau D6 — D6 duyệt; 18.14.1 print + rpc PASS (session/turn/tool/usage/shutdown, new/resume/fork, approval, merge file thật); observer đã cài vĩnh viễn. Chưa chạy: plan review (không thấy event dưới `--plan-yolo`), interactive, subagent, `ask`.
+- [ ] G4 evidence và approval Phase 5 — chưa đóng: R10, S7, ACL Windows còn thiếu.
 
 ## Risks / Stop conditions / Rollback
 

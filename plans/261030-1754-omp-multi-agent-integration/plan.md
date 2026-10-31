@@ -21,6 +21,8 @@ Quyết định này thay thế mọi chỉ dẫn G2 OPEN/dừng tại Phase 02 
 
 **G3: CLOSED WITH ACCEPTED EXCEPTIONS** (31/10/2026), theo yêu cầu của người dùng: “Đóng G3 đi”. Phase 03 (OMP file-only observer) đã triển khai và kiểm chứng trên fixture synthetic và, ở mức cấu trúc, trên cây OMP thật; đây **không phải kết luận mọi kiểm thử PASS**. Ngoại lệ, bằng chứng và ranh giới quyền nằm tại [G3 acceptance](./reports/phase-03-g3-acceptance.md). OMP production vẫn mặc định tắt; Phase 04, G1 live, extension và hybrid chưa được mở. Chưa commit/push.
 
+**Cập nhật 31/10/2026 — Phase 04:** phần synthetic đã triển khai (lifecycle, ingress hybrid loopback, observer factory, hợp nhất file+live; 205/205 unit, lint/typecheck PASS, smoke server thật trên cổng riêng). **G4 vẫn OPEN**: R10 đã phủ print + rpc (new/resume/fork, approval, merge file thật) trên 18.14.1, observer đã cài vĩnh viễn vào OMP máy này (người dùng duyệt) và `start-office.cmd` chạy hybrid; còn thiếu plan review/interactive/subagent/`ask`, S7 (cross-host) và ACL token Windows. Chi tiết: [Phase 04 report](./reports/phase-04-implementation.md). Chưa commit/push.
+
 ## Overview
 
 Kết quả mục tiêu: quan sát đồng thời Claude Code và OMP trên UI hiện có, không cho dashboard điều khiển OMP. Triển khai tuần tự: khóa contracts → compatibility seam → file-only PoC → hybrid realtime → UI đầy đủ → hardening.
@@ -38,7 +40,7 @@ Baseline: `/mnt/e/vide-code/my-office`, branch `main`, HEAD `0ff1e84e2a96325edfc
 | 1 | [Baseline, compatibility và quyết định](./phase-01-start.md) | Không | G1: contracts/roots/privacy được chốt | Pending |
 | 2 | [Compatibility seam và cô lập Claude](./phase-02-compatibility-seam.md) | 1 | G2: CLOSED WITH ACCEPTED EXCEPTIONS — [quyết định](./reports/phase-02-g2-acceptance.md) | In progress — RAIL-01 fixed; regression verification pending |
 | 3 | [OMP file-only observer](./phase-03-omp-file-observer.md) | 2 | G3: CLOSED WITH ACCEPTED EXCEPTIONS — [quyết định](./reports/phase-03-g3-acceptance.md) | Completed with exceptions |
-| 4 | [Observer extension và hybrid realtime](./phase-04-realtime-observer.md) | 3 | G4: bounded bridge; idempotent reconciliation | Pending |
+| 4 | [Observer extension và hybrid realtime](./phase-04-realtime-observer.md) | 3 | G4: bounded bridge; idempotent reconciliation — OPEN (R10/S7/ACL chưa chạy) | In progress — synthetic done, [report](./reports/phase-04-implementation.md) |
 | 5 | [UI/UX và observability đầy đủ](./phase-05-ui-observability.md) | 4 | G5: mixed-agent E2E, subagents, replay | Pending |
 | 6 | [Cross-OS, security, performance và rollout](./phase-06-hardening-rollout.md) | 5 | G6: regression + số đo + docs + rollback | Pending |
 
