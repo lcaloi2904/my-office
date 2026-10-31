@@ -1,0 +1,27 @@
+# Keep text files LF in Git and working trees across Windows, WSL2, Linux, and macOS.
+* text=auto eol=lf
+
+# Windows Command Prompt scripts use CRLF.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Never apply line-ending conversion to binary assets.
+*.png -text
+*.jpg -text
+*.jpeg -text
+*.gif -text
+*.ico -text
+*.webp -text
+*.avif -text
+*.bmp -text
+*.woff -text
+*.woff2 -text
+*.ttf -text
+*.otf -text
+*.mp3 -text
+*.mp4 -text
+*.webm -text
+*.pdf -text
+*.zip -text
+*.glb -text
+*.wasm -text
