@@ -25,6 +25,43 @@ export async function setOmpPin(id, on) {
   } catch { toast(tr('activity.omp.errOther')); return false; }
 }
 
+let hiddenRevision = 0;
+const HIDE_ERRORS = () => ({ conflict: tr('activity.omp.errHideConflict'), limit: tr('activity.omp.errHideLimit'), 'unknown-session': tr('activity.omp.errUnknown'), 'store-corrupt': tr('activity.omp.errHideCorrupt') });
+
+/** Hide or show an OMP session in the office (the process, telemetry and files are untouched). -> true when applied */
+export async function setOmpHidden(id, hidden) {
+  const post = async () => {
+    const r = await fetch(`/api/omp/visibility${q('?')}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, hidden, expectedRevision: hiddenRevision }) });
+    return { r, d: await r.json().catch(() => ({})) };
+  };
+  try {
+    let { r, d } = await post();
+    if (r.status === 409 && Number.isSafeInteger(d.revision)) { hiddenRevision = d.revision; ({ r, d } = await post()); }   // another tab changed the list: retry once on the current revision
+    if (!r.ok || !d.ok) { toast(HIDE_ERRORS()[d.code] || tr('activity.omp.errOther')); return false; }
+    hiddenRevision = d.revision;
+    toast(tr(hidden ? 'activity.omp.hidden' : 'activity.omp.shown'));
+    if (dlg?.open) loadHidden();
+    return true;
+  } catch { toast(tr('activity.omp.errOther')); return false; }
+}
+
+async function loadHidden() {
+  const box = $('omp-hidden-list'); if (!box) return;
+  try {
+    const r = await fetch(`/api/omp/visibility${q('?')}`);
+    if (!r.ok) throw new Error('visibility');
+    const d = await r.json();
+    hiddenRevision = d.revision;
+    const rows = d.items.map((x) => {
+      const li = el('li', 'omp-row'), b = el('button', 'btn btn--sm', tr('activity.omp.show')); b.type = 'button';
+      b.addEventListener('click', async () => { b.disabled = true; if (!(await setOmpHidden(x.id, false))) b.disabled = false; });
+      li.append(el('b', null, x.label || tr('activity.omp.unnamed')), el('small', null, `${x.live ? tr('activity.omp.hiddenLive') : tr('activity.omp.notLive')} · ${when(x.hiddenAt)}`), b);
+      return li;
+    });
+    box.replaceChildren(...(rows.length ? rows : [el('li', 'lite-empty', tr('activity.omp.hiddenEmpty'))]));
+  } catch { box.replaceChildren(el('li', 'lite-empty', tr('activity.omp.loadFailed'))); }
+}
+
 function row(item) {
   const li = el('li', 'omp-row'); li.dataset.ompId = item.id || '';
   const head = el('div', 'omp-head');
@@ -73,15 +110,16 @@ export function openOmpHistory() {
     const h = el('h2', null, tr('activity.omp.title')); h.id = 'omp-title';
     const note = el('p', 'pm-note', tr('activity.omp.note')), status = el('p', 'pm-note'); status.id = 'omp-status';
     const list = el('ul', 'omp-list'); list.id = 'omp-list';
+    const hh = el('h3', null, tr('activity.omp.hiddenTitle')), hl = el('ul', 'omp-list'); hl.id = 'omp-hidden-list';
     const more = el('button', 'btn btn--sm', tr('activity.omp.loadMore')); more.type = 'button'; more.id = 'omp-more'; more.hidden = true;
     more.addEventListener('click', () => load(true));
     const close = el('button', 'btn btn--sm', tr('activity.omp.close')); close.type = 'button';
     close.addEventListener('click', () => dlg.close());
-    dlg.append(h, note, status, list, more, close);
+    dlg.append(h, note, status, list, more, hh, hl, close);
     document.body.append(dlg);
   }
   if (!dlg.open) dlg.showModal();
-  load(false);
+  load(false); loadHidden();
 }
 
 /** A button that opens the picker; hidden unless the server offers it. */

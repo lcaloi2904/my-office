@@ -4,6 +4,9 @@ import { createAgentRegistry } from '../../server/agents/registry.mjs';
 import { createClaudeAdapter } from '../../server/agents/claude/compat.mjs';
 import { projectClaudeSession, projectOmpSession } from '../../server/agents/projection.mjs';
 import { isClaudeRequest, resolveOmpMode } from '../../server/agents/schema.mjs';
+import os from 'node:os';
+import path from 'node:path';
+import { createOmpVisibilityStore } from '../../server/agents/omp/visibility.mjs';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import { createT } from '../../src/i18n/index.js';
@@ -369,8 +372,10 @@ test('actual drawer/account guards do not call controls or read a foreign conver
   };
   const drawer = loadUi('src/office/ui/session-drawer.js', ['renderActions', 'openWindowOf', 'loadLog'], deps);
   drawer.renderActions();
-  assert.equal(elements.get('ds-actions').children.length, 1);
+  // a read-only note, then the local-only Hide button (a view preference: no control, no foreign account action)
+  assert.equal(elements.get('ds-actions').children.length, 2);
   assert.equal(elements.get('ds-actions').children[0].tag, 'p');
+  assert.equal(elements.get('ds-actions').children[1].tag, 'button');
   await drawer.openWindowOf(s);
   await drawer.loadLog();
   assert.equal(elements.get('ds-body').children[0].textContent, 'drawer.conversationDisabled');
@@ -690,4 +695,33 @@ test('actual OMP ingress route: absent unless hybrid, and the HTTP layer only fo
   assert.equal(tunnelled.status, 403);
   assert.equal(seen[0].loopback, false); assert.equal(seen[0].viaTunnel, true); assert.equal(seen[0].headers.origin, 'http://x');
   assert.equal(typeof seen[0].abort, 'function');
+});
+
+test('actual OMP visibility route: strict local write, Origin required, known ids only, hides without touching the adapter', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'omp-vis-route-'));
+  try {
+    const f = ompRouteFixture(true), sent = [];
+    const ompVisibility = createOmpVisibilityStore({ file: path.join(dir, 'omp-hidden.json') });
+    const withReq = (loopback, origin, extra = {}) => ({ ...f.extra(loopback, extra.mode), ompVisibility, broadcast: (m, local) => sent.push([m.k, local]),
+      req: { headers: { 'content-type': 'application/json', ...(origin ? { origin } : {}) } }, ...extra.over });
+    const body = (over) => ({ id: f.persisted.id, hidden: true, expectedRevision: 0, ...over });
+
+    assert.equal((await requestCallback(f, '/api/omp/visibility', null, 'GET', withReq(false))).status, 403);
+    assert.equal((await requestCallback(f, '/api/omp/visibility', body(), 'POST', withReq(false, 'http://x'))).status, 403);
+    assert.equal((await requestCallback(f, '/api/omp/visibility', body(), 'POST', withReq(true, undefined))).status, 403);   // no Origin: not "same origin" for a write
+    assert.equal((await requestCallback(f, '/api/omp/visibility', body(), 'POST', withReq(true, 'http://evil', { over: { sameOriginOf: () => false } }))).status, 403);
+    assert.equal((await requestCallback(f, '/api/omp/visibility', body(), 'POST', withReq(true, 'http://x', { mode: 'off' }))).status, 404);
+    assert.equal((await requestCallback(f, '/api/omp/visibility', body({ id: 'omp:' + 'a'.repeat(64) }), 'POST', withReq(true, 'http://x'))).status, 404);
+    assert.equal((await requestCallback(f, '/api/omp/visibility', body({ id: f.s.id }), 'POST', withReq(true, 'http://x'))).status, 404);   // a Claude id is not an OMP session
+    assert.equal(ompVisibility.isHidden(f.persisted.id), false); assert.deepEqual(sent, []);
+
+    const hidden = await requestCallback(f, '/api/omp/visibility', body(), 'POST', withReq(true, 'http://x'));
+    assert.equal(hidden.status, 200); assert.equal(ompVisibility.isHidden(f.persisted.id), true); assert.deepEqual(sent, [['gone', true]]);
+    const stale = await requestCallback(f, '/api/omp/visibility', body({ hidden: false, expectedRevision: 0 }), 'POST', withReq(true, 'http://x'));
+    assert.equal(stale.status, 409); assert.equal(ompVisibility.isHidden(f.persisted.id), true);
+    const listed = await requestCallback(f, '/api/omp/visibility', null, 'GET', withReq(true));
+    assert.equal(listed.status, 200); assert.equal(listed.payload.items.length, 1); assert.equal(listed.payload.items[0].live, true);
+    const shown = await requestCallback(f, '/api/omp/visibility', body({ hidden: false, expectedRevision: 1 }), 'POST', withReq(true, 'http://x'));
+    assert.equal(shown.status, 200); assert.equal(ompVisibility.isHidden(f.persisted.id), false); assert.deepEqual(sent.at(-1), ['sess', true]);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });

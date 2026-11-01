@@ -42,6 +42,7 @@ import { pickLang, createT } from '../src/i18n/index.js';
 import { createAgentRegistry } from './agents/registry.mjs';
 import { createClaudeAdapter } from './agents/claude/compat.mjs';
 import { createOmpAdapter } from './agents/omp/index.mjs';
+import { createOmpVisibilityStore } from './agents/omp/visibility.mjs';
 import { createOmpBridge, loadIngestTokens } from './agents/omp/bridge.mjs';
 import { createOmpUsageCollector } from './agents/omp/usage-collector.mjs';
 import { projectClaudeSession } from './agents/projection.mjs';
@@ -60,7 +61,7 @@ const ompAdapter = OMP_MODE !== 'off' && OMP_CONFIG ? createOmpAdapter({
     save: async (ids) => { const file = path.join(DATA_DIR, 'omp-pins.json'); await fsp.writeFile(file + '.tmp', JSON.stringify({ ids })); await fsp.rename(file + '.tmp', file); },
   },
   // pinned OMP actors only: a changed or removed pin is a session/gone message, never an event
-  onChange: (ids) => { for (const id of ids) { const r = agents.resolve(id); broadcast(r ? { k: 'sess', s: r.publicSession } : { k: 'gone', id }, true); } },
+  onChange: (ids) => { for (const id of ids) { const r = ompVisibility.isHidden(id) ? null : agents.resolve(id); broadcast(r ? { k: 'sess', s: r.publicSession } : { k: 'gone', id }, true); } },
 }) : null;
 function ompAvailability() {
   const status = ompAdapter?.status(), files = !!status && !['config-invalid', 'disposed'].includes(status.state);
@@ -115,6 +116,9 @@ const DESKS = 9;
 const FEED_MAX = 80;
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
+// OMP sessions the person hid (presentation only; the adapter, telemetry and usage never read this)
+const ompVisibility = createOmpVisibilityStore({ file: path.join(DATA_DIR, 'omp-hidden.json') });
+const visibleAgents = () => agents.list().filter((s) => !(s.agentKind === 'omp' && ompVisibility.isHidden(s.id)));
 
 // Phones on the LAN need this token in the URL; requests from the Mac itself don't.
 const TOKEN_FILE = path.join(DATA_DIR, 'token');
@@ -2355,6 +2359,33 @@ const server = http.createServer((req, res) => {
     });
     return;
   }
+  if (url.pathname === '/api/omp/visibility') {   // hide / show an OMP session in the office; never touches the process, telemetry or files
+    if (!ompAdapter || !ompFilesOn()) { json(res, 404, { ok: false, code: 'ompOff' }); return; }
+    if (req.method === 'GET') {
+      if (!isLoopback(req)) { json(res, 403, { ok: false, code: 'agentLocalOnly' }); return; }
+      const snap = ompVisibility.snapshot();
+      json(res, 200, { ok: true, revision: snap.revision, corrupt: snap.corrupt, items: snap.items.map((x) => ({ id: x.id, label: x.label, hiddenAt: x.hiddenAt, live: !!agents.resolve(x.id) })) });
+      return;
+    }
+    if (req.method === 'POST') {
+      // strict: this computer's own page only, and an Origin must be present (a missing one is not "same origin" here)
+      if (!isLoopback(req) || !req.headers.origin || !sameOriginOf(req) || !String(req.headers['content-type'] || '').startsWith('application/json')) { json(res, 403, { ok: false, code: 'agentLocalOnly' }); return; }
+      readJson(req, 2_000).then((b) => {
+        const id = String(b?.id ?? ''), owner = agents.resolve(id);
+        const known = owner?.kind === 'omp' || ompVisibility.isHidden(id);   // only an OMP session we know, or one already hidden (to show again)
+        if (!known) { json(res, 404, { ok: false, code: 'unknown-session' }); return; }
+        const r = ompVisibility.set(id, b?.hidden, b?.expectedRevision, owner?.publicSession?.name || owner?.publicSession?.project || '');
+        if (r.ok && r.changed) {
+          fsp.appendFile(ACTION_LOG, `${new Date().toISOString()} omp ${b.hidden ? 'hide' : 'show'}
+`).catch(() => {});
+          const now = b.hidden ? null : agents.resolve(id);
+          broadcast(now ? { k: 'sess', s: now.publicSession } : { k: 'gone', id }, true);
+        }
+        json(res, r.ok ? 200 : r.code === 'conflict' ? 409 : r.code === 'invalid' ? 400 : r.code === 'limit' ? 400 : 500, r);
+      }).catch(() => json(res, 400, { ok: false, code: 'invalid' }));
+      return;
+    }
+  }
   if (url.pathname === '/api/omp/pin' && req.method === 'POST') {   // { id, on }: a public catalogue id only, never a path
     if (!ompAdapter || !ompFilesOn()) { json(res, 404, { ok: false, code: 'ompOff' }); return; }
     if (!isLoopback(req) || !sameOriginOf(req) || !String(req.headers['content-type'] || '').startsWith('application/json')) { json(res, 403, { ok: false, code: 'agentLocalOnly' }); return; }
@@ -2665,7 +2696,7 @@ const server = http.createServer((req, res) => {
     const lanOn = lanIsOn();
     const omp = ompFilesOn() ? { on: true, local, conversation: !!ompAdapter.catalog({ limit: 1 }).conversation } : null;   // (whether the history picker is offered; the list itself is this computer only)
     const ompUsage = ompUsageCollector.snapshot({ local });
-    return { k: 'snap', lang: prefs.lang(), omp, ompUsage, sessions: local ? agents.list() : agents.list().filter((s) => s.agentKind !== 'omp'), perms: [...pending.values()].map(permPub), feed, stats, local, todos, limits: limitsOut(), limitsNote: noteText(), trophies: trophies.pub(),
+    return { k: 'snap', lang: prefs.lang(), omp, ompUsage, sessions: local ? visibleAgents() : agents.list().filter((s) => s.agentKind !== 'omp'), perms: [...pending.values()].map(permPub), feed, stats, local, todos, limits: limitsOut(), limitsNote: noteText(), trophies: trophies.pub(),
       lan: local && lanOn ? lanUrl() : null, lanBase: local && lanOn ? lanUrl(false) : null, pin: local ? currentPin() : null,
       ts: local && lanOn ? tsUrl() : null, tsHere: !!tsUrl(), phoneApprove: !!prefs.get('phoneApprove'), phoneTasks: !!prefs.get('phoneTasks'), lanFixed: local && lanFixed, build: BUILD, lift: liftService.pub() };
   };

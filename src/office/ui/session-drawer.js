@@ -5,7 +5,7 @@ import { STATUS_LABEL, verb } from './event-text.js';
 import { TYPE_ICON, icon } from './icons.js';
 import { BASE_ZOOM } from '../scene/renderer.js';
 import { AGENT_NAME, agentOf, canSession, colorOf, dn, sessions, unknownLabel, workers } from '../people/workers.js';
-import { setOmpPin } from './omp-history.js';
+import { setOmpHidden, setOmpPin } from './omp-history.js';
 import { cap, feedRow, fmtTok, fmtUsd, openFromRow, queueUi, toast } from './activity.js';
 import { goView, setView } from './camera-bar.js';
 import { closeMac, doAction, loadMac, macSnap } from './mac-drawer.js';
@@ -99,6 +99,11 @@ function renderActions() {
         b.addEventListener('click', async () => { b.disabled = true; if (!(await setOmpPin(s.id, false))) b.disabled = false; });
         box.append(b);
       }
+    }
+    if (agentOf(s) === 'omp' && state.isLocal) {   // hide is the view only: the agent keeps running, its files and usage stay
+      const hb = el('button', 'btn btn--sm', tr('activity.omp.hide')); hb.type = 'button'; hb.title = tr('activity.omp.hideTitle');
+      hb.addEventListener('click', async () => { hb.disabled = true; if (!(await setOmpHidden(s.id, true))) hb.disabled = false; });
+      box.append(hb);
     }
     const breakdown = typeof renderSessionProviderBreakdown === 'function' ? renderSessionProviderBreakdown(s, { fmtTok, fmtUsd }) : null;
     if (breakdown) box.append(breakdown);

@@ -233,3 +233,8 @@
   .sub-tree .sub-card > .sub-parent { grid-column: 2; grid-row: 3; }
   #ds-status { max-width: 130px; white-space: normal; }
 }
+.ri-li { position: relative; }
+.ri-hide { position: absolute; top: 4px; right: 4px; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--faint); font-size: 1rem; line-height: 1; cursor: pointer; opacity: 0; }
+.ri-li:hover .ri-hide, .ri-hide:focus-visible { opacity: 1; }
+.ri-hide:hover { background: var(--card); color: inherit; }
+@media (hover: none) { .ri-hide { opacity: .7; } }

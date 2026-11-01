@@ -6,6 +6,7 @@ import { TYPE_ICON, TYPE_TONE, icon } from './icons.js';
 import { hoverRing, selRing } from '../interact/rings.js';
 import { AGENT_NAME, agentMark, agentOf, canSession, claudeCost, colorOf, dn, dnOf, sessions, unknownLabel, workers } from '../people/workers.js';
 import { renderLite } from './lite.js';
+import { setOmpHidden } from './omp-history.js';
 import { openSession, renderActivity, renderSessionHead, renderSubs, tab, toggleSession } from './session-drawer.js';
 import { macSnap, resetText } from './mac-drawer.js';
 import { renderOmpUsagePanel } from './omp-usage-panel.js';
@@ -158,6 +159,11 @@ function railRow(s) {
   b.append(av, main, meta, ctx);
   const subList = el('ul', 'ri-subs'); subList.hidden = true;
   li.append(b, subList);
+  if (agentOf(s) === 'omp' && state.isLocal) {   // OMP only, this computer only: hide from the office (not stop, not unpin)
+    const hb = el('button', 'ri-hide', '×'); hb.type = 'button'; hb.title = tr('activity.omp.hideTitle'); hb.setAttribute('aria-label', tr('activity.omp.hide'));
+    hb.addEventListener('click', (e) => { e.stopPropagation(); hb.disabled = true; setOmpHidden(s.id, true).then((ok) => { if (!ok) hb.disabled = false; }); });
+    li.append(hb);
+  }
   const c = el('button', 'chip'); c.type = 'button'; c.dataset.sess = s.id;
   const cd = el('i'), cn = el('span'), cs = el('small');
   c.append(cd, cn, cs);
