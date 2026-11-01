@@ -94,3 +94,20 @@ test('a link in the middle of a path, or above the root, fails closed', async (t
   await assert.rejects(approveRoot(path.join(via, path.basename(f.source)), io), { code: 'PATH_DENIED' });
   assert.equal(stats.opened, 0);
 });
+
+test('F11/S3: Unicode and space paths succeed while Windows device names, trailing dots/spaces, dot segments and DEL fail closed', async (t) => {
+  const f = await fixture(t), unicodeDir = path.join(f.source, 'Dự án 01');
+  await f.fs.mkdir(unicodeDir, { recursive: true });
+  await f.fs.writeFile(path.join(unicodeDir, 'phiên làm việc.jsonl'), lines([header({ id: 'unicode-ok' })]));
+  const { io, stats } = readonlyIO(), root = await approveRoot(f.source, io);
+  const h = await openContained(root, 'Dự án 01/phiên làm việc.jsonl', io); await h.close();
+  assert.equal(stats.opened, 1);
+  for (const denied of ['CON.jsonl', 'nul.jsonl', 'COM1.jsonl', 'LPT9.jsonl', 'sub/AUX/x.jsonl', 'session.jsonl.', 'session.jsonl ', 'sub /x.jsonl', './session.jsonl', 'sub//session.jsonl', 'bad\x7fname.jsonl'])
+    await assert.rejects(openContained(root, denied, io), { code: 'PATH_DENIED' }, denied);
+  assert.equal(stats.opened, 1, 'denied names are rejected before touching open()');
+  const cfg = validateConfig({ version: 1, sources: [{ id: 'win-src', root: f.source, pathStyle: 'win32',
+    projectMappings: [{ from: 'C:\\synthetic\\Dự án 01\\', projectId: 'du-an', worktreeId: 'main' }] }] });
+  assert.equal(cfg.sources[0].projectMappings[0].from, 'C:\\synthetic\\Dự án 01');
+  assert.ok(projectIdentity(cfg.sources[0], 'c:/synthetic/dự án 01/src').projectKey);
+  assert.equal(projectIdentity(cfg.sources[0], 'C:\\synthetic\\Dự án 01\x7f').projectKey, null);
+});

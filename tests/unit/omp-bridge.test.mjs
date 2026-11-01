@@ -156,3 +156,26 @@ test('S8: credentials stay stable, source-scoped and unavailable when storage fa
   bridge.dispose();
   assert.equal((await post(ev('session_start', 1))).status, 404);
 });
+
+test('S1/S2: malformed batch envelopes, non-iterable streams, overlong auth headers and rotated tokens fail closed', async () => {
+  const { bridge, post, life } = make();
+  for (const raw of ['null', '123', '"text"', '{"events":"not-an-array"}', '{"events":null}']) {
+    const r = await bridge.handle({ method: 'POST', loopback: true, viaTunnel: false,
+      headers: { authorization: 'Bearer ' + TOKEN_A, 'content-type': 'application/json' },
+      body: Readable.from([Buffer.from(raw)]) });
+    assert.equal(r.status, 400, raw);
+    assert.equal(r.body.code, 'invalid-batch');
+  }
+  const badBody = await bridge.handle({ method: 'POST', loopback: true, viaTunnel: false,
+    headers: { authorization: 'Bearer ' + TOKEN_A, 'content-type': 'application/json' }, body: null });
+  assert.equal(badBody.status, 400);
+  const longAuth = await post(ev('session_start', 1), { headers: { authorization: 'Bearer ' + 'a'.repeat(4096) } });
+  assert.equal(longAuth.status, 401);
+  const rotated = createOmpBridge({ lifecycle: life, tokens: new Map([['src-a', 'f'.repeat(64)], ['src-b', TOKEN_B]]) });
+  assert.equal((await rotated.handle({ method: 'POST', loopback: true, viaTunnel: false,
+    headers: { authorization: 'Bearer ' + TOKEN_A, 'content-type': 'application/json' },
+    body: Readable.from([Buffer.from(JSON.stringify(ev('session_start', 1)))]) })).status, 401);
+  assert.equal((await rotated.handle({ method: 'POST', loopback: true, viaTunnel: false,
+    headers: { authorization: 'Bearer ' + TOKEN_B, 'content-type': 'application/json' },
+    body: Readable.from([Buffer.from(JSON.stringify(ev('session_start', 1, {}, { sourceId: 'src-b' })))]) })).status, 200);
+});

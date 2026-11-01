@@ -9,7 +9,10 @@ export const errorCode = (e) => ['ENOENT', 'EACCES', 'EPERM', 'EMFILE', 'EIO', '
 const digest = (value) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const validId = (s) => typeof s === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,79}$/.test(s);
 const driveAbsolute = (s) => /^[a-z]:[\\/]/i.test(s) && !s.slice(2).includes(':');
-const nativeAbsolute = (s) => typeof s === 'string' && s.length <= 4096 && path.isAbsolute(s) && !/[\x00-\x1f]/.test(s) && !/^[\\/]{2}/.test(s) && (process.platform === 'win32' ? driveAbsolute(s) : !s.includes('\\'));
+const WIN_DEVICE = /^(con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(\..*)?$/i;
+const validSegment = (s) => s.length > 0 && s !== '.' && s !== '..' && !/[ .]$/.test(s) && !WIN_DEVICE.test(s);
+const trimSep = (p, style) => { const n = style.normalize(p); return n.length > style.parse(n).root.length ? n.replace(/[\\/]+$/, '') : n; };
+const nativeAbsolute = (s) => typeof s === 'string' && s.length <= 4096 && path.isAbsolute(s) && !/[\x00-\x1f\x7f]/.test(s) && !/^[\\/]{2}/.test(s) && (process.platform === 'win32' ? driveAbsolute(s) : !s.includes('\\'));
 
 export const DEFAULT_LIMITS = Object.freeze({
   // sized for a real tree: hundreds of sessions in one project folder, one artifact folder per session, children counted in maxSessions
@@ -36,9 +39,9 @@ export function validateConfig(raw) {
     if (!Array.isArray(mappings) || mappings.length > 32) throw fault('CONFIG_INVALID');
     const style = s.pathStyle === 'win32' ? path.win32 : path.posix;
     const projectMappings = mappings.map((m) => {
-      if (!m || !validId(m.projectId) || !validId(m.worktreeId) || typeof m.from !== 'string' || m.from.length > 4096 || !style.isAbsolute(m.from) || (s.pathStyle === 'win32' && !driveAbsolute(m.from)) || /^[\\/]{2}/.test(m.from) || /[\x00-\x1f]/.test(m.from)) throw fault('CONFIG_INVALID');
+      if (!m || !validId(m.projectId) || !validId(m.worktreeId) || typeof m.from !== 'string' || m.from.length > 4096 || !style.isAbsolute(m.from) || (s.pathStyle === 'win32' && !driveAbsolute(m.from)) || /^[\\/]{2}/.test(m.from) || /[\x00-\x1f\x7f]/.test(m.from)) throw fault('CONFIG_INVALID');
       if (m.localRoot !== undefined && !nativeAbsolute(m.localRoot)) throw fault('CONFIG_INVALID');
-      return { from: style.normalize(m.from), projectId: m.projectId, worktreeId: m.worktreeId,
+      return { from: trimSep(m.from, style), projectId: m.projectId, worktreeId: m.worktreeId,
         ...(m.localRoot === undefined ? {} : { localRoot: path.resolve(m.localRoot) }) };
     });
     return { id: s.id, root: path.resolve(s.root), pathStyle: s.pathStyle, conversation: s.conversation === true, projectMappings };
@@ -47,7 +50,7 @@ export function validateConfig(raw) {
 }
 
 export function projectIdentity(source, cwd, verifiedMappings = null) {
-  if (typeof cwd !== 'string' || cwd.length > 4096 || /[\x00-\x1f]/.test(cwd) || /^[\\/]{2}/.test(cwd)) return { projectKey: null, worktreeKey: null };
+  if (typeof cwd !== 'string' || cwd.length > 4096 || /[\x00-\x1f\x7f]/.test(cwd) || /^[\\/]{2}/.test(cwd)) return { projectKey: null, worktreeKey: null };
   const style = source.pathStyle === 'win32' ? path.win32 : path.posix;
   if (!style.isAbsolute(cwd) || (source.pathStyle === 'win32' && !driveAbsolute(cwd))) return { projectKey: null, worktreeKey: null };
   for (const m of [...source.projectMappings].sort((a, b) => b.from.length - a.from.length)) {
@@ -90,7 +93,7 @@ export async function approveRoot(root, io = fsp) {
 }
 
 export async function containedPath(root, relative, io = fsp) {
-  if (typeof relative !== 'string' || relative.length > 4096 || /[\x00-\x1f:]/.test(relative) || path.isAbsolute(relative) || path.win32.isAbsolute(relative) || relative.includes('\\') || relative.split('/').includes('..')) throw fault('PATH_DENIED');
+  if (typeof relative !== 'string' || relative.length > 4096 || /[\x00-\x1f\x7f:]/.test(relative) || path.isAbsolute(relative) || path.win32.isAbsolute(relative) || relative.includes('\\') || (relative !== '' && !relative.split('/').every(validSegment))) throw fault('PATH_DENIED');
   const currentRoot = await io.lstat(root.path);
   if (!sameFile(root, currentRoot) || !currentRoot.isDirectory() || currentRoot.isSymbolicLink()) throw fault('SOURCE_CHANGED');
   const candidate = path.resolve(root.path, relative || '.');

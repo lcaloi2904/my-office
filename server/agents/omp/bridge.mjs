@@ -39,6 +39,7 @@ export async function loadIngestTokens({ file, sourceIds, storage = { read: read
 }
 
 async function readBody(body, { max, timeoutMs, setTimer, clearTimer, abort }) {
+  if (!body || typeof body[Symbol.asyncIterator] !== 'function') throw Object.assign(new Error('invalid-body'), { code: 'invalid-body' });
   const iterator = body[Symbol.asyncIterator]();
   const chunks = [];
   let size = 0, timer = null;
@@ -70,7 +71,7 @@ export function createOmpBridge({ lifecycle, tokens, now = Date.now, setTimer = 
   const counters = { accepted: 0, rejected: 0, limited: 0 };
 
   function sourceOf(header) {
-    const match = typeof header === 'string' ? BEARER.exec(header) : null;
+    const match = typeof header === 'string' && header.length === 71 ? BEARER.exec(header) : null;
     if (!match) return null;
     const given = digest(match[1]);
     let found = null;
@@ -104,10 +105,11 @@ export function createOmpBridge({ lifecycle, tokens, now = Date.now, setTimer = 
     let buffer;
     const abort = typeof req.abort === 'function' ? req.abort : () => req.body.destroy?.();
     try { buffer = await readBody(req.body, { max: cap.maxBodyBytes, timeoutMs: cap.bodyTimeoutMs, setTimer, clearTimer, abort }); }
-    catch (e) { counters.rejected++; return e?.code === 'too-large' ? refuse(413, 'too-large') : refuse(408, 'timeout'); }
+    catch (e) { counters.rejected++; return e?.code === 'too-large' ? refuse(413, 'too-large') : e?.code === 'invalid-body' ? refuse(400, 'invalid-json') : refuse(408, 'timeout'); }
     let parsed;
     try { parsed = JSON.parse(buffer.toString('utf8')); } catch { counters.rejected++; return refuse(400, 'invalid-json'); }
-    const list = Array.isArray(parsed?.events) ? parsed.events : [parsed];
+    if (!parsed || typeof parsed !== 'object' || (!Array.isArray(parsed) && Object.hasOwn(parsed, 'events') && !Array.isArray(parsed.events))) { counters.rejected++; return refuse(400, 'invalid-batch'); }
+    const list = Array.isArray(parsed.events) ? parsed.events : [parsed];
     if (!list.length || list.length > cap.maxEvents) { counters.rejected++; return refuse(400, 'invalid-batch'); }
     const extra = take(sourceId, list.length - 1);
     if (extra) { counters.limited++; return refuse(429, 'rate-limited', { retryAfterMs: extra }); }

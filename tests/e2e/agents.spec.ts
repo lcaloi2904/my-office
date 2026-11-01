@@ -204,6 +204,17 @@ test('crafted OMP public IDs are rejected by Claude control routes', async ({ re
   }
 });
 
+test('S1/S5/S8: when OMP is off all OMP routes return 404 and untrusted markup in session fields stays inert', async ({ page, request }) => {
+  expect((await request.get('/api/omp/catalog')).status()).toBe(404);
+  expect((await request.post('/api/omp/pin', { data: { id: 'omp:' + 'a'.repeat(64), on: true } })).status()).toBe(404);
+  expect((await request.post('/ingest/omp/v1', { headers: { Authorization: 'Bearer ' + 'a'.repeat(64) }, data: { version: 1 } })).status()).toBe(404);
+  await openDemo(page);
+  const base = projectOmpSession({ sourceNamespace: 'e2e-xss', sourceSessionId: 'xss-root', project: '<img src=x onerror=window.__ompXss=1><script>window.__ompXss=2</script>' })!;
+  await selectFixture(page, { ...base, name: '<svg onload=window.__ompXss=3>', title: '<script>window.__ompXss=4</script>' });
+  expect(await page.evaluate(() => '__ompXss' in window)).toBe(false);
+  await expect(page.locator('#dr-session script, #dr-session svg[onload], #dr-session img[onerror]')).toHaveCount(0);
+});
+
 test('mixed snapshot keeps identities, child ownership and appearance through rename and reconnect', async ({ page }) => {
   await openDemo(page);
   const omp = { ...projectOmpSession({ sourceNamespace: 'ui-mixed', sourceSessionId: 'root' })!, name: 'Same name', project: 'repo', projectKey: 'a'.repeat(64) };

@@ -60,7 +60,7 @@ if ($request.action -eq 'create') {
   })
   if ($installed.Count -eq 0) { throw 'Fixture access rule was not installed' }
 } elseif ($request.action -eq 'assert') {
-  $acl = Get-Acl -LiteralPath $request.file
+  if ($request.directory) { $acl = [System.IO.Directory]::GetAccessControl($request.file) } else { $acl = [System.IO.File]::GetAccessControl($request.file) }
   if ($request.directory -and -not $acl.AreAccessRulesProtected) { throw 'Directory DACL is not protected' }
   if ($trusted -notcontains $acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value) { throw 'Unexpected owner' }
   $descriptor = New-Object System.Security.AccessControl.RawSecurityDescriptor($acl.GetSecurityDescriptorBinaryForm(), 0)

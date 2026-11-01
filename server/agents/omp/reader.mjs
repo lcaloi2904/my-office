@@ -3,7 +3,7 @@
 // them unless they changed. All source handles close per poll; no durable cache/checkpoint is trusted.
 import { createHash } from 'node:crypto';
 import { TextDecoder } from 'node:util';
-import { openContained, errorCode, DEFAULT_LIMITS, fault } from './paths.mjs';
+import { containedPath, openContained, errorCode, DEFAULT_LIMITS, fault } from './paths.mjs';
 
 const hash = (b) => createHash('sha256').update(b).digest('hex');
 const stampOf = (s) => `${s.dev}:${s.ino}:${s.size}:${s.mtimeMs}:${s.ctimeMs}`;
@@ -17,6 +17,10 @@ export function createReader({ root, relative, factory, io, limits = {}, now = D
   let verifying = false, verifyIndex = 0, lastVerified = 0, busy = null, disposed = false;
   let state = 'new', bytesRead = 0, diagnostics = new Set();
   const report = (code) => { if (diagnostics.size < 24) diagnostics.add(code); };
+  const unknownMetrics = () => ({ cost: null, tokens: { input: null, output: null, cacheRead: null, cacheWrite: null, provenance: 'unknown' }, context: null });
+  const markIncomplete = () => {
+    if (snapshot) snapshot = { ...snapshot, metrics: unknownMetrics(), incomplete: true, diagnostics: [...new Set([...(snapshot.diagnostics || []), ...diagnostics])].slice(0, 24) };
+  };
   function reset() {
     reducer = factory(); offset = 0; committedOffset = 0; pending = Buffer.alloc(0); draining = false;
     blocks = []; verifying = false; verifyIndex = 0; diagnostics = new Set(); epoch++;
@@ -46,12 +50,19 @@ export function createReader({ root, relative, factory, io, limits = {}, now = D
     if (disposed || signal?.aborted) return info();
     let handle;
     try {
+      if (state === 'ready' && !verifying && now() - lastVerified < cfg.reconcileMs) {
+        const file = await containedPath(root, relative, io), pre = await io.lstat(file);
+        if (!pre.isFile() || pre.nlink > 1) throw fault('PATH_DENIED');
+        if (stamp === stampOf(pre)) return info();
+      }
       handle = await openContained(root, relative, io);
       if (disposed || signal?.aborted) return info();
       const stat = await handle.stat(), nextStamp = stampOf(stat), nextIdentity = identityOf(stat);
-      if (stat.size > cfg.maxFileBytes) { state = 'unsupported'; report('file-limit'); return info(); }
-      if (Math.ceil(stat.size / cfg.chunkBytes) > 4096) { state = 'unsupported'; report('fingerprint-limit'); return info(); }
-      if (identity !== null && (identity !== nextIdentity || stat.size < offset)) reset();
+      if (stat.size > cfg.maxFileBytes || Math.ceil(stat.size / cfg.chunkBytes) > 4096) {
+        const code = stat.size > cfg.maxFileBytes ? 'file-limit' : 'fingerprint-limit';
+        reset(); state = 'unsupported'; report(code); markIncomplete(); return info();
+      }
+      if ((identity !== null && (identity !== nextIdentity || stat.size < offset)) || state === 'absent' || state === 'unsupported') reset();
       identity = nextIdentity;
       if (targetStamp !== nextStamp) {
         targetStamp = nextStamp;
@@ -97,7 +108,7 @@ export function createReader({ root, relative, factory, io, limits = {}, now = D
           incomplete: value.incomplete || framingIncomplete, diagnostics: allIssues, partialLine: pending.length > 0 || draining };
         state = 'ready'; stamp = nextStamp; lastVerified = now();
       }
-    } catch (e) { state = e?.code === 'ENOENT' ? 'absent' : 'degraded'; report(errorCode(e)); }
+    } catch (e) { state = e?.code === 'ENOENT' ? 'absent' : 'degraded'; report(errorCode(e)); markIncomplete(); }
     finally { if (handle) await handle.close(); }
     return info();
   }

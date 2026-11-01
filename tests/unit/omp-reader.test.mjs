@@ -148,3 +148,24 @@ test('F12/S8: cancellation and size limits stop work without modifying sources',
   assert.equal(digest(await f.fs.readFile(f.file)), before);
   assert.equal(f.stats.opened, f.stats.closed);
 });
+
+test('F5/F10/F12: a ready file that grows past maxFileBytes or faults marks snapshot incomplete and clears stale recorded metrics', async (t) => {
+  const f = await setup(t, [header(), assistant('a', null)], { maxFileBytes: 512 });
+  const first = await settle(f.reader);
+  assert.equal(first.state, 'ready');
+  assert.equal(first.snapshot.incomplete, false);
+  assert.equal(first.snapshot.metrics.cost.value, 1);
+  await f.fs.appendFile(f.file, 'x'.repeat(600) + '\n');
+  const over = await settle(f.reader);
+  assert.equal(over.state, 'unsupported');
+  assert.ok(over.diagnostics.includes('file-limit'));
+  assert.equal(over.blocks, 0, 'fingerprint blocks are released when file exceeds cap');
+  assert.equal(over.snapshot.incomplete, true);
+  assert.equal(over.snapshot.metrics.cost, null);
+  assert.equal(over.snapshot.metrics.tokens.provenance, 'unknown');
+  await f.fs.writeFile(f.file, lines([header(), assistant('b', null, { usage: usage(4) })]));
+  const recovered = await settle(f.reader);
+  assert.equal(recovered.state, 'ready');
+  assert.equal(recovered.snapshot.incomplete, false);
+  assert.equal(recovered.snapshot.metrics.cost.value, 4);
+});
