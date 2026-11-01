@@ -1,6 +1,6 @@
 # Validation matrix, gates and planned test execution
 
-**PLAN ONLY — all proposed tests NOT RUN.** Record exact real commands/results during cook. Synthetic unit tests are not proof of compatibility with installed Windows OMP.
+Các hàng G4–G7 bên dưới là kế hoạch, không phải kết quả đã chạy. Bằng chứng thực tế G1–G3 nằm ở các mục tương ứng; synthetic unit không thay installed Windows runtime evidence.
 
 | Gate | Scenario | Pass condition |
 |---|---|---|
@@ -84,6 +84,12 @@ Build/E2E dùng cùng `OFFICE_DIST_DIR=.next-e2e-g2-20261101-continuation`, `E2E
 Đã đóng các tab/server smoke; xóa toàn bộ ba thư mục tạm trên, wrapper GPU/launcher, trace/log/dữ liệu synthetic và hai screenshot `%TEMP%` của task. Các thay đổi tự sinh của Next trong `tsconfig.json`/`next-env.d.ts` đã trả về đường dẫn chuẩn. Không xóa artefact hay dữ liệu của phiên trước.
 
 Giới hạn: 3 unit SKIP có sẵn không bị tính PASS; không paid model/active approval/TUI-controller smoke, không deploy lên office đang chạy. G3–G7 vẫn có gate riêng.
+
+## G3 — PASS (2026-11-01, Phase 04 vẫn đóng)
+
+[Biên bản G3](./reports/g3-launcher-acceptance.md) sở hữu kết quả các lượt kiểm chứng và commands. Bản cài gốc `18.15.0` được giữ nguyên; exact Resume độc quyền được chứng minh trên bản build cô lập `backups/omp-g3-native-20261101/omp-office-g3.exe` (`SHA-256: e753e08f423b9a27d6bed448376b615bd83c24ed9af342730076969907caf0f5`).
+
+Khi allowlist bật `resumeProtocol: 1` và `ownerDir` nguồn đã duyệt, child native lấy đồng thời khóa miền gốc (`ownerDir + sessionId`) và khóa đường dẫn canonical trước khi đọc history, giữ nguyên từng byte transcript (kể cả khi có assistant message), phát `ready.officeOwnershipProtocol=1` và `get_state.officeOwnership` rồi mới được nhận làm managed owner. Stock binary hoặc cấu hình không khai báo `resumeProtocol: 1` vẫn từ chối `LAUNCH_OWNER_UNVERIFIED` fail-closed. Phase 04 vẫn đóng cho tới khi có phê duyệt riêng.
 
 ## Proposed new tests (create during approved phase)
 - `tests/unit/omp-visibility.test.mjs`

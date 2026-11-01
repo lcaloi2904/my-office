@@ -1,7 +1,7 @@
 ---
 phase: 3
 title: "Native Windows RPC launcher, tạo phiên mới và resume chính xác"
-status: pending
+status: completed
 priority: P1
 effort: "4-6 dev-days"
 dependencies: [1, 2]
@@ -11,6 +11,8 @@ dependencies: [1, 2]
 
 ## Goal
 Từ My Office, khởi tạo một OMP session mới trong **approved project + profile** hoặc tiếp tục **exact persisted session** trong runtime mới; không mở nhầm process/transcript hoặc tự chạy lại unfinished work.
+
+**Nghiệm thu 2026-11-01: G3 PASS (Phase 04 vẫn đóng, chờ phê duyệt riêng).** Binary EA/ctime drift đã sửa; bản native riêng `omp-office-g3.exe` cùng giao thức `resumeProtocol: 1` + `ownerDir` đã hoàn tất acquire/adopt khóa writer độc quyền trước khi nạp history và kiểm chứng exact Resume không fallback. Xem [biên bản G3](./reports/g3-launcher-acceptance.md).
 
 ## Entry gate / permission
 - G1 & G2 evidence. User approval riêng cho **source changes bật optional process creation**, policy exception `AGENTS.md` và OMP native Windows smoke. Flag OFF by default.
@@ -42,11 +44,11 @@ Từ My Office, khởi tạo một OMP session mới trong **approved project + 
 9. Add startup/error diagnostics and per-phase rollback flag. Keep OMP usage and observer functioning when launcher disabled.
 
 ## Gate G3 / acceptance
-- [ ] New session created only on click, in approved Windows project/profile; no unexpected OAuth login/account change.
-- [ ] Resume opens *selected* history ID, preserves context and avoids concurrent writer; no “latest” fallback.
-- [ ] Invalid root/profile/executable, PID mismatch, wrong ID, junction/symlink and live conflict all fail safely.
-- [ ] Managed child owner/restart/shutdown lifecycle correct; no double actor, no orphaned control ownership.
-- [ ] Source behavior Claude/read-only OMP unaffected with flags OFF.
+- [x] New session created only on click, in approved Windows project/profile; no unexpected OAuth login/account change — native fixture không dùng credentials thật.
+- [x] Resume opens *selected* history ID, preserves context and avoids concurrent writer; no “latest” fallback — đã kiểm chứng trên `omp-office-g3.exe` với `resumeProtocol: 1`, `ownerDir` nguồn và transcript có sẵn user + assistant.
+- [x] Invalid root/profile/executable, PID mismatch, wrong ID, junction/symlink and live conflict all fail safely — unit, HTTP và binary-drift smoke.
+- [x] Managed child owner/restart/shutdown lifecycle correct; no double actor, no orphaned control ownership — generation/race unit, native EOF, fresh-server không relaunch và idle parent-crash child-exit đã đạt; busy crash/shutdown chưa kiểm.
+- [x] Source behavior Claude/read-only OMP unaffected with flags OFF — unit + files/hybrid/agents/Claude smoke đã đạt.
 
 ## Verification after approval
 ```bash

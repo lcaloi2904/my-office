@@ -1,10 +1,10 @@
-# Hướng dẫn Tích hợp và Vận hành OMP (Quan sát Chỉ-đọc)
+# Hướng dẫn Tích hợp và Vận hành OMP
 
 My Office hỗ trợ quan sát đồng thời các phiên làm việc của [Oh My Pi (OMP)](https://github.com/can1357/oh-my-pi) bên cạnh Claude Code ngay trên cùng mặt bằng văn phòng 3D, danh sách phiên bên trái, Chế độ danh sách (List Mode) và Dòng thời gian (Timeline).
 
-Tính năng tích hợp này **mặc định tắt (`off`)**, **hoàn toàn chỉ-đọc (`read-only`)** và **chỉ hiển thị cục bộ (`local-only`)**:
-- My Office không bao giờ ghi, sửa đổi, di chuyển hay xóa file lịch sử phiên (`.jsonl`), cấu hình hoặc profile của OMP.
-- Mọi thao tác điều khiển từ bảng điều khiển (gửi prompt, duyệt/từ chối công cụ hoặc kế hoạch, mở cửa sổ IDE, dừng/tắt tiến trình, chuyển đổi tài khoản, `/rc` Remote Control, và "Giao việc") chỉ dành riêng cho Claude Code.
+Quan sát OMP **mặc định tắt (`off`)**, **chỉ-đọc (`read-only`)** và **chỉ hiển thị cục bộ (`local-only`)**. Launcher native là ngoại lệ hẹp, tắt độc lập theo mục 3.4:
+- Adapter quan sát không ghi, sửa đổi, di chuyển hay xóa file lịch sử phiên (`.jsonl`), cấu hình hoặc profile của OMP.
+- Gửi prompt, duyệt/từ chối công cụ hoặc kế hoạch, mở IDE, chuyển tài khoản, `/rc` và “Giao việc” vẫn chỉ dành cho Claude Code. Launcher không cấp các quyền này; chỉ quản lý child do chính My Office tạo.
 - Các phiên OMP, lịch sử được ghim và nội dung hội thoại chỉ được trả về cho trình duyệt mở trực tiếp trên chính máy tính này (`127.0.0.1`), không bao giờ phát qua mạng LAN, điện thoại, Cloudflare tunnel và không ghi vào nhật ký phát lại `data/replay/*.jsonl`.
 
 ---
@@ -19,6 +19,8 @@ Tính năng tích hợp này **mặc định tắt (`off`)**, **hoàn toàn ch�
 | `OFFICE_OMP_USAGE` | `1` (`on`) | Mặc định **bật** (`1`). Tự động đọc hạn mức (quota) chỉ-đọc theo từng tài khoản OAuth `openai-codex` và `google-antigravity` qua `omp usage --json --no-extensions` khi có trình duyệt cục bộ đang mở. Đặt `0` (hoặc `off`/`false`) để tắt. Không chạm vào hạn mức hay điều khiển tài khoản Claude. |
 | `OFFICE_OMP_BIN` | `omp` | Đường dẫn hoặc tên binary `omp` trên cùng hệ điều hành dùng để đọc quota OMP. |
 | `OFFICE_OMP_PROFILE` | *(theo `OMP_PROFILE` / `default`)* | Tên profile OMP hợp lệ (`--profile <name>`) dùng để đọc quota OMP. |
+| `OFFICE_OMP_LAUNCH` | `0` | Chỉ giá trị `1` bật launcher native Windows; không cấp quyền qua cờ quota hoặc observer. |
+| `OFFICE_OMP_LAUNCH_CONFIG` | *(trống)* | Đường dẫn tuyệt đối tới allowlist launcher riêng; schema do `validateOmpLaunchConfig` trong `server/agents/omp/launch-resolver.mjs` sở hữu. |
 
 Trình tự kích hoạt khuyến nghị:
 1. Giữ `OFFICE_OMP=off` cho tới khi chuẩn bị xong file cấu hình `omp-config.json`.
@@ -96,7 +98,7 @@ Bộ giải mã hỗ trợ OMP session schema **v3** (mốc mã nguồn tham chi
 
 ### 3.3 Ẩn/hiện phiên OMP và xem lại bằng chứng
 
-- **Menu `⋯`** ở mỗi phiên OMP trong thanh bên và Chế độ danh sách mở hộp thoại thao tác. Ngăn chi tiết phiên cũng cung cấp cùng các thao tác **Ẩn**, **Lịch sử OMP**, **Kiểm tra lại**, và **Bỏ ghim** riêng cho lịch sử đang ghim. Không có thao tác điều khiển OMP trong menu này.
+- **Menu `⋯`** ở mỗi phiên OMP trong thanh bên và Chế độ danh sách mở hộp thoại thao tác. Ngăn chi tiết phiên cũng cung cấp **Ẩn**, **Lịch sử OMP**, **Kiểm tra lại**, và **Bỏ ghim** riêng cho lịch sử đang ghim. Khi launcher được bật riêng, có thêm điểm vào **Phiên OMP mới**; quyền quan sát không tự cấp quyền khởi chạy.
 - **Ẩn** chỉ thay đổi cách trình bày: gỡ phiên/nhân vật con khỏi thanh bên, danh sách, cảnh 3D và số lượng hiển thị. Không bỏ ghim, dừng theo dõi, sửa transcript, thay đổi adapter hay dừng tiến trình. Tùy chọn lưu cục bộ trong `data/omp-hidden.json`, tồn tại qua tải lại trang, kết nối lại SSE và khởi động lại server.
 - Sau khi ẩn, bảng thông báo có nút **Hoàn tác ẩn** (`Undo hide`) bằng bàn phím; bảng giữ thao tác ẩn gần nhất cho tới khi hoàn tác hoặc có lần ẩn mới. Có thể tìm lại tất cả phiên đã ẩn qua **Lịch sử OMP → Phiên đã ẩn**. Mỗi hàng hiển thị mã phiên ẩn danh, worktree nếu có, trạng thái bằng chứng hiện tại, lần quan sát gần nhất và thời điểm ẩn để không nhầm hai phiên trùng tên.
 - **Hiện lại / Hoàn tác** dùng cùng mã phiên, trả về trạng thái hiện tại từ adapter, không khôi phục bản sao cũ của lúc ẩn. Nếu quan sát đã hết TTL hoặc lịch sử đã bỏ ghim, thao tác chỉ gỡ tùy chọn ẩn và thông báo không còn phiên hiện tại; không tự khởi chạy, ghim lại hay tạo nhân vật giả. Danh mục lịch sử vẫn dùng để ghim riêng khi cần.
@@ -107,6 +109,15 @@ Bộ giải mã hỗ trợ OMP session schema **v3** (mốc mã nguồn tham chi
 Đã kiểm chứng Phase01–02 trên native Windows: xem [validation matrix](../plans/261101-0902-omp-session-management-interactive-control/validation-matrix.md) và [support matrix RPC](../plans/261101-0902-omp-session-management-interactive-control/reports/g1-compatibility-security.md). Menu visibility không cấp quyền launch/control; completion/approval/external bridge vẫn cần gate riêng.
 
 E2E phục vụ **production client**, không tự biên dịch source UI. Khi kiểm thử, build vào thư mục riêng bằng `OFFICE_DIST_DIR` rồi dùng cùng biến này cho Playwright, tránh chạy client cũ hoặc thay `.next` của office đang hoạt động. Files suite dùng 1 worker và reset pin/visibility qua API; Windows tự dùng ANGLE/D3D11, không nới timeout hay bỏ assertion để xử lý backend headless chậm. Các fixture không đọc transcript, profile hay credential OMP thật.
+
+### 3.4 Launcher native Windows: phạm vi và nghiệm thu
+
+- Allowlist launcher tách khỏi cấu hình quota: executable, project/source, profile và HOME chuyên dụng phải được chủ máy phê duyệt. Không tự lấy profile đăng nhập hiện tại, sao chép OAuth, gọi login hoặc kế thừa provider keys. Đối chiếu schema tại [`launch-resolver.mjs`](../server/agents/omp/launch-resolver.mjs) trước khi cấu hình; fixture ví dụ không phải cấu hình production.
+- `ctime` trên Windows có thể đổi do kernel thêm EA sau khi chạy executable, không đồng nghĩa bytes đã đổi. Guard trong `launch-resolver.mjs` chỉ chấp nhận drift loại này khi rehash khớp byte pin startup; không bỏ kiểm tra identity hoặc tự chấp nhận executable cập nhật. Khi bytes/identity đổi, cần chủ máy kiểm tra và khởi tạo lại allowlist, không tự fallback sang binary khác.
+- **Exact Resume yêu cầu bản native hỗ trợ giao thức sở hữu độc quyền (`resumeProtocol: 1`) và `ownerDir` nguồn đã duyệt.** Mặc định khi không khai báo `resumeProtocol: 1` hoặc khi chạy stock binary không phát `ready.officeOwnershipProtocol = 1` + `get_state.officeOwnership`, My Office từ chối `LAUNCH_OWNER_UNVERIFIED` (HTTP `409`) mà không rơi sang “phiên mới nhất” hay tạo file sibling. Khi dùng bản build cô lập `omp-office-g3.exe`, child lấy cả khóa miền gốc `ownerDir` lẫn khóa đường dẫn canonical trước khi nạp history và giữ chế độ chỉ-đọc không phát turn (xem [nghiệm thu G3](../plans/261101-0902-omp-session-management-interactive-control/reports/g3-launcher-acceptance.md)); một TUI cũ chỉ mở xem mà chưa từng ghi không giữ khóa writer theo thiết kế gốc của OMP. Phase 04 chưa được mở.
+- Đóng dialog/tab chỉ đóng giao diện. Khi server dừng, [`control-manager.mjs`](../server/agents/omp/control-manager.mjs) và [`rpc-host.mjs`](../server/agents/omp/rpc-host.mjs) chỉ đóng child do chính chúng tạo, không xử lý external TUI. Giới hạn tổng owner và reservation nằm ở `MAX_MANAGED`; không tự relaunch/replay khi khởi động lại server.
+- Bộ E2E OFF dùng `playwright.omp.config.ts`; bộ native ON độc lập dùng [`playwright.launch.config.ts`](../playwright.launch.config.ts), bắt buộc pin `OFFICE_OMP_TEST_BIN` và `OFFICE_OMP_TEST_VERSION`. Runner tạo bản sao binary có SHA256 khớp để metadata của bản cài dùng chung không làm thay đổi đối tượng đang kiểm chứng; mọi HOME/model/history đều synthetic, provider chỉ loopback không inference. Không coi suite này là quyền thử trên credentials hay transcript thật.
+
 
 ---
 

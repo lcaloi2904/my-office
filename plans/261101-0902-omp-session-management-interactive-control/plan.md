@@ -19,7 +19,7 @@ Cho phép người dùng **quản lý agent OMP ngay trong sidebar và drawer My
 
 **Phân biệt:** `Mất kết nối` là thiếu heartbeat, **không phải** bằng chứng process đã dừng. `Ẩn` chỉ ảnh hưởng UI, **không** dừng tiến trình hoặc xóa JSONL. `Bỏ ghim` là ngừng theo dõi history cũ. `Tiếp tục` khởi tạo runtime khác nạp đúng persisted conversation (không phục hồi process đã chết). `Tạo mới` dùng context trống.
 
-**Phạm vi đã duyệt:** kế hoạch ban đầu là plan-only; sau đó người dùng yêu cầu triển khai và hoàn tất Phase01–02. Hai phase đã nghiệm thu trong fixture cô lập; không commit/push ở lượt tiếp tục này. G3–G7 chưa được triển khai/bật; các quyền policy/control/runtime/extension/model trả phí vẫn cần duyệt riêng.
+**Phạm vi đã duyệt:** Phase01–03 đã nghiệm thu ([G3 PASS](./reports/g3-launcher-acceptance.md) với bản native riêng `omp-office-g3.exe`). Ngoại lệ hẹp trong `AGENTS.md` cho phép launcher native opt-in, không prompt/steer/approval hay external TUI control. Không mở Phase04–07, model trả phí, credential thật hoặc rollout khi chưa có phê duyệt mới.
 
 ## Scope challenge: HOLD SCOPE
 
@@ -53,7 +53,7 @@ Server độc lập cấp quyền theo `sourceNamespace + sourceSessionId + runt
 |---|---|---|---|---|
 | 01 | [Contracts, baseline, compatibility](./phase-01-start.md) | Exact OMP dialect/OS/session identity, threat model, approval boundary | **G1 COMPLETE (review; không cấp quyền control)** | — |
 | 02 | [Session visibility & lifecycle UX](./phase-02-session-visibility.md) | Ẩn/hiện, Undo, refresh bằng chứng, bỏ ghim, lưu sở thích | **G2 PASS** | G1 |
-| 03 | [Native Windows RPC launch/resume](./phase-03-native-rpc-launch-resume.md) | Tạo mới, resume exact session, ownership & cleanup | G3 | G1,G2 |
+| 03 | [Native Windows RPC launch/resume](./phase-03-native-rpc-launch-resume.md) | Tạo mới, resume exact session, ownership & cleanup | **G3 PASS (Phase 04 vẫn đóng)** | G1,G2 |
 | 04 | [Managed interactive control & Live Agent Activity Bubbles](./phase-04-managed-interactive-control.md) | Chat và mô tả công việc realtime trên các ô nổi 3D | G4 | G3 |
 | 05 | [External TUI opt-in controller](./phase-05-external-tui-control-bridge.md) | Bridge đã cấp quyền tới phiên bên ngoài, không phá observer | G5 | G1,G4 |
 | 06 | [Approval & advanced actions](./phase-06-approvals-and-advanced-actions.md) | Allow-once/deny, ask, plan review với fail-closed gates | G6 | G4,G5 |
@@ -118,6 +118,6 @@ Default decisions: Managed RPC cho new/resume; external TUI phải opt-in; ẩn 
 
 ## Handoff
 
-**Phase01–02 hoàn tất.** [Validation matrix](./validation-matrix.md) ghi 356 unit PASS/3 SKIP, files6/6, hybrid1/1, agents13/13, build/lint/typecheck, UI VI mobile và server-restart smoke. Overall plan vẫn `in-progress`: G3 tiếp theo chỉ khi người dùng duyệt riêng ngoại lệ policy read-only, phạm vi native process/profile/project và proof exclusive resume. Không tự triển khai/bật G3–G7; không commit/push hay thay build của office đang chạy ở lượt này.
+**G3 OPEN; dừng trước Phase04.** Test failures đã sửa; unit/E2E/native no-turn và giới hạn kiểm chứng được ghi trong [biên bản G3](./reports/g3-launcher-acceptance.md) và [validation matrix](./validation-matrix.md). Không giảm tiêu chí Resume để đóng gate: cần cơ chế loại trừ writer được chứng minh qua race check/open/first-write, không chỉ probe lease hoặc reservation nội bộ. Không triển khai Phase04, không bật launcher production, không commit/push hoặc thay `.next` đang chạy trong lượt nghiệm thu này.
 
 <!-- slug: omp-session-management-interactive-control -->

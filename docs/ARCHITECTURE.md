@@ -84,6 +84,13 @@ README; the office never installs it into OMP). The ingress is telemetry only:
 - Delivery is not guaranteed and not durable: an acknowledgement means "applied in memory". Tests: `omp-lifecycle`,
   `omp-bridge`, `omp-live-merge`, `omp-observer`; synthetic resource benchmark: `node --expose-gc scripts/benchmark-omp.mjs --run`. Installed 18.14.1 print/RPC evidence remains in the [Phase 04 report](../plans/261030-1754-omp-multi-agent-integration/reports/phase-04-implementation.md). [18.14.2 local validation](../plans/261030-1754-omp-multi-agent-integration/reports/phase-04-local-validation.md) adds actual TUI callbacks and manual plan-review waiting with a scripted loopback model; exact ask waiting and live child reporting remain unsupported. [Authorized token remediation](../plans/261030-1754-omp-multi-agent-integration/reports/phase-04-token-remediation.md) repaired the inspected Windows storage ACL and rotated the token; already-loaded observer factories need a fresh load to use it. G4 remains open, with cross-host and other runtime verification outstanding.
 
+### OMP native managed launcher: ranh giới quyền riêng
+
+Launcher không dùng telemetry làm quyền sở hữu: [`launch-resolver.mjs`](../server/agents/omp/launch-resolver.mjs) sở hữu allowlist, [`control-manager.mjs`](../server/agents/omp/control-manager.mjs) sở hữu admission/reservation và lifetime của child, [`rpc-host.mjs`](../server/agents/omp/rpc-host.mjs) sở hữu stdio RPC. Cờ launcher mặc định tắt, độc lập observer/quota; capability điều khiển Claude không được bật cho OMP.
+
+Exact Resume chỉ được chấp nhận khi allowlist khai báo `resumeProtocol: 1` cùng `ownerDir` nguồn đã duyệt và child native chứng minh đang giữ khóa writer miền gốc + khóa đường dẫn canonical ngay từ lúc mở (`ready.officeOwnershipProtocol = 1` và `get_state.officeOwnership` khớp `sessionId`, `sessionFile`, `sha256`), đồng thời không có runtime đang được observer/control-plane ghi nhận. Với stock binary hoặc cấu hình mặc định không có chứng nhận này, Resume bị từ chối fail-closed (`LAUNCH_OWNER_UNVERIFIED`) để không bao giờ rơi sang sibling/session khác. Xem [Hướng dẫn launcher](OMP-INTEGRATION.md#34-launcher-native-windows-phạm-vi-và-nghiệm-thu) và [nghiệm thu G3](../plans/261101-0902-omp-session-management-interactive-control/reports/g3-launcher-acceptance.md).
+
+
 ### Mixed-agent UI and replay
 
 - Scene teams use opaque `projectKey`, never the display basename. Without a verified key, legacy local Claude rows group by the full existing directory; other providers remain session-scoped. Tagged directory/session fallbacks cannot collide. Cross-source grouping still requires an explicitly verified mapping.
