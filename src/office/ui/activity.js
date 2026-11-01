@@ -1,12 +1,12 @@
 // The activity column and the session list.
 import { state } from '../core/state.js';
-import { $, el, fmtBytes, fmtClock, hhmm, nowMs } from '../core/env.js';
+import { $, el, fmtBytes, fmtClock, hhmm, nowMs, replay } from '../core/env.js';
 import { STATUS_LABEL, verb } from './event-text.js';
 import { TYPE_ICON, TYPE_TONE, icon } from './icons.js';
 import { hoverRing, selRing } from '../interact/rings.js';
 import { AGENT_NAME, agentMark, agentOf, canSession, claudeCost, colorOf, dn, dnOf, sessions, unknownLabel, workers } from '../people/workers.js';
 import { renderLite } from './lite.js';
-import { setOmpHidden } from './omp-history.js';
+import { ompActionsButton, ompOffered } from './omp-history.js';
 import { openSession, renderActivity, renderSessionHead, renderSubs, tab, toggleSession } from './session-drawer.js';
 import { macSnap, resetText } from './mac-drawer.js';
 import { renderOmpUsagePanel } from './omp-usage-panel.js';
@@ -159,15 +159,12 @@ function railRow(s) {
   b.append(av, main, meta, ctx);
   const subList = el('ul', 'ri-subs'); subList.hidden = true;
   li.append(b, subList);
-  if (agentOf(s) === 'omp' && state.isLocal) {   // OMP only, this computer only: hide from the office (not stop, not unpin)
-    const hb = el('button', 'ri-hide', '×'); hb.type = 'button'; hb.title = tr('activity.omp.hideTitle'); hb.setAttribute('aria-label', tr('activity.omp.hide'));
-    hb.addEventListener('click', (e) => { e.stopPropagation(); hb.disabled = true; setOmpHidden(s.id, true).then((ok) => { if (!ok) hb.disabled = false; }); });
-    li.append(hb);
-  }
+  const actions = agentOf(s) === 'omp' ? ompActionsButton(s.id) : null;
+  if (actions) li.append(actions);
   const c = el('button', 'chip'); c.type = 'button'; c.dataset.sess = s.id;
   const cd = el('i'), cn = el('span'), cs = el('small');
   c.append(cd, cn, cs);
-  return { li, b, av, avTxt, top, name, ctx, ctxB, nameKey: '', dIco, dIcoName: '', dTxt, time, ram, spark, subList, subSig: '', c, cd, cn, cs };
+  return { li, b, av, avTxt, top, name, ctx, ctxB, nameKey: '', dIco, dIcoName: '', dTxt, time, ram, spark, subList, subSig: '', c, cd, cn, cs, actions };
 }
 function subRow(s, x) {
   const li = el('li');
@@ -188,6 +185,7 @@ function renderRail() {
     count[group]++;
     let r = railRows.get(s.id);
     if (!r) { r = railRow(s); railRows.set(s.id, r); }
+    if (r.actions) r.actions.hidden = replay.on || !state.isLocal || !ompOffered();
     const color = colorOf(s), cur = String(s.id === state.selectedId);
     r.b.dataset.status = group; r.b.dataset.lifecycle = s.lifecycle || ''; r.b.dataset.stuck = s.stuck && s.status !== 'rest' ? '1' : ''; r.b.dataset.done = unseenDone.has(s.id) ? '1' : ''; r.b.setAttribute('aria-current', cur); r.av.style.setProperty('--c', color);
     { const k = agentOf(s); if (r.avTxt.firstChild?.dataset?.agent !== k) { r.avTxt.replaceChildren(agentMark(k)); r.av.title = AGENT_NAME[k]; } }

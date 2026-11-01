@@ -5,7 +5,7 @@ import { STATUS_LABEL, verb } from './event-text.js';
 import { TYPE_ICON, icon } from './icons.js';
 import { BASE_ZOOM } from '../scene/renderer.js';
 import { AGENT_NAME, agentOf, canSession, colorOf, dn, sessions, unknownLabel, workers } from '../people/workers.js';
-import { setOmpHidden, setOmpPin } from './omp-history.js';
+import { appendOmpActions } from './omp-history.js';
 import { cap, feedRow, fmtTok, fmtUsd, openFromRow, queueUi, toast } from './activity.js';
 import { goView, setView } from './camera-bar.js';
 import { closeMac, doAction, loadMac, macSnap } from './mac-drawer.js';
@@ -85,7 +85,7 @@ export async function openWindowOf(s) {
 }
 // what the buttons below depend on
 let drawnSig = '', qrFor = null;   // (qrFor: the session whose Remote Control QR code is shown)
-const actionsSig = (s) => [s.id, agentOf(s), s.persistedOnly, s.incomplete, state.isLocal, JSON.stringify(s.capabilities), s.link, s.status === 'rest', s.pid, s.moved?.to, s.acct, state.limits?.others?.length, JSON.stringify(s.metrics?.byProvider || null)].join('|');
+const actionsSig = (s) => [s.id, agentOf(s), s.persistedOnly, s.incomplete, s.connection, s.lifecycle, replay.on, state.isLocal, JSON.stringify(s.capabilities), s.link, s.status === 'rest', s.pid, s.moved?.to, s.acct, state.limits?.others?.length, JSON.stringify(s.metrics?.byProvider || null)].join('|');
 function renderActions() {
   const s = sessions.get(state.selectedId); if (!s) return;
   const box = $('ds-actions'); box.replaceChildren(); drawnSig = actionsSig(s);
@@ -94,17 +94,8 @@ function renderActions() {
     box.append(el('p', 'dr-note', tr(agentOf(s) === 'omp' ? 'drawer.readOnly' : 'drawer.unsupportedAgent')));
     if (agentOf(s) === 'omp' && s.persistedOnly === true) {   // a pinned history file: say so, and offer the way back out
       box.append(el('p', 'dr-note', tr(s.incomplete ? 'drawer.persistedIncomplete' : 'drawer.persistedNote')));
-      if (state.isLocal) {
-        const b = el('button', 'btn btn--sm', tr('activity.omp.unpin')); b.type = 'button';
-        b.addEventListener('click', async () => { b.disabled = true; if (!(await setOmpPin(s.id, false))) b.disabled = false; });
-        box.append(b);
-      }
     }
-    if (agentOf(s) === 'omp' && state.isLocal) {   // hide is the view only: the agent keeps running, its files and usage stay
-      const hb = el('button', 'btn btn--sm', tr('activity.omp.hide')); hb.type = 'button'; hb.title = tr('activity.omp.hideTitle');
-      hb.addEventListener('click', async () => { hb.disabled = true; if (!(await setOmpHidden(s.id, true))) hb.disabled = false; });
-      box.append(hb);
-    }
+    if (agentOf(s) === 'omp' && state.isLocal) appendOmpActions(box, s);
     const breakdown = typeof renderSessionProviderBreakdown === 'function' ? renderSessionProviderBreakdown(s, { fmtTok, fmtUsd }) : null;
     if (breakdown) box.append(breakdown);
     return;

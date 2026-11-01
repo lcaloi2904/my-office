@@ -1,4 +1,8 @@
 import { test, expect, type Page } from '@playwright/test';
+import { resetOmpView } from './omp-view-state';
+
+test.beforeEach(async ({ request, baseURL }) => resetOmpView(request, baseURL!));
+test.afterEach(async ({ request, baseURL }) => resetOmpView(request, baseURL!));
 
 // File-only OMP smoke on synthetic source folders (see tests/e2e/omp-fixture.mjs, started by playwright.omp.config.ts).
 // No OMP process, model, credentials or real transcript is involved. Run: playwright test -c playwright.omp.config.ts
@@ -63,7 +67,6 @@ test('pin a saved session: persisted-only label, opt-in conversation, read-only 
   await expect(page.locator('#ds-status')).toHaveText('History · not live');
   await expect(page.locator('#ds-actions')).toContainText('Read-only observation');
   await expect(page.locator('#ds-actions')).toContainText('saved session file');
-  await expect(page.locator('#ds-actions button')).toHaveCount(1);          // only Unpin: no open/close/account/remote controls
   await expect(page.locator('#ds-actions a')).toHaveCount(0);
   await expect(page.locator('#ds-body')).toContainText('E2E synthetic assistant reply');
   await expect(page.locator('#ds-body .tool-result[data-phase="error"]')).toContainText('Tool error');

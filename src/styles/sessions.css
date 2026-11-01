@@ -233,8 +233,22 @@
   .sub-tree .sub-card > .sub-parent { grid-column: 2; grid-row: 3; }
   #ds-status { max-width: 130px; white-space: normal; }
 }
-.ri-li { position: relative; }
-.ri-hide { position: absolute; top: 4px; right: 4px; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--faint); font-size: 1rem; line-height: 1; cursor: pointer; opacity: 0; }
-.ri-li:hover .ri-hide, .ri-hide:focus-visible { opacity: 1; }
-.ri-hide:hover { background: var(--card); color: inherit; }
-@media (hover: none) { .ri-hide { opacity: .7; } }
+/* OMP actions reuse the native dialog rather than a clipped popover inside the narrow rail. */
+.ri-li, .lite-row { position: relative; }
+.ri-li:has(> .omp-actions-open) > .ri { padding-right: 38px; }
+.omp-actions-open { width: 32px; height: 32px; padding: 0; border: 1px solid var(--line); border-radius: 9px; background: var(--card); color: var(--ink); font: 700 1.1rem/1 var(--font); cursor: pointer; }
+.ri-li > .omp-actions-open { position: absolute; right: 3px; top: 6px; }
+.omp-actions-open:hover { background: var(--card-2); }
+.omp-actions-open:focus-visible, .omp-undo .btn:focus-visible, .omp-actions-content .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.omp-actions-content { display: flex; flex-wrap: wrap; gap: 8px; }
+.omp-actions-content .dr-note { flex-basis: 100%; margin: 0 0 4px; overflow-wrap: anywhere; }
+.omp-actions-content .btn { min-height: 36px; }
+.omp-row b, .omp-evidence, .omp-row small { overflow-wrap: anywhere; min-width: 0; }
+.lite-row { display: grid; grid-template-columns: minmax(0, 1fr) 36px; gap: 6px; align-items: start; }
+.omp-undo { position: fixed; left: 50%; bottom: 128px; transform: translateX(-50%); z-index: 30; width: max-content; max-width: calc(100vw - 32px); box-sizing: border-box; display: flex; align-items: center; gap: 12px; padding: 12px; border: 1px solid var(--line-2); border-radius: 12px; background: var(--side); color: var(--ink); box-shadow: 0 12px 30px rgba(0, 0, 0, .35); font-size: .8rem; }
+.omp-undo .btn { flex: none; }
+.is-replay .omp-undo, .is-replay .omp-actions-open { display: none; }
+@media (max-width: 720px) {
+  .omp-undo { bottom: calc(206px + env(safe-area-inset-bottom, 0px)); flex-wrap: wrap; }
+  .omp-actions-content .btn { min-height: 44px; }
+}

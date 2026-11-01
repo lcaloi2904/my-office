@@ -7,6 +7,8 @@ import { isClaudeRequest, resolveOmpMode } from '../../server/agents/schema.mjs'
 import os from 'node:os';
 import path from 'node:path';
 import { createOmpVisibilityStore } from '../../server/agents/omp/visibility.mjs';
+import { createOmpLifecycle } from '../../server/agents/omp/lifecycle.mjs';
+import { normalizeOmpLiveEvent } from '../../server/agents/omp/normalize.mjs';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import { createT } from '../../src/i18n/index.js';
@@ -369,13 +371,16 @@ test('actual drawer/account guards do not call controls or read a foreign conver
   const deps = { ...h, sessions, state: { selectedId: s.id, isLocal: true },
     $: (id) => { if (!elements.has(id)) elements.set(id, node()); return elements.get(id); }, el: node,
     toast: () => {}, acctActions: () => assert.fail('foreign account actions'),
+    appendOmpActions: (box, record) => loadUi('src/office/ui/omp-history.js', ['appendOmpActions'], {
+      ...h, el: node, state: { omp: { on: true, local: true } }, locale: () => 'en',
+    }).appendOmpActions(box, record),
   };
   const drawer = loadUi('src/office/ui/session-drawer.js', ['renderActions', 'openWindowOf', 'loadLog'], deps);
   drawer.renderActions();
-  // a read-only note, then the local-only Hide button (a view preference: no control, no foreign account action)
-  assert.equal(elements.get('ds-actions').children.length, 2);
-  assert.equal(elements.get('ds-actions').children[0].tag, 'p');
-  assert.equal(elements.get('ds-actions').children[1].tag, 'button');
+  const actions = elements.get('ds-actions').children;
+  assert.equal(actions[0].textContent, 'drawer.readOnly');
+  assert.deepEqual(actions.filter((n) => n.tag === 'button').map((n) => n.dataset.ompAction), ['hide', 'history', 'refresh']);
+  assert.ok(actions.some((n) => n.textContent === 'activity.omp.ownerWarning'));
   await drawer.openWindowOf(s);
   await drawer.loadLog();
   assert.equal(elements.get('ds-body').children[0].textContent, 'drawer.conversationDisabled');
@@ -436,6 +441,7 @@ test('actual List Mode keeps unknown providers visible without NaN or fake activ
   ]);
   const list = loadUi('src/office/ui/lite.js', ['setLite'], {
     ...h, sessions, el: node, $: (id) => id === 'lite' ? box : button, ompButton: () => ({ hidden: true }),
+    ompActionsButton: () => node('button', 'omp-actions-open'),
     document: { body: { classList: { toggle() {} } }, createDocumentFragment: () => node('fragment') },
     fp: { on: false }, closePlace() {}, colorOf: () => '#000', dn: (s) => s.name,
     doingOf: (s) => { assert.equal(s.id, 'c'); return { text: 'rest' }; },
@@ -474,6 +480,7 @@ function railDom(tag = 'div', className = '', text = '') {
     get firstChild() { return this.children[0]; },
     setAttribute(key, value) { this.attributes[key] = value; if (key === 'class') this.className = value; },
     addEventListener(type, fn) { this.listeners[type] = fn; },
+    focus() {},
     append(...children) {
       for (const child of children) {
         if (typeof child === 'object') { child.remove(); child.parentNode = this; }
@@ -521,6 +528,8 @@ function railFixture(records, overrides = {}) {
     STATUS_LABEL: { wait: 'waiting', work: 'working', rest: 'resting' },
     icon: () => railDom('svg'), agentMark: (kind) => { const n = railDom('svg'); n.dataset.agent = kind; return n; },
     colorOf: () => '#000', dn: (s) => s.name, whereabouts: () => null, nowMs: () => 1000000,
+    ompActionsButton: () => railDom('button', 'omp-actions-open'),
+    ompOffered: () => true,
     fmtClock: (seconds) => 'clock:' + seconds, fmtBytes: (bytes) => String(bytes),
     macSnap: { claude: [{ pid: 123, mem: 1024 }] }, unseenDone: new Set(), num: String,
     ...overrides,
@@ -530,6 +539,17 @@ function railFixture(records, overrides = {}) {
 }
 const railSession = (id, status, extra = {}) => ({ id, name: id, status, desk: 0,
   dir: '', subs: [], usage: null, taskStart: 1, lastAt: 1, ...extra });
+
+test('rail hides OMP actions when the local adapter stops offering visibility', () => {
+  let offered = true;
+  const f = railFixture([railSession('omp:a', 'unknown', { agentKind: 'omp' })], { ompOffered: () => offered });
+  f.state.isLocal = true;
+  f.renderRail();
+  assert.equal(f.railRows.get('omp:a').actions.hidden, false);
+  offered = false;
+  f.renderRail();
+  assert.equal(f.railRows.get('omp:a').actions.hidden, true);
+});
 
 test('actual rail attaches unknown rows, preserves nodes across transitions and cleans removed sessions', () => {
   const f = railFixture([
@@ -724,4 +744,137 @@ test('actual OMP visibility route: strict local write, Origin required, known id
     const shown = await requestCallback(f, '/api/omp/visibility', body({ hidden: false, expectedRevision: 1 }), 'POST', withReq(true, 'http://x'));
     assert.equal(shown.status, 200); assert.equal(ompVisibility.isHidden(f.persisted.id), false); assert.deepEqual(sent.at(-1), ['sess', true]);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+// G2 contracts: visibility is presentation only; read-only refresh uses current adapter evidence.
+test('visibility refresh tracks stale/disconnected/ended evidence and expired restore never recreates a session', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'omp-vis-evidence-'));
+  const clock = { now: 1_000_000 }, life = createOmpLifecycle({ now: () => clock.now });
+  const send = (type, sequence) => life.ingest(normalizeOmpLiveEvent({
+    version: 1, sourceId: 'visibility-fixture', sessionId: 'one', runtimeInstanceId: 'fixture-runtime',
+    generation: 1, sequence, type, data: { isIdle: true },
+  }));
+  try {
+    assert.equal(send('session_start', 1).ok, true);
+    const f = ompRouteFixture(true), sent = [];
+    // The production adapter wraps a lifecycle snapshot in record.live before the registry projects it.
+    const record = (live) => live ? { ...live, live } : null;
+    f.agents = createAgentRegistry({ adapters: [{ kind: 'omp', list: () => life.list().map(record), resolve: (id) => record(life.resolve(id)) }] });
+    const id = f.agents.list()[0].id;
+    const ompVisibility = createOmpVisibilityStore({ file: path.join(dir, 'hidden.json') });
+    const deps = { ...f.extra(true), ompVisibility, broadcast: (m) => sent.push(m), req: { headers: { origin: 'http://x', 'content-type': 'application/json' } } };
+    const update = (hidden) => requestCallback(f, '/api/omp/visibility', { id, hidden, expectedRevision: ompVisibility.snapshot().revision }, 'POST', deps);
+    const read = () => requestCallback(f, '/api/omp/visibility?id=' + id, null, 'GET', deps);
+    for (const [elapsed, connection] of [[0, 'connected'], [31_000, 'stale'], [91_000, 'disconnected']]) {
+      clock.now = 1_000_000 + elapsed; life.sweep();
+      const before = plain(life.resolve(id));
+      assert.equal((await update(true)).status, 200);
+      const result = await read();
+      assert.equal(result.payload.current.connection, connection);
+      assert.equal(result.payload.current.lifecycle, 'open', 'a timeout must not imply ended');
+      assert.equal(result.payload.items[0].current.connection, connection);
+      assert.equal(result.payload.current.lastAt, before.observedAt);
+      assert.equal(Object.hasOwn(result.payload.current, 'runtimeInstanceId'), false);
+      assert.equal(Object.hasOwn(result.payload.current, 'pid'), false);
+      assert.equal((await update(false)).payload.available, true);
+      assert.equal(sent.at(-1).s.connection, connection, 'restore publishes the current observation');
+      assert.deepEqual(plain(life.resolve(id)), before, 'hide/restore/refresh do not mutate lifecycle state');
+    }
+    assert.equal(send('session_end', 2).ok, true);
+    await update(true);
+    assert.equal((await read()).payload.current.lifecycle, 'ended');
+    clock.now += 16 * 60_000; life.sweep();
+    assert.equal((await read()).payload.current, null);
+    const restored = await update(false);
+    assert.equal(restored.payload.available, false);
+    assert.equal(sent.at(-1).k, 'gone');
+    assert.deepEqual(f.agents.list(), []);
+    assert.equal((await read()).status, 404, 'an unknown unhidden ID is not resolved by name or guessed');
+    assert.deepEqual(f.calls, { catalog: [], pin: [], refresh: 0, read: 0 });
+  } finally { life.dispose(); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+function visibilityUiFixture(fetcher) {
+  const replay = { on: false }, state = { omp: { on: true, local: true } }, body = railDom(), calls = [], messages = [];
+  const document = { body, querySelector: () => null };
+  const api = loadUi('src/office/ui/omp-history.js', ['setOmpHidden', 'setOmpPin', 'appendOmpActions', 'ompActionsButton', 'openOmpHistory'], {
+    ...ui(railDom), el: railDom, replay, state, document, sessions: new Map(), locale: () => 'en', TOKEN: '',
+    toast: (message) => messages.push(message),
+    fetch: async (url, options) => { calls.push({ url, options }); return fetcher(url, options, calls.length); },
+  });
+  return { ...api, replay, state, body, calls, messages };
+}
+const visibilityResponse = (data, status = 200) => ({ status, ok: status >= 200 && status < 300, json: async () => data });
+const fixtureId = 'omp:' + '1'.repeat(64);
+
+test('actual hide offers keyboard-accessible Undo without changing pins, and retries revision conflict once', async () => {
+  const f = visibilityUiFixture((url, options, n) => {
+    assert.match(url, /^\/api\/omp\/visibility/);
+    const request = JSON.parse(options.body);
+    if (n === 1) return visibilityResponse({ ok: false, code: 'conflict', revision: 4 }, 409);
+    assert.equal(request.expectedRevision, n === 2 ? 4 : 5);
+    return visibilityResponse({ ok: true, revision: n === 2 ? 5 : 6, available: true });
+  });
+  assert.equal(await f.setOmpHidden(fixtureId, true), true);
+  const banner = f.body.children[0], undo = banner.children.find((n) => n.dataset.ompAction === 'undo');
+  assert.equal(undo.tag, 'button');
+  assert.equal(banner.hidden, false);
+  await undo.listeners.click();
+  assert.equal(JSON.parse(f.calls.at(-1).options.body).hidden, false);
+  assert.equal(banner.hidden, true);
+  assert.equal(f.calls.length, 3);
+});
+
+test('actual OMP actions separate history unpin from hide and refresh only current evidence', async () => {
+  const f = visibilityUiFixture(() => visibilityResponse({
+    ok: true, revision: 0, items: [], current: { id: fixtureId, connection: 'disconnected', lifecycle: 'open', lastAt: 123 },
+  }));
+  const s = { id: fixtureId, agentKind: 'omp', persistedOnly: true }, box = railDom();
+  f.appendOmpActions(box, s);
+  const buttons = box.children.filter((n) => n.tag === 'button');
+  assert.deepEqual(buttons.map((b) => b.dataset.ompAction), ['hide', 'unpin', 'history', 'refresh']);
+  box.children[0].isConnected = true;
+  await buttons.find((b) => b.dataset.ompAction === 'refresh').listeners.click();
+  assert.equal(f.calls.length, 1);
+  assert.equal(f.calls[0].options.cache, 'no-store');
+  assert.match(f.calls[0].url, /^\/api\/omp\/visibility\?id=omp%3A/);
+  assert.match(box.children[0].textContent, /drawer.disconnectedState/);
+  const live = railDom(); f.appendOmpActions(live, { ...s, persistedOnly: false });
+  assert.equal(live.children.some((n) => n.dataset.ompAction === 'unpin'), false);
+});
+
+test('replay blocks direct visibility/pin/history calls and handlers rendered before entering replay', async () => {
+  const f = visibilityUiFixture(() => assert.fail('replay must not fetch'));
+  const box = railDom(); f.appendOmpActions(box, { id: fixtureId, agentKind: 'omp', persistedOnly: true });
+  f.replay.on = true;
+  for (const b of box.children.filter((n) => n.tag === 'button')) await b.listeners.click();
+  assert.equal(await f.setOmpHidden(fixtureId, true), false);
+  assert.equal(await f.setOmpPin(fixtureId, false), false);
+  f.openOmpHistory();
+  assert.equal(f.calls.length, 0);
+  assert.equal(f.ompActionsButton(fixtureId).hidden, true);
+});
+
+test('failed hide does not offer Undo or claim success', async () => {
+  const f = visibilityUiFixture(() => visibilityResponse({ ok: false, code: 'store-corrupt' }, 500));
+  assert.equal(await f.setOmpHidden(fixtureId, true), false);
+  assert.equal(f.body.children.length, 0);
+  assert.deepEqual(f.messages, ['activity.omp.errHideCorrupt']);
+});
+
+test('expired restore reports removed preference rather than claiming a live actor', async () => {
+  const f = visibilityUiFixture(() => visibilityResponse({ ok: true, revision: 1, available: false }));
+  assert.equal(await f.setOmpHidden(fixtureId, false), true);
+  assert.deepEqual(f.messages, ['activity.omp.restoredAbsent']);
+  assert.equal(f.body.children.length, 0);
+});
+
+test('a revision conflict arriving after replay starts cannot retry the write', async () => {
+  const f = visibilityUiFixture(() => {
+    f.replay.on = true;
+    return visibilityResponse({ ok: false, code: 'conflict', revision: 2 }, 409);
+  });
+  assert.equal(await f.setOmpHidden(fixtureId, true), false);
+  assert.equal(f.calls.length, 1, 'no replay-triggered retry');
+  assert.equal(f.body.children.length, 0);
 });

@@ -94,6 +94,20 @@ Bộ giải mã hỗ trợ OMP session schema **v3** (mốc mã nguồn tham chi
 | **Chéo Windows ↔ WSL (`files`)** | Hỗ trợ có điều kiện | Bị chặn (hạ về `files`) | **CHƯA XÁC MINH LIVE**. Yêu cầu mount cục bộ qua được kiểm tra `approveRoot`/`containedPath` (không symlink/junction) và khai báo đúng `pathStyle`. Không bao giờ dò PID chéo hệ điều hành. |
 | **Khác máy / LAN / NAT (`hybrid`)** | Không áp dụng | **BỊ CHẶN / KHÔNG HỖ TRỢ** | `office-observer.js` và `/ingest/omp/v1` bắt buộc loopback (`127.0.0.1`, `localhost`, `::1`). Không gửi bearer token qua HTTP thường trên mạng LAN/NAT. |
 
+### 3.3 Ẩn/hiện phiên OMP và xem lại bằng chứng
+
+- **Menu `⋯`** ở mỗi phiên OMP trong thanh bên và Chế độ danh sách mở hộp thoại thao tác. Ngăn chi tiết phiên cũng cung cấp cùng các thao tác **Ẩn**, **Lịch sử OMP**, **Kiểm tra lại**, và **Bỏ ghim** riêng cho lịch sử đang ghim. Không có thao tác điều khiển OMP trong menu này.
+- **Ẩn** chỉ thay đổi cách trình bày: gỡ phiên/nhân vật con khỏi thanh bên, danh sách, cảnh 3D và số lượng hiển thị. Không bỏ ghim, dừng theo dõi, sửa transcript, thay đổi adapter hay dừng tiến trình. Tùy chọn lưu cục bộ trong `data/omp-hidden.json`, tồn tại qua tải lại trang, kết nối lại SSE và khởi động lại server.
+- Sau khi ẩn, bảng thông báo có nút **Hoàn tác ẩn** (`Undo hide`) bằng bàn phím; bảng giữ thao tác ẩn gần nhất cho tới khi hoàn tác hoặc có lần ẩn mới. Có thể tìm lại tất cả phiên đã ẩn qua **Lịch sử OMP → Phiên đã ẩn**. Mỗi hàng hiển thị mã phiên ẩn danh, worktree nếu có, trạng thái bằng chứng hiện tại, lần quan sát gần nhất và thời điểm ẩn để không nhầm hai phiên trùng tên.
+- **Hiện lại / Hoàn tác** dùng cùng mã phiên, trả về trạng thái hiện tại từ adapter, không khôi phục bản sao cũ của lúc ẩn. Nếu quan sát đã hết TTL hoặc lịch sử đã bỏ ghim, thao tác chỉ gỡ tùy chọn ẩn và thông báo không còn phiên hiện tại; không tự khởi chạy, ghim lại hay tạo nhân vật giả. Danh mục lịch sử vẫn dùng để ghim riêng khi cần.
+- **Kiểm tra lại** trong menu/ngăn chi tiết gọi `GET /api/omp/visibility?id=<opaque-id>` để đọc bằng chứng đã có ở My Office; trong hộp thoại lịch sử, nút này tải lại danh mục và danh sách ẩn. Đây không phải quét PID, xác nhận chủ sở hữu tiến trình, gọi model hay gửi lệnh tới OMP. Nhãn `stale`/`disconnected` không có nghĩa agent đã kết thúc; chỉ sự kiện kết thúc là bằng chứng `ended`.
+- `GET /api/omp/visibility` chỉ trả cho máy cục bộ; tùy chọn `id` phải là mã OMP đã biết hoặc đang ẩn, không nhận đường dẫn hay PID. `current` trong phản hồi và trong từng hàng ẩn là allowlist bằng chứng trạng thái/identity, hoặc `null` khi hết quan sát. `POST {id, hidden, expectedRevision}` yêu cầu loopback và Origin cùng nguồn; UI xử lý xung đột `409` bằng cách áp dụng lại đúng ý định tối đa một lần. Trường `available` cho biết lúc hoàn tất thao tác còn bằng chứng phiên hay không.
+- Hộp thoại native hỗ trợ bàn phím/Escape; menu có nhãn ARIA, hành động restore đọc kèm mã phiên. Chế độ danh sách giữ focus/scroll qua cập nhật định kỳ. Trong **replay**, các điểm vào và callback ghi/đọc visibility, ghim/bỏ ghim, mở lịch sử đều bị chặn, kể cả nút đã được render trước khi vào replay.
+
+Đã kiểm chứng Phase01–02 trên native Windows: xem [validation matrix](../plans/261101-0902-omp-session-management-interactive-control/validation-matrix.md) và [support matrix RPC](../plans/261101-0902-omp-session-management-interactive-control/reports/g1-compatibility-security.md). Menu visibility không cấp quyền launch/control; completion/approval/external bridge vẫn cần gate riêng.
+
+E2E phục vụ **production client**, không tự biên dịch source UI. Khi kiểm thử, build vào thư mục riêng bằng `OFFICE_DIST_DIR` rồi dùng cùng biến này cho Playwright, tránh chạy client cũ hoặc thay `.next` của office đang hoạt động. Files suite dùng 1 worker và reset pin/visibility qua API; Windows tự dùng ANGLE/D3D11, không nới timeout hay bỏ assertion để xử lý backend headless chậm. Các fixture không đọc transcript, profile hay credential OMP thật.
+
 ---
 
 ## 4. Quyền riêng tư, Lưu trữ & Ngữ nghĩa Chi phí / Token

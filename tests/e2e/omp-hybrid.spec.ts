@@ -23,7 +23,7 @@ test.afterAll(() => {
 });
 
 // Real isolated server + synthetic ingress/files. No OMP executable, model call or private source.
-test('hybrid union survives hot reconnect, separates wait/stale/end and never becomes a Claude target or replay', async ({ page, context, request }) => {
+test('hybrid union survives hot reconnect, separates wait/stale/end and never becomes a Claude target or replay', async ({ page, context, request, baseURL }) => {
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
   const id = projectOmpSession({ sourceNamespace: 'e2eon', sourceSessionId: 'e2e-conv-on' })!.id;
@@ -51,8 +51,25 @@ test('hybrid union survives hot reconnect, separates wait/stale/end and never be
   await card.click();
   await expect(page.locator('#ds-body')).toContainText('E2E synthetic assistant reply');
   await expect(page.locator('#ds-actions')).toContainText('Read-only observation');
-  await expect(page.locator('#ds-actions button, #ds-actions a')).toHaveCount(0);
+  // Hiding a connected runtime preserves its pin and telemetry. Restoring uses its current state.
+  const visibility = async (hidden: boolean) => {
+    const snapshot = await (await request.get('/api/omp/visibility')).json();
+    const response = await request.post('/api/omp/visibility', {
+      headers: { Origin: baseURL! }, data: { id, hidden, expectedRevision: snapshot.revision },
+    });
+    expect(response.status()).toBe(200);
+    const catalog = await (await request.get('/api/omp/catalog?limit=10')).json();
+    expect(catalog.items.find((item: { id: string }) => item.id === id).pinned).toBe(true);
+  };
+  await page.locator('#ds-actions').getByRole('button', { name: 'Hide', exact: true }).click();
+  await expect(card).toHaveCount(0);
   await send('approval_requested', { requestId: 'approval-one' });
+  await page.reload();
+  await expect(page.locator('#lite')).toBeVisible();
+  await expect(card).toHaveCount(0);
+  await visibility(false);
+  await expect(card).toContainText('Waiting for approval');
+  await card.click();
   await expect(page.locator('#ds-status')).toHaveText('Waiting for approval');
   await send('approval_resolved', { requestId: 'approval-one' });
   await send('input_requested', { requestId: 'input-one' });
@@ -84,6 +101,14 @@ test('hybrid union survives hot reconnect, separates wait/stale/end and never be
   await send('session_end');
   await expect(page.locator('#ds-status')).toHaveText('Runtime ended');
   await expect(card).toHaveAttribute('data-lifecycle', 'ended');
+  await visibility(true);
+  await expect(card).toHaveCount(0);
+  await page.reload();
+  await expect(page.locator('#lite')).toBeVisible();
+  await expect(card).toHaveCount(0);
+  await visibility(false);
+  await expect(card).toContainText('Runtime ended');
+  await card.click();
   const replayDir = path.join(DATA_DIR, 'replay');
   const replay = fs.existsSync(replayDir) ? fs.readdirSync(replayDir).filter((f) => f.endsWith('.jsonl')).map((f) => fs.readFileSync(path.join(replayDir, f), 'utf8')).join('') : '';
   expect(replay).not.toContain(id);

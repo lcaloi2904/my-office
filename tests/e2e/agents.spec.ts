@@ -41,7 +41,6 @@ test('synthetic OMP stays read-only and unknown usage is not rendered as zero or
   expect(session).not.toBeNull();
   await selectFixture(page, session!);
   await expect(page.locator('#ds-actions')).toContainText('Read-only observation');
-  await expect(page.locator('#ds-actions button, #ds-actions a')).toHaveCount(0);
   await expect(page.locator('#ds-actions')).not.toContainText('/rc');
   await expect(page.locator('#ds-ctx')).toHaveText('–');
   await expect(page.locator('#ds-cost')).toHaveText('–');
@@ -80,7 +79,6 @@ test('unknown OMP remains visible in List Mode independently of the rail', async
   await expect(row).not.toContainText('NaN');
   await row.click();
   await expect(page.locator('#ds-actions')).toContainText('Read-only observation');
-  await expect(page.locator('#ds-actions button, #ds-actions a')).toHaveCount(0);
   await expect(page.locator('#ds-ctx')).toHaveText('–');
   await expect(page.locator('#ds-cost')).toHaveText('–');
   expect(errors).toEqual([]);

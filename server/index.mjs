@@ -2364,7 +2364,14 @@ const server = http.createServer((req, res) => {
     if (req.method === 'GET') {
       if (!isLoopback(req)) { json(res, 403, { ok: false, code: 'agentLocalOnly' }); return; }
       const snap = ompVisibility.snapshot();
-      json(res, 200, { ok: true, revision: snap.revision, corrupt: snap.corrupt, items: snap.items.map((x) => ({ id: x.id, label: x.label, hiddenAt: x.hiddenAt, live: !!agents.resolve(x.id) })) });
+      // Evidence is the adapter's current public observation, not an OS/process liveness probe.
+      const evidence = (id) => {
+        const s = agents.resolve(id)?.publicSession;
+        return s?.agentKind === 'omp' ? Object.fromEntries(['id', 'name', 'projectKey', 'worktreeKey', 'persistedOnly', 'status', 'lifecycle', 'connection', 'activity', 'eventGap', 'waitReasons', 'lastAt'].map((key) => [key, s[key]])) : null;
+      };
+      const id = url.searchParams.get('id');
+      if (id !== null && (!/^omp:[0-9a-f]{64}$/.test(id) || (!evidence(id) && !ompVisibility.isHidden(id)))) { json(res, 404, { ok: false, code: 'unknown-session' }); return; }
+      json(res, 200, { ok: true, revision: snap.revision, corrupt: snap.corrupt, ...(id !== null ? { current: evidence(id) } : {}), items: snap.items.map((x) => ({ id: x.id, label: x.label, hiddenAt: x.hiddenAt, live: !!agents.resolve(x.id), current: evidence(x.id) })) });
       return;
     }
     if (req.method === 'POST') {
@@ -2381,7 +2388,7 @@ const server = http.createServer((req, res) => {
           const now = b.hidden ? null : agents.resolve(id);
           broadcast(now ? { k: 'sess', s: now.publicSession } : { k: 'gone', id }, true);
         }
-        json(res, r.ok ? 200 : r.code === 'conflict' ? 409 : r.code === 'invalid' ? 400 : r.code === 'limit' ? 400 : 500, r);
+        json(res, r.ok ? 200 : r.code === 'conflict' ? 409 : r.code === 'invalid' ? 400 : r.code === 'limit' ? 400 : 500, { ...r, ...(r.ok ? { available: !!agents.resolve(id) } : {}) });
       }).catch(() => json(res, 400, { ok: false, code: 'invalid' }));
       return;
     }

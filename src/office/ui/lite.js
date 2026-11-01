@@ -1,7 +1,7 @@
 // List mode: session cards over the existing scene lifecycle (not a zero-WebGL startup path).
 import { $, el, fmtClock, nowMs, short } from '../core/env.js';
 import { AGENT_NAME, agentOf, colorOf, dn, sessions, unknownLabel } from '../people/workers.js';
-import { ompButton } from './omp-history.js';
+import { ompActionsButton, ompButton } from './omp-history.js';
 import { doingOf } from './activity.js';
 import { cacheWords } from './cache-words.js';
 import { openSession } from './session-drawer.js';
@@ -20,6 +20,12 @@ export function setLite(on) {
 export function renderLite() {
   if (!lite) return;
   const box = $('lite'), list = [...sessions.values()];
+  const focused = document.activeElement;
+  const hadFocus = focused && box.contains(focused);
+  const focusId = hadFocus ? focused.dataset.sess || focused.dataset.ompActions : null;
+  const focusAction = hadFocus && !!focused.dataset.ompActions;
+  const historyFocused = hadFocus && focused.classList.contains('omp-open');
+  const scroll = box.scrollTop;
   const groups = [['wait', tr('lite.wait'), (s) => s.status === 'wait'], ['work', tr('lite.work'), (s) => s.status === 'work'], ['rest', tr('lite.rest'), (s) => s.status === 'rest'],
     ['unknown', tr('drawer.unknownState'), (s) => !['wait', 'work', 'rest'].includes(s.status)]];
   const frag = document.createDocumentFragment();
@@ -43,10 +49,18 @@ export function renderLite() {
         s.status === 'rest' ? cacheWords(s.cache, 'lite').text : ''].filter(Boolean).join(' · ');   // (resting: the coffee on its desk, warm or cold)
       if (meta) c.append(el('small', null, meta));
       c.addEventListener('click', () => openSession(s.id));
-      frag.append(c);
+      if (kind === 'omp') {
+        const row = el('div', 'lite-row'); row.append(c, ompActionsButton(s.id)); frag.append(row);
+      } else frag.append(c);
     }
   }
   box.replaceChildren(frag);
+  if (focusId) {
+    const candidates = box.querySelectorAll(focusAction ? '[data-omp-actions]' : '[data-sess]');
+    [...candidates].find((b) => (focusAction ? b.dataset.ompActions : b.dataset.sess) === focusId)?.focus({ preventScroll: true });
+  }
+  if (historyFocused) box.querySelector('.omp-open')?.focus({ preventScroll: true });
+  box.scrollTop = scroll;
 }
 
 export function setup() {

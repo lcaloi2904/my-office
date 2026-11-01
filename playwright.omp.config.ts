@@ -8,8 +8,9 @@ const OUT = process.env.E2E_OUT || 'test-results', FIXTURE_DIR = path.resolve(OU
 const server = base.webServer as { env: Record<string, string> };
 export default defineConfig({
   ...base,
+  workers: 1, // Both specs mutate the same synthetic pin/visibility store.
   testIgnore: undefined,
-  testMatch: '**/omp-files.spec.ts',
+  testMatch: '**/omp-{files,visibility}.spec.ts',
   webServer: {
     ...base.webServer as object,
     command: `node tests/e2e/omp-fixture.mjs "${FIXTURE_DIR}" && node server/index.mjs`,

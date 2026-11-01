@@ -12,13 +12,17 @@ process.env.CLAUDE_CONFIG_DIR = path.join(HOME_DIR, '.claude');
 export const DATA_DIR = path.resolve(OUT, 'office-data');
 export default defineConfig({
   testDir: 'tests/e2e',
-  testIgnore: ['**/omp-files.spec.ts', '**/omp-hybrid.spec.ts'], // OMP integration modes have isolated configs.
+  testIgnore: ['**/omp-files.spec.ts', '**/omp-visibility.spec.ts', '**/omp-hybrid.spec.ts'], // OMP integration modes have isolated configs.
   outputDir: OUT,
   timeout: 90_000,
   retries: process.env.CI ? 1 : 0,
   workers: 2,                       // each test builds a whole 3D office: two at a time is plenty
   expect: { timeout: 30_000 },      // the office takes a few seconds to build on a busy machine or a CI runner
-  use: { baseURL: `http://127.0.0.1:${PORT}`, viewport: { width: 1440, height: 900 } },
+  use: {
+    baseURL: `http://127.0.0.1:${PORT}`, viewport: { width: 1440, height: 900 },
+    // Native Windows 3D journeys use ANGLE/D3D11: the default headless backend exceeded action deadlines.
+    ...(process.platform === 'win32' && { launchOptions: { args: ['--use-angle=d3d11'] } }),
+  },
   webServer: {
     command: 'node server/index.mjs',
     url: `http://127.0.0.1:${PORT}/health`,
