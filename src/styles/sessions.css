@@ -233,6 +233,15 @@
   .sub-tree .sub-card > .sub-parent { grid-column: 2; grid-row: 3; }
   #ds-status { max-width: 130px; white-space: normal; }
 }
+/* Native OMP launcher; bounded forms do not stretch the rail or affect the existing 3D scene. */
+.omp-launch-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.omp-launch-form { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: end; }
+.omp-launch-field { display: grid; gap: 5px; font-size: .8rem; min-width: 0; }
+.omp-launch-field select { width: 100%; min-width: 0; padding: 9px; border: 1px solid var(--line); border-radius: 8px; color: var(--ink); background: var(--card); }
+.omp-launch-dlg .dr-note { overflow-wrap: anywhere; }
+.omp-row .omp-resume { grid-row: 3; grid-column: 2; justify-self: end; }
+.omp-launch-new { align-self: flex-start; }
+@media (max-width: 520px) { .omp-launch-form { grid-template-columns: 1fr; } .omp-launch-form .btn { min-height: 44px; } }
 /* OMP actions reuse the native dialog rather than a clipped popover inside the narrow rail. */
 .ri-li, .lite-row { position: relative; }
 .ri-li:has(> .omp-actions-open) > .ri { padding-right: 38px; }

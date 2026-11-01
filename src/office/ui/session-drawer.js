@@ -85,13 +85,13 @@ export async function openWindowOf(s) {
 }
 // what the buttons below depend on
 let drawnSig = '', qrFor = null;   // (qrFor: the session whose Remote Control QR code is shown)
-const actionsSig = (s) => [s.id, agentOf(s), s.persistedOnly, s.incomplete, s.connection, s.lifecycle, replay.on, state.isLocal, JSON.stringify(s.capabilities), s.link, s.status === 'rest', s.pid, s.moved?.to, s.acct, state.limits?.others?.length, JSON.stringify(s.metrics?.byProvider || null)].join('|');
+const actionsSig = (s) => [s.id, agentOf(s), s.persistedOnly, s.incomplete, s.connection, s.lifecycle, replay.on, state.isLocal, JSON.stringify(s.capabilities), JSON.stringify(s.control), s.link, s.status === 'rest', s.pid, s.moved?.to, s.acct, state.limits?.others?.length, JSON.stringify(s.metrics?.byProvider || null)].join('|');
 function renderActions() {
   const s = sessions.get(state.selectedId); if (!s) return;
   const box = $('ds-actions'); box.replaceChildren(); drawnSig = actionsSig(s);
   if (replay.on) { box.append(el('p', 'dr-note', tr('drawer.readOnly'))); return; }
   if (agentOf(s) !== 'claude') {
-    box.append(el('p', 'dr-note', tr(agentOf(s) === 'omp' ? 'drawer.readOnly' : 'drawer.unsupportedAgent')));
+    box.append(el('p', 'dr-note', tr(agentOf(s) === 'omp' && s.control?.owner === 'managed' ? 'drawer.managedLauncherNote' : agentOf(s) === 'omp' ? 'drawer.readOnly' : 'drawer.unsupportedAgent')));
     if (agentOf(s) === 'omp' && s.persistedOnly === true) {   // a pinned history file: say so, and offer the way back out
       box.append(el('p', 'dr-note', tr(s.incomplete ? 'drawer.persistedIncomplete' : 'drawer.persistedNote')));
     }

@@ -3,6 +3,7 @@ export default {
   unknownAgent: 'Unknown agent',
   unknownState: 'Activity unknown',
   readOnly: 'Read-only observation. Agent controls are not available here.',
+  managedLauncherNote: 'This runtime was created by My Office through OMP RPC. Prompt, steer and abort are not available until Phase 04.',
   persistedState: 'History · not live',
   persistedNote: 'Pinned from a saved session file. It shows what was recorded, not whether the agent is running now.',
   persistedIncomplete: 'Pinned from a saved session file. Some of the file could not be read, so the figures may be incomplete.',

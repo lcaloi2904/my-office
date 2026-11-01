@@ -35,11 +35,11 @@ const SWEEP_MS = 5000;
 export function createOmpAdapter({ config, configFile, io = fsp, now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout, pinStore = null, live = false, onChange = () => {} } = {}) {
   let cfg = null, started = false, disposed = false, state = 'idle', timer = null, sweepTimer = null, running = null, controller = new AbortController();
   let lastScan = 0, scanEpoch = 0, failures = 0, activeConversations = 0, pinsLoaded = false;
-  const sources = new Map(), catalog = new Map(), byId = new Map(), conflicts = new Set(), pins = new Set(), unpinnedLive = new Set(), runtimes = new Map();
+  const sources = new Map(), catalog = new Map(), byId = new Map(), conflicts = new Set(), pins = new Set(), unpinnedLive = new Set(), runtimes = new Map(), managed = new Map();
   const issues = new Set();
   const report = (code) => { if (issues.size < 24) issues.add(code); };
   const safe = (fn) => { try { fn(); } catch { /* a change listener never breaks the observer */ } };
-  const tracked = (id) => pins.has(id) || (!!lifecycle?.resolve(id) && !unpinnedLive.has(id));
+  const tracked = (id) => pins.has(id) || managed.has(id) || (!!lifecycle?.resolve(id) && !unpinnedLive.has(id));
   const lifecycle = live ? createOmpLifecycle({ now, onChange: (ids) => {
     if (disposed) return;
     if (started && cfg) {
@@ -82,7 +82,7 @@ export function createOmpAdapter({ config, configFile, io = fsp, now = Date.now,
       let dirPath;
       try { dirPath = await containedPath(source.root, rel, io); }
       catch (e) { if (!rel) throw e; report(errorCode(e)); continue; }
-      const take = (child) => { seenFiles.add(child); found.push({ relative: child, size: 0, mtimeMs: 0, ino: '' }); };
+      const take = (child) => { seenFiles.add(child); found.push({ relative: child, size: 0, mtimeMs: 0, ctimeMs: 0, ino: '' }); };
       let listing = null;
       if (artifact) {
         try {
@@ -114,7 +114,7 @@ export function createOmpAdapter({ config, configFile, io = fsp, now = Date.now,
             const file = await containedPath(source.root, child, io), st = await io.lstat(file);
             if (!st.isFile() || st.nlink > 1) continue;
             seenFiles.add(child);
-            found.push({ relative: child, size: st.size, mtimeMs: st.mtimeMs, ino: `${st.dev}:${st.ino}` });
+            found.push({ relative: child, size: st.size, mtimeMs: st.mtimeMs, ctimeMs: st.ctimeMs, ino: `${st.dev}:${st.ino}` });
           } catch (e) { report(errorCode(e)); }
         }
       } finally { await dir.close().catch(() => {}); }
@@ -383,11 +383,11 @@ export function createOmpAdapter({ config, configFile, io = fsp, now = Date.now,
 
   // One record per conversation. The runtime owns liveness; a persisted file owns history and durable usage.
   function recordOf(id) {
-    const file = tracked(id) ? fileRecordOf(id) : null, runtime = lifecycle?.resolve(id) ?? null;
+    const file = tracked(id) ? fileRecordOf(id) : null, runtime = managed.get(id) ?? lifecycle?.resolve(id) ?? null;
     if (!runtime) return file;
     const entry = byId.get(id), source = sources.get(runtime.sourceNamespace);
     if (!source) return file;
-    const identity = file || (entry?.header?.supported ? { ...projectIdentity(source.cfg, entry.header.cwd, source.identities), project: baseName(source.cfg, entry.header.cwd) } : {});
+    const identity = file || (entry?.header?.supported ? { ...projectIdentity(source.cfg, entry.header.cwd, source.identities), project: baseName(source.cfg, entry.header.cwd) } : { project: runtime.project || null, projectKey: runtime.projectKey || null, worktreeKey: runtime.worktreeKey || null });
     const recorded = file?.readerState === 'ready' && !file.incomplete && file?.metrics && (file.metrics.cost || file.metrics.tokens?.provenance === 'recorded');
     const fc = file?.counts, rc = runtime.counts;
     const counts = fc && rc ? { read: Math.max(fc.read || 0, rc.read || 0), edit: Math.max(fc.edit || 0, rc.edit || 0), cmd: Math.max(fc.cmd || 0, rc.cmd || 0), web: Math.max(fc.web || 0, rc.web || 0) } : fc ?? rc;
@@ -398,9 +398,11 @@ export function createOmpAdapter({ config, configFile, io = fsp, now = Date.now,
       counts, readerState: file?.readerState, incomplete: file?.incomplete === true, filePersisted: !!file,
       children: file?.children, childrenIncomplete: file?.childrenIncomplete === true,
       project: identity.project, projectKey: identity.projectKey, worktreeKey: identity.worktreeKey,
-      conversation: !!file && file.conversation === true, persistedOnly: false, live: runtime };
+      conversation: !!file && file.conversation === true, persistedOnly: false, live: runtime,
+      ...(managed.has(id) && { managed: { owner: 'managed', runtimeInstanceId: managed.get(id).runtimeInstanceId,
+        generation: managed.get(id).generation, state: 'ready' } }) };
   }
-  const knownIds = () => new Set([...pins, ...(lifecycle?.ids() ?? [])]);
+  const knownIds = () => new Set([...pins, ...(lifecycle?.ids() ?? []), ...managed.keys()]);
 
   async function savePins() { try { await pinStore?.save?.([...pins]); } catch { report('pin-store-failed'); } }
 
@@ -420,7 +422,34 @@ export function createOmpAdapter({ config, configFile, io = fsp, now = Date.now,
     resolve(id) { return disposed || !knownIds().has(id) ? null : recordOf(id); },
     // The runtime evidence store (hybrid only). The ingress bridge feeds it; nothing else writes to it.
     lifecycle,
+    // A unique, server-indexed catalogue candidate, never an arbitrary browser file path.
+    candidateForLaunch(id) {
+      if (disposed || !started || conflicts.has(id)) return null;
+      const e = byId.get(id), source = e && sources.get(e.sourceId);
+      if (!e || e.parent || !e.header?.supported || !source?.root || !e.ino) return null;
+      return { id, sourceId: source.cfg.id, sourceRoot: source.root.path, relative: e.relative,
+        sessionId: e.header.sessionId, cwd: e.header.cwd, fileKey: e.ino, size: e.size, mtimeMs: e.mtimeMs, ctimeMs: e.ctimeMs,
+        fileSize: e.size, fileMtime: e.mtimeMs, fileCtime: e.ctimeMs,
+        runtimeObserved: !!lifecycle?.resolve(id) || managed.has(id) };
+    },
+    hasObservedRuntime(id) { return !!lifecycle?.resolve(id) || managed.has(id); },
+    projectForManaged(sourceId, cwd) {
+      const source = sources.get(sourceId);
+      return source && typeof cwd === 'string' ? projectIdentity(source.cfg, cwd, source.identities) : null;
+    },
+    setManaged(record) {
+      if (disposed || !record || ompSessionIdentity(record.sourceNamespace, record.sourceSessionId)?.id !== record.id ||
+        typeof record.runtimeInstanceId !== 'string' || managed.has(record.id) || !!lifecycle?.resolve(record.id) || !sources.has(record.sourceNamespace)) return false;
+      managed.set(record.id, { ...record, sourceNamespace: record.sourceNamespace, sourceSessionId: record.sourceSessionId });
+      safe(() => onChange([record.id]));
+      return true;
+    },
+    removeManaged(id, instance) {
+      if (managed.get(id)?.runtimeInstanceId !== instance) return false;
+      managed.delete(id); safe(() => onChange([id])); return true;
+    },
     sourceIds: () => disposed ? [] : [...sources.keys()],
+    sourceForLaunch(id) { const source = sources.get(id); return !disposed && started && source?.root && source.state === 'ok' ? { sourceId: id, sourceRoot: source.root.path } : null; },
     // Run one reconciliation now (forced scan). Tests and the pin endpoint use it; the timer keeps the normal cadence.
     async refresh({ rescan = true } = {}) {
       if (disposed || !started || !cfg) return;
@@ -519,7 +548,7 @@ export function createOmpAdapter({ config, configFile, io = fsp, now = Date.now,
       lifecycle?.dispose();
       await running;
       for (const id of [...runtimes.keys()]) { const rt = runtimes.get(id); runtimes.delete(id); await rt.reader.dispose().catch(() => {}); }
-      catalog.clear(); byId.clear(); conflicts.clear(); sources.clear(); pins.clear(); unpinnedLive.clear();
+      catalog.clear(); byId.clear(); conflicts.clear(); sources.clear(); pins.clear(); unpinnedLive.clear(); managed.clear();
       state = 'disposed';
     },
   };

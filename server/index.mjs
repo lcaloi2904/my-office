@@ -43,6 +43,8 @@ import { createAgentRegistry } from './agents/registry.mjs';
 import { createClaudeAdapter } from './agents/claude/compat.mjs';
 import { createOmpAdapter } from './agents/omp/index.mjs';
 import { createOmpVisibilityStore } from './agents/omp/visibility.mjs';
+import { createOmpLaunchResolver } from './agents/omp/launch-resolver.mjs';
+import { createOmpControlManager } from './agents/omp/control-manager.mjs';
 import { createOmpBridge, loadIngestTokens } from './agents/omp/bridge.mjs';
 import { createOmpUsageCollector } from './agents/omp/usage-collector.mjs';
 import { projectClaudeSession } from './agents/projection.mjs';
@@ -82,6 +84,34 @@ async function startOmpIngress() {
     const tokens = await loadIngestTokens({ file, sourceIds: ids });
     ompBridge = createOmpBridge({ lifecycle: ompAdapter.lifecycle, tokens });
   } catch { ompBridge = null; ompIngressFailed = true; }   // (no token, no ingress: files mode carries on)
+}
+// Phase 03: an independent, opt-in native Windows process boundary; no OMP commands while disabled.
+const OMP_LAUNCH_ON = process.env.OFFICE_OMP_LAUNCH === '1';
+let ompControlManager = null, ompLaunchReason = OMP_LAUNCH_ON ? 'starting' : 'disabled';
+async function startOmpManaged() {
+  if (!OMP_LAUNCH_ON) return;
+  if (process.platform !== 'win32') { ompLaunchReason = 'windows-only'; return; }
+  if (!ompAdapter || !ompFilesOn()) { ompLaunchReason = 'observer-unavailable'; return; }
+  const configFile = process.env.OFFICE_OMP_LAUNCH_CONFIG;
+  if (!configFile) { ompLaunchReason = 'config-missing'; return; }
+  try {
+    const resolver = await createOmpLaunchResolver({ configFile, adapter: ompAdapter });
+    ompControlManager = createOmpControlManager({
+      resolver, adapter: ompAdapter,
+      onChange(id) {
+        const r = ompVisibility.isHidden(id) ? null : agents.resolve(id);
+        broadcast(r ? { k: 'sess', s: r.publicSession } : { k: 'gone', id }, true);
+      },
+    });
+    ompLaunchReason = 'ready';
+  } catch {
+    // Do not reflect config paths, native errors or process environments.
+    ompControlManager = null; ompLaunchReason = 'config-invalid';
+  }
+}
+function ompManagedStatus() {
+  return ompControlManager ? { ok: true, ...ompControlManager.status(), resumeAvailable: false } :
+    { ok: true, enabled: false, reason: ompLaunchReason, projects: [], profiles: [], sessions: [], resumeAvailable: false };
 }
 /* end OMP wiring */
 const OMP_USAGE_ON = !['0', 'false', 'off'].includes(String(process.env.OFFICE_OMP_USAGE ?? '1').trim().toLowerCase());
@@ -1226,6 +1256,8 @@ async function readLog(s, n = 120, agentId = null, withMetadata = false) {
 /* ---------- HTTP ---------- */
 // (a request through the Cloudflare tunnel comes from cloudflared on 127.0.0.1 but is from the internet: never this Mac)
 const isLoopback = (req) => !req.viaTunnel && ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress);
+// Native RPC must not be reachable through a LAN hostname, tunnel or forwarded Origin.
+const ompControlLocal = (req) => isLoopback(req) && /^(?:localhost|127\.0\.0\.1|\[::1\]):\d+$/i.test(String(req.headers.host || ''));
 // who is asking, for the PIN's lockouts and the action log: through the tunnel, the address Cloudflare saw
 const clientIp = (req) => (req.viaTunnel ? String(req.headers['cf-connecting-ip'] || 'tunnel').slice(0, 64) : req.socket.remoteAddress);
 // a POST from this office's own page (not another site's): http on this computer and the LAN, https through the tunnel
@@ -2359,6 +2391,24 @@ const server = http.createServer((req, res) => {
     });
     return;
   }
+  if (url.pathname === '/api/omp/control/status' && req.method === 'GET') {
+    if (!ompControlLocal(req)) { json(res, 403, { ok: false, code: 'agentLocalOnly' }); return; }
+    json(res, 200, ompManagedStatus());
+    return;
+  }
+  if (url.pathname === '/api/omp/control/launch' && req.method === 'POST') {
+    if (!ompControlLocal(req) || !req.headers.origin || !sameOriginOf(req) ||
+        !/^application\/json(?:\s*;|$)/i.test(String(req.headers['content-type'] || ''))) {
+      json(res, 403, { ok: false, code: 'agentLocalOnly' }); return;
+    }
+    if (!ompControlManager) { json(res, 403, { ok: false, code: 'LAUNCH_UNAVAILABLE' }); return; }
+    readJson(req, 2048).then(async (body) => {
+      const result = await ompControlManager.launch(body);
+      json(res, result.ok ? 200 : result.code === 'LAUNCH_INVALID' ? 400 :
+        ['LAUNCH_OWNER_UNVERIFIED', 'LAUNCH_OWNER_CONFLICT', 'LAUNCH_OWNER_UNKNOWN', 'LAUNCH_BUSY'].includes(result.code) ? 409 : 403, result);
+    }).catch(() => json(res, 500, { ok: false, code: 'LAUNCH_FAILED' }));
+    return;
+  }
   if (url.pathname === '/api/omp/visibility') {   // hide / show an OMP session in the office; never touches the process, telemetry or files
     if (!ompAdapter || !ompFilesOn()) { json(res, 404, { ok: false, code: 'ompOff' }); return; }
     if (req.method === 'GET') {
@@ -2986,10 +3036,15 @@ function stopTunnel() {
 }
 // (the office stopping: cloudflared keeps going for when it comes back; staying awake ends with it, caffeinate -w)
 process.on('exit', () => { try { awakeProc?.kill(); } catch { /* gone */ } otel.saveSync(); });
-for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => process.exit(0));
+let shuttingDownOmp = false;
+for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => {
+  if (shuttingDownOmp) return;
+  shuttingDownOmp = true;
+  void (async () => { await ompControlManager?.dispose().catch(() => {}); process.exit(0); })();
+});
 
 server.listen(PORT, HOST, () => {
-  agents.start().then(startOmpIngress).catch(() => {});   // (OMP files/hybrid only: nothing is opened while it is off)
+  agents.start().then(async () => { await startOmpIngress(); await startOmpManaged(); }).catch(() => {});   // (OFF flags never create a process)
   syncLan();
   if (prefs.get('tunnel')) startTunnel(); else killStaleTunnel();
   scanSessions();

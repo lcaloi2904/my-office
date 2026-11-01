@@ -12,7 +12,7 @@ process.env.CLAUDE_CONFIG_DIR = path.join(HOME_DIR, '.claude');
 export const DATA_DIR = path.resolve(OUT, 'office-data');
 export default defineConfig({
   testDir: 'tests/e2e',
-  testIgnore: ['**/omp-files.spec.ts', '**/omp-visibility.spec.ts', '**/omp-hybrid.spec.ts'], // OMP integration modes have isolated configs.
+  testIgnore: ['**/omp-files.spec.ts', '**/omp-visibility.spec.ts', '**/omp-launch-resume.spec.ts', '**/omp-hybrid.spec.ts'], // OMP integration modes have isolated configs.
   outputDir: OUT,
   timeout: 90_000,
   retries: process.env.CI ? 1 : 0,

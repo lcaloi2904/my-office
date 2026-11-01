@@ -165,11 +165,17 @@ export function projectOmpSession(record) {
     lastAt: finiteNonnegative(record.observedAt) ?? 0,
     usage: null, model: safeModel(record.model), provider: safeProvider(record.provider), metrics: ompMetrics(record.metrics),
     projectKey: null, worktreeKey: null, capabilities: capabilitiesFor('omp'),
+    control: { owner: 'observer', state: 'read-only', canPrompt: false, canResume: false },
   };
   if (!persisted && !live) return base;
   const named = persisted ?? projectFields(record);
   return { ...base, ...named, ...live, name: named.name ? named.name : base.name,
-    capabilities: ompCapabilities(record.conversation && persisted ? record.conversation : false) };
+    capabilities: ompCapabilities(record.conversation && persisted ? record.conversation : false),
+    control: record.managed?.owner === 'managed' && record.managed?.state === 'ready' &&
+      typeof record.managed.runtimeInstanceId === 'string' && /^[0-9a-f-]{36}$/i.test(record.managed.runtimeInstanceId) &&
+      Number.isSafeInteger(record.managed.generation) && record.managed.generation > 0 && record.managed.generation < 1_000_000
+      ? { owner: 'managed', state: 'ready', canPrompt: false, canResume: false, generation: record.managed.generation }
+      : base.control };
 }
 
 export function projectAgentSession(kind, record) {

@@ -10,10 +10,10 @@ export default defineConfig({
   ...base,
   workers: 1, // Both specs mutate the same synthetic pin/visibility store.
   testIgnore: undefined,
-  testMatch: '**/omp-{files,visibility}.spec.ts',
+  testMatch: '**/omp-{files,visibility,launch-resume}.spec.ts',
   webServer: {
     ...base.webServer as object,
     command: `node tests/e2e/omp-fixture.mjs "${FIXTURE_DIR}" && node server/index.mjs`,
-    env: { ...server.env, OFFICE_OMP: 'files', OFFICE_OMP_CONFIG: path.join(FIXTURE_DIR, 'omp-config.json') },
+    env: { ...server.env, OFFICE_OMP: 'files', OFFICE_OMP_CONFIG: path.join(FIXTURE_DIR, 'omp-config.json'), OFFICE_OMP_LAUNCH: '0', OFFICE_OMP_LAUNCH_CONFIG: '' },
   },
 });

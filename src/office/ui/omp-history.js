@@ -6,6 +6,7 @@ import { TOKEN } from '../net/live.js';
 import { toast } from './activity.js';
 import { t as tr, locale } from '../../i18n/index.js';
 import { sessions, unknownLabel } from '../people/workers.js';
+import { appendOmpLaunchActions, appendOmpNewToHistory, appendOmpResumeToRow, closeOmpLaunchOnReplay } from './omp-launch.js';
 
 const q = (sep) => (TOKEN ? `${sep}k=${encodeURIComponent(TOKEN)}` : '');
 export const ompOffered = () => !!(state.omp?.on && state.omp.local);
@@ -95,6 +96,7 @@ export function appendOmpActions(box, s) {
     note.textContent = evidenceText(d.current);
   });
   refresh.title = tr('activity.omp.refreshNote');
+  appendOmpLaunchActions(box, s.persistedOnly === true ? s.id : null);
 }
 
 /** The compact rail/list entry opens the same native dialog convention as the history picker. */
@@ -184,6 +186,7 @@ function row(item) {
   });
   paint();
   li.append(head, el('small', null, meta), btn);
+  appendOmpResumeToRow(li, item.id);
   return li;
 }
 
@@ -222,6 +225,7 @@ export function openOmpHistory() {
     const close = el('button', 'btn btn--sm', tr('activity.omp.close')); close.type = 'button';
     close.addEventListener('click', () => dlg.close());
     dlg.append(h, note, status, refresh, list, more, hh, hl, close);
+    appendOmpNewToHistory(dlg);
     document.body.append(dlg);
   }
   if (!dlg.open) dlg.showModal();
@@ -239,6 +243,6 @@ let railBtn = null;
 export function syncOmpEntry() {
   if (!railBtn) { const head = document.querySelector('.lp-head'); if (!head) return; railBtn = ompButton(); head.append(railBtn); }
   railBtn.hidden = !canChange();
-  if (replay.on) { dlg?.close(); actionsDialog?.close(); if (undoBox) undoBox.hidden = true; }
+  if (replay.on) { dlg?.close(); actionsDialog?.close(); closeOmpLaunchOnReplay(); if (undoBox) undoBox.hidden = true; }
 }
 export function setup() { syncOmpEntry(); }

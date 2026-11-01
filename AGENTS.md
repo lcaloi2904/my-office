@@ -67,7 +67,8 @@ git push origin main
 ## 3. Ranh giới An toàn & Bảo mật Bắt buộc
 
 - **Không chạm vào dữ liệu/token OMP thật khi chạy test**: Tuyệt đối không đọc, sửa hoặc xóa `~/.omp/office-private/{ingest,observer}.json`, `~/.omp/agent/extensions/office-observer/`, hoặc `~/.omp/agent/sessions` trừ khi người dùng yêu cầu trực tiếp.
-- **Giữ OMP ở chế độ chỉ-đọc và loopback-only**: Không mở quyền tắt tiến trình, gửi prompt, duyệt lệnh từ xa hoặc nhận HTTP ingest ngoài `127.0.0.1` cho OMP.
+- **Mặc định OMP chỉ-đọc và loopback-only**: Không mở quyền tắt tiến trình OMP bất kỳ, gửi prompt, duyệt lệnh từ xa hoặc nhận HTTP ingest ngoài `127.0.0.1`.
+- **Ngoại lệ hẹp Phase 03, đã được chủ dự án duyệt ngày 2026-11-01**: Chỉ cho phép My Office **chủ động khởi tạo/đóng đúng native Windows OMP RPC child do chính nó spawn** qua allowlist binary/project/profile độc lập và feature flag `OFFICE_OMP_LAUNCH=1` (OFF theo mặc định). Có thể `new_session`/read-only `get_state` và exact resume **chỉ khi có bằng chứng exclusive owner**; không coi free lease, stale heartbeat hoặc missing PID là bằng chứng. Nếu chưa chứng minh, bắt buộc từ chối Resume. Không gửi prompt/steer/follow-up, không active abort/approval, không gửi lệnh tới external TUI, không tự restart, không auto login, không bật model trả phí hoặc đọc private credentials trong fixtures. Bảo toàn Claude Code, observer/hybrid, quotas, transcript và local-only Origin/Host; không mở LAN/tunnel/phone control. Mọi quyền ngoài scope này cần phê duyệt riêng (Phase 04+).
 - **Tài liệu chi tiết**: Xem [docs/OMP-INTEGRATION.md](docs/OMP-INTEGRATION.md) và [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ---

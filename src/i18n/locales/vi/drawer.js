@@ -2,6 +2,7 @@ export default {
   unknownAgent: 'Agent chưa xác định',
   unknownState: 'Chưa xác định hoạt động',
   readOnly: 'Chỉ quan sát. Không hỗ trợ điều khiển agent tại đây.',
+  managedLauncherNote: 'Phiên do My Office khởi chạy qua RPC. Gửi prompt, steer và abort chưa được bật (Phase 04).',
   persistedState: 'Lịch sử · không phải đang chạy',
   persistedNote: 'Được ghim từ một file phiên đã lưu. Chỉ hiển thị những gì đã ghi lại, không cho biết agent có đang chạy hay không.',
   persistedIncomplete: 'Được ghim từ một file phiên đã lưu. Một phần của file không đọc được nên số liệu có thể chưa đầy đủ.',
