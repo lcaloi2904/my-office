@@ -1,5 +1,13 @@
 # Validation matrix — planned scenarios và execution evidence
 
+## Current execution delta — Phase 06 hardening & rollout, 01/11/2026
+
+Phase 06 hardening, benchmark, security review và docs sync đã thực thi theo `--auto`:
+- Scoped hardening trên `paths.mjs` (DEL `\x7f`, Windows device names, dot/empty/trailing-dot-space segments, canonical `from`), `reader.mjs`/`index.mjs` (clear stale recorded metrics + mark `incomplete: true` khi vượt `maxFileBytes` hoặc lỗi đọc; `scanEpoch` child cache + pre-open `stamp` check giảm ~11x–22x 8-pin polling CPU và tăng tốc 13x active file append), `bridge.mjs` (bounded auth length, strict batch envelope/stream guards), và `omp-private-storage.test.mjs` (`.NET GetAccessControl` tương thích Git Bash/PowerShell).
+- Verification: ESLint PASS, TypeScript PASS, Unit **227/227 top-level tests (271 subtests) PASS**, `agents.spec.ts` + `chat-preview.spec.ts` **15/15 PASS**, `omp-files.spec.ts` **3/3 PASS**, `omp-hybrid.spec.ts` **1/1 PASS**, `office.spec.ts --grep @smoke` **5/5 PASS**.
+- Benchmark (`scripts/benchmark-omp.mjs`): `P0`–`P4`, `P6`–`P8` PASS; `P5` cleanup/500-churn PASS (`0` open handles/timers, `-0.03 MiB` heap delta qua cửa sổ soak `20.3s`; soak 2–8h ghi `PARTIAL_INCOMPLETE_SOAK_WINDOW`).
+- Bằng chứng chi tiết: [Performance results](./reports/performance-results.md), [Security review](./reports/security-review.md), [Rollout checklist](./reports/rollout-checklist.md), và [OMP Integration Guide](../../docs/OMP-INTEGRATION.md). **G4 tổng vẫn giữ OPEN cho cross-host và các giới hạn runtime ngoài scope local.**
+
 ## Current execution delta — Phase 05, 01/11/2026
 
 Phase 05 implementation/UI đã kiểm chứng trên Windows Chromium với nguồn synthetic cô lập: 245/245 unit, lint/typecheck/build PASS; agents 12/12, files 3/3, hybrid 1/1 và selected Claude smoke 7/7 PASS. V1–V8 evidence, privacy/replay/child support limits và manual desktop/mobile proof ở [Phase 05 report](./reports/phase-05-implementation.md). Không có cross-platform/FPS/zero-WebGL claim.

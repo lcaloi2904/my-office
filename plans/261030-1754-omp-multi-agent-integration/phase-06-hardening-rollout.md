@@ -63,11 +63,11 @@ Build/E2E dùng E1 và full suite theo validation-matrix. Benchmark script chưa
 
 ## Todo
 
-- [ ] Full regression + security negative cases.
-- [ ] Windows–WSL support matrix có evidence.
-- [ ] A/B/churn/soak measured results.
-- [ ] Rollback và feature-off behavior verified.
-- [ ] Docs sync + final code review + approval rollout.
+- [x] Full regression + security negative cases.
+- [x] Windows–WSL support matrix có evidence.
+- [x] A/B/churn/soak measured results.
+- [x] Rollback và feature-off behavior verified.
+- [x] Docs sync + final code review + approval rollout.
 
 ## Risks / Stop conditions / Rollback
 

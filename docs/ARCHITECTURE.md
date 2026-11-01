@@ -27,7 +27,7 @@ Claude Code ──hooks (curl, loopback only)──▶ server/index.mjs ──SS
 | `git.mjs` | Git per session folder (branch, uncommitted files, commits and pushes by watching HEAD and the upstream) and the latest CI run through `gh`. |
 | `wrapped.mjs` | The weekly recap: totals over the last seven replay logs. |
 | `tasks.mjs` | "Give work": a `claude -p` run on this Mac from the chat or a phone, carrying on a tagged conversation (`--resume --fork-session`) or new in a known folder; caps, photos, its answer back to the chat. |
-| `agents/` | The seam between the server and agent harnesses: a registry that unions adapters (`registry.mjs`), the public projection and capability rules (`projection.mjs`, `schema.mjs`), the Claude wrapper (`claude/compat.mjs`) and the optional file-only OMP adapter (`omp/`, see below). |
+| `agents/` | The seam between the server and agent harnesses: a registry that unions adapters (`registry.mjs`), the public projection and capability rules (`projection.mjs`, `schema.mjs`), the Claude wrapper (`claude/compat.mjs`) and the optional read-only OMP adapter (`omp/`, see below and [OMP-INTEGRATION.md](OMP-INTEGRATION.md)). |
 | `prefs.mjs` | The office's language (`data/prefs.json`, `OFFICE_LANG`) and the server's translator `tr()`. |
 
 `bin/cli.mjs` installs the hooks (curl on macOS and Linux, `hooks/send.mjs` on Windows) and, through `bin/service.mjs`, the
@@ -36,7 +36,7 @@ background service: launchd, a systemd user service, or a script in the Windows 
 ### Optional: OMP history (file-only, off by default)
 
 `OFFICE_OMP=files` plus `OFFICE_OMP_CONFIG=<absolute path to a JSON file>` lets the office list saved OMP session files. Without both,
-nothing is read: no home or profile discovery, no OMP process, no SDK. `OFFICE_OMP=hybrid` is the same plus the live observer ingress (below).
+nothing is read: no home or profile discovery, no OMP process, no SDK. `OFFICE_OMP=hybrid` is the same plus the live observer ingress (below). Full setup, support matrix, privacy, troubleshooting and rollback live in [OMP-INTEGRATION.md](OMP-INTEGRATION.md).
 
 The config is `{ "version": 1, "sources": [{ "id", "root", "pathStyle": "win32"|"posix", "conversation": false, "projectMappings": [{ "from", "projectId", "worktreeId", "localRoot"? }] }], "limits": {…} }`.
 Each `root` is an absolute folder with no symlink or junction in its path; files are opened read-only and only inside it. `limits` can
@@ -73,7 +73,7 @@ README; the office never installs it into OMP). The ingress is telemetry only:
   replace the runtime's provisional usage instead of adding to it. Live rows are sent to this computer's pages only, like
   pinned history.
 - Delivery is not guaranteed and not durable: an acknowledgement means "applied in memory". Tests: `omp-lifecycle`,
-  `omp-bridge`, `omp-live-merge`, `omp-observer`. Installed 18.14.1 print/RPC evidence remains in the [Phase 04 report](../plans/261030-1754-omp-multi-agent-integration/reports/phase-04-implementation.md). [18.14.2 local validation](../plans/261030-1754-omp-multi-agent-integration/reports/phase-04-local-validation.md) adds actual TUI callbacks and manual plan-review waiting with a scripted loopback model; exact ask waiting and live child reporting remain unsupported. [Authorized token remediation](../plans/261030-1754-omp-multi-agent-integration/reports/phase-04-token-remediation.md) repaired the inspected Windows storage ACL and rotated the token; already-loaded observer factories need a fresh load to use it. G4 remains open, with cross-host and other runtime verification outstanding.
+  `omp-bridge`, `omp-live-merge`, `omp-observer`; synthetic resource benchmark: `node --expose-gc scripts/benchmark-omp.mjs --run`. Installed 18.14.1 print/RPC evidence remains in the [Phase 04 report](../plans/261030-1754-omp-multi-agent-integration/reports/phase-04-implementation.md). [18.14.2 local validation](../plans/261030-1754-omp-multi-agent-integration/reports/phase-04-local-validation.md) adds actual TUI callbacks and manual plan-review waiting with a scripted loopback model; exact ask waiting and live child reporting remain unsupported. [Authorized token remediation](../plans/261030-1754-omp-multi-agent-integration/reports/phase-04-token-remediation.md) repaired the inspected Windows storage ACL and rotated the token; already-loaded observer factories need a fresh load to use it. G4 remains open, with cross-host and other runtime verification outstanding.
 
 ### Mixed-agent UI and replay
 

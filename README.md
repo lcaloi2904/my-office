@@ -347,6 +347,9 @@ Then open <http://localhost:4310>.
 | `OFFICE_USAGE` | on | `0` stops reading your plan's usage. |
 | `OFFICE_CI` | on | `0` stops checking CI runs with `gh`. |
 | `OFFICE_TRANSLATE` | on | `0` leaves Claude's English descriptions untranslated in Vietnamese mode. |
+| `OFFICE_OMP` | `off` | `files` or `hybrid` enables optional read-only [Oh My Pi (OMP)](docs/OMP-INTEGRATION.md) session observation on this computer (`off` reads nothing). |
+| `OFFICE_OMP_CONFIG` | *(empty)* | Absolute path to `omp-config.json` when `OFFICE_OMP` is `files` or `hybrid` (see [docs/OMP-INTEGRATION.md](docs/OMP-INTEGRATION.md)). |
+| `OFFICE_OMP_INGEST_FILE` | `~/.omp/office-private/ingest.json` | Optional absolute path override for the private `hybrid` telemetry credential store. |
 
 ## Development
 
