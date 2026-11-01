@@ -260,8 +260,12 @@ function buildAccountLabel(providerId, identity, peerIdentities, fallbackIndex) 
   const base = identity.email || identity.accountId || identity.projectId || identity.enterpriseUrl || identity.orgName || identity.orgId;
   const providerPrefix = providerId === 'openai-codex' ? 'Codex' : 'Antigravity';
   const parts = [base || `${providerPrefix} #${fallbackIndex + 1}`];
+  const hasPart = (value) => {
+    const norm = String(value || '').trim().toLowerCase();
+    return !norm || parts.some((p) => String(p).trim().toLowerCase() === norm);
+  };
   const organization = identity.orgName || identity.orgId;
-  if (organization && organization !== base) parts.push(organization);
+  if (organization && !hasPart(organization)) parts.push(organization);
 
   if (base) {
     let peers = peerIdentities.filter(
@@ -272,13 +276,13 @@ function buildAccountLabel(providerId, identity, peerIdentities, fallbackIndex) 
     // Display the distinguishing workspace/account ID only when email + organization collide.
     for (const field of ['orgId', 'accountId', 'projectId', 'enterpriseUrl']) {
       const value = identity[field];
-      if (!value || parts.includes(value) || !peers.some((p) => p[field] !== value)) continue;
+      if (!value || hasPart(value) || !peers.some((p) => p[field] !== value)) continue;
       parts.push(value);
       peers = peers.filter((p) => p[field] === value);
     }
     if (peers.length > 0) parts.push(`#${fallbackIndex + 1}`);
   }
-  if (identity.planType) parts.push(identity.planType);
+  if (identity.planType && !hasPart(identity.planType)) parts.push(identity.planType);
   // Each allowlisted field is bounded at extraction; do not truncate the assembled email/org label.
   return parts.join(' · ');
 }

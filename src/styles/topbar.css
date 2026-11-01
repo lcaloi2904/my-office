@@ -20,22 +20,23 @@
 .mp-bar b { display: block; height: 100%; width: 0; background: var(--green); border-radius: 999px; transition: width .5s; }
 .mac-pill[data-level="warn"] .mp-bar b { background: var(--amber); }
 .mac-pill[data-level="critical"] .mp-bar b { background: var(--red); }
-.omp-usage-pill { min-height: 44px; }
+.omp-usage-pill { min-height: 38px; }
 .omp-usage-pill[aria-expanded="true"] { border-color: var(--accent-line); background: var(--accent-soft); }
-.omp-usage-pill .mp-val { max-width: 24ch; overflow: hidden; text-overflow: ellipsis; }
+.omp-usage-pill .mp-val { max-width: 38ch; overflow: hidden; text-overflow: ellipsis; }
 .omp-usage-pill:is([data-level="off"], [data-level="loading"]) .lvl { background: var(--muted); box-shadow: none; }
 .omp-usage-pill[data-level="unavailable"] .lvl { background: var(--amber); box-shadow: 0 0 0 3px var(--amber-soft); }
 .plan-pill .mp-val { max-width: 18ch; overflow: hidden; text-overflow: ellipsis; }
 @media (max-width: 1440px) {
-  .omp-usage-pill .mp-val { max-width: 16ch; }
+  .omp-usage-pill .mp-val { max-width: 24ch; }
 }
 @media (max-width: 1300px) {
   .plan-pill .mp-bar, .mac-pill .mp-bar, .tb-brand .demo-more, .tb-clock { display: none; }
 }
-.omp-usage-dashboard { position: relative; border-bottom: 1px solid var(--line-2); padding: 8px 16px 12px; max-height: min(54dvh, 480px); overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; }
-.omp-dashboard-toolbar { position: absolute; top: 8px; right: 16px; z-index: 1; }
-.omp-dashboard-toolbar .tb-btn { height: 44px; border: 0; background: none; color: var(--accent-hi); font-size: .72rem; }
-.omp-usage-dashboard .omp-usage-head { padding-right: 88px; min-height: 44px; }
+.omp-usage-dashboard { position: relative; background: var(--side); border-bottom: 1px solid var(--line-2); padding: 7px 14px 9px; max-height: min(44dvh, 380px); overflow: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+.omp-dashboard-toolbar { position: absolute; top: 7px; right: 14px; z-index: 1; }
+.omp-dashboard-toolbar .tb-btn { height: 28px; padding: 0 11px; border-radius: 7px; border: 1px solid var(--line-2); background: var(--card-2); color: var(--muted); font-size: .72rem; font-weight: 600; }
+.omp-dashboard-toolbar .tb-btn:hover { border-color: var(--accent-line); background: var(--accent-soft); color: var(--accent-hi); }
+.omp-usage-dashboard .omp-usage-head { padding-right: 82px; min-height: 28px; }
 @media (max-width: 1100px) {
   .omp-usage-pill .mp-val { display: none; }
   .plan-pill .mp-val { display: none; }

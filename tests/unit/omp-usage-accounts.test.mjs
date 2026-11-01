@@ -406,3 +406,17 @@ test('same-email accounts with conflicting CLI account, organization, or project
     assert.equal(JSON.stringify(remote).includes(value), false);
   }
 });
+
+test('duplicate organization and planType tokens collapse into a single clean label segment', () => {
+  const result = normalizeOmpUsagePayload({
+    generatedAt: NOW,
+    reports: [
+      { provider: 'openai-codex', limits: [], metadata: { email: 'user1@example.test', orgName: 'team', planType: 'team' } },
+      { provider: 'openai-codex', limits: [], metadata: { email: 'user2@example.test', orgName: 'Plus', planType: 'plus' } },
+    ],
+  }, { nowMs: NOW });
+  assert.deepEqual(result.accounts.map((a) => a.label), [
+    'user1@example.test · team',
+    'user2@example.test · Plus',
+  ]);
+});

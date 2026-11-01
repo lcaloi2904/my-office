@@ -52,14 +52,17 @@ function renderAccountWindow(container, w, resetTextFn) {
   row.dataset.sourceUnit = w.sourceUnit || 'unknown';
   const label = String(w.label || w.id || tr('mac.ompUsage.quotaWindow'));
   const labelSpan = el('span', 'omp-win-label', label);
+  labelSpan.title = label;
   const used = percent(w.usedPercent);
   const remaining = percent(w.remainingPercent);
   const exhausted = w.status === 'exhausted' || used === 100;
   const level = exhausted ? 'critical' : used === null ? 'unknown' : limitLevel(used);
   row.dataset.level = level;
-  const valEl = el('em', 'omp-win-val', used === null
+  const ariaText = used === null
     ? tr('mac.ompUsage.usedUnknown')
-    : tr('mac.ompUsage.usedPct', { pct: num(used, 1) }));
+    : tr('mac.ompUsage.usedPct', { pct: num(used, 1) });
+  const valEl = el('em', 'omp-win-val', used === null ? '–' : `${num(used, 1)}%`);
+  valEl.title = ariaText;
   const bar = el('span', 'hl-bar');
   if (used !== null) {
     const fill = el('b', level);
@@ -70,7 +73,7 @@ function renderAccountWindow(container, w, resetTextFn) {
     bar.setAttribute('aria-valuemin', '0');
     bar.setAttribute('aria-valuemax', '100');
     bar.setAttribute('aria-valuenow', String(used));
-    bar.setAttribute('aria-valuetext', valEl.textContent);
+    bar.setAttribute('aria-valuetext', ariaText);
   } else {
     bar.classList.add('omp-bar-unknown');
     bar.setAttribute('aria-hidden', 'true');
@@ -78,11 +81,34 @@ function renderAccountWindow(container, w, resetTextFn) {
   const leftText = remaining === null
     ? tr('mac.ompUsage.leftUnknown')
     : tr('mac.ompUsage.leftPct', { pct: num(remaining, 1) });
-  row.append(
-    labelSpan, valEl, bar,
-    el('small', 'omp-win-sub', `${leftText} · ${formatResetWhen(w.resetsAt, resetTextFn)}`)
-  );
+  const subText = `${leftText} · ${formatResetWhen(w.resetsAt, resetTextFn)}`;
+  const subEl = el('small', 'omp-win-sub', subText);
+  subEl.title = subText;
+  row.append(labelSpan, valEl, bar, subEl);
   container.append(row);
+}
+
+function formatAccountNameEl(rawLabel) {
+  const raw = String(rawLabel || tr('mac.ompUsage.accountUnnamed'));
+  const parts = raw.split(' · ').map((s) => s.trim()).filter(Boolean);
+  const deduped = [];
+  for (const part of parts) {
+    if (!deduped.some((p) => p.toLowerCase() === part.toLowerCase())) deduped.push(part);
+  }
+  const cleanText = deduped.join(' · ') || raw;
+  const title = el('b', 'omp-acct-name');
+  title.title = cleanText;
+  if (deduped.length > 1) {
+    title.append(el('span', 'omp-acct-primary', deduped[0]));
+    const tagsWrap = el('span', 'omp-acct-tags');
+    for (let i = 1; i < deduped.length; i++) {
+      tagsWrap.append(el('span', 'omp-acct-sep', ' · '), el('span', 'omp-acct-chip', deduped[i]));
+    }
+    title.append(tagsWrap);
+  } else {
+    title.textContent = cleanText;
+  }
+  return title;
 }
 
 function renderAccountBlock(acct, resetTextFn) {
@@ -92,14 +118,13 @@ function renderAccountBlock(acct, resetTextFn) {
   block.dataset.availability = acct.availability || 'unavailable';
 
   const head = el('div', 'omp-acct-head');
-  const title = el('b', 'omp-acct-name', String(acct.label || tr('mac.ompUsage.accountUnnamed')));
+  const title = formatAccountNameEl(acct.label);
   const readTs = acct.observedAt || acct.lastSuccessAt;
   const meta = el('span', 'omp-acct-meta', typeof readTs === 'number' && Number.isFinite(readTs) && readTs > 0
     ? tr('mac.ompUsage.readTime', { time: hhmm(readTs) })
     : tr('mac.ompUsage.readUnknown'));
   head.append(title, availabilityBadge(acct.availability), meta);
   block.append(head);
-
   const windows = accountWindows(acct);
   const noteKey = {
     stale: 'accountStale',
@@ -113,7 +138,10 @@ function renderAccountBlock(acct, resetTextFn) {
     return block;
   }
 
-  for (const w of windows) renderAccountWindow(block, w, resetTextFn);
+  const winGrid = el('div', 'omp-acct-windows');
+  winGrid.dataset.count = String(windows.length);
+  for (const w of windows) renderAccountWindow(winGrid, w, resetTextFn);
+  block.append(winGrid);
   return block;
 }
 
@@ -190,15 +218,25 @@ export function aggregateSessionProviderRollups(sessionList = [...sessions.value
   return byProvider;
 }
 
-function renderProviderTokenRollup(group) {
+function hasMeaningfulTokenRollup(group) {
+  if (!group || !group.models?.size) return false;
+  if (group.providerId !== 'unknown') return true;
+  return [...group.models.values()].some((m) => m.hasTokens || m.hasCost || (m.model && m.model !== 'unknown'));
+}
+
+function renderProviderTokenRollup(group, { showProviderName = false } = {}) {
   const box = el('details', 'omp-tokens');
   box.dataset.provider = group.providerId;
   const head = el('summary', 'omp-tokens-head');
   const badge = el('span', 'omp-unattr-badge', tr('mac.ompUsage.unattributed'));
   badge.title = tr('mac.ompUsage.unattributedNote');
+  if (showProviderName) {
+    head.append(el('b', 'omp-tokens-prov', providerTitle(group.providerId)));
+  }
   head.append(el('span', 'omp-tokens-title', tr('mac.ompUsage.tokensHeading')), badge);
   box.append(head);
-  box.append(el('p', 'omp-tokens-note', tr('mac.ompUsage.unattributedNote')));
+  const body = el('div', 'omp-tokens-body');
+  body.append(el('p', 'omp-tokens-note', tr('mac.ompUsage.unattributedNote')));
 
   for (const m of group.models.values()) {
     const row = el('div', 'omp-token-row');
@@ -217,8 +255,9 @@ function renderProviderTokenRollup(group) {
       el('code', 'omp-token-model', m.model),
       el('span', 'omp-token-vals', metaParts.join(' · '))
     );
-    box.append(row);
+    body.append(row);
   }
+  box.append(body);
   return box;
 }
 
@@ -303,13 +342,16 @@ export function renderOmpUsagePanel({ resetText } = {}) {
   const title = el('h2', 'omp-usage-title', tr('mac.ompUsage.title'));
   title.id = 'omp-usage-title';
   sec.setAttribute('aria-labelledby', title.id);
-  titleWrap.append(title, el('span', 'omp-usage-subtitle', tr('mac.ompUsage.quotaHeading')));
+  titleWrap.append(
+    title,
+    el('span', 'omp-usage-subtitle', tr('mac.ompUsage.quotaHeading')),
+    el('span', 'omp-source-line', tr('mac.ompUsage.source', { profile: snap?.profile || tr('mac.ompUsage.profileUnknown') })),
+  );
   const obsAt = snap?.collector?.observedAt || snap?.collector?.lastSuccessAt;
   titleWrap.append(el('span', 'omp-usage-updated', typeof obsAt === 'number' && Number.isFinite(obsAt) && obsAt > 0
     ? tr('mac.ompUsage.updatedAt', { time: hhmm(obsAt) })
     : tr('mac.ompUsage.notUpdated')));
   head.append(titleWrap);
-
   let refreshButton;
   if (state.isLocal && snap?.enabled && !replay.on) {
     refreshButton = el('button', 'omp-refresh-btn', refreshing ? tr('mac.ompUsage.refreshing') : tr('mac.ompUsage.refresh'));
@@ -342,8 +384,6 @@ export function renderOmpUsagePanel({ resetText } = {}) {
     head.append(refreshButton);
   }
   frag.append(head);
-  frag.append(el('p', 'omp-source-line', tr('mac.ompUsage.source', { profile: snap?.profile || tr('mac.ompUsage.profileUnknown') })));
-
   const status = (text) => {
     const note = el('p', 'omp-status-note', text);
     note.setAttribute('role', 'status');
@@ -363,10 +403,18 @@ export function renderOmpUsagePanel({ resetText } = {}) {
     if (!providerOrder.includes(providerId)) providerOrder.push(providerId);
   }
   const providers = el('div', 'omp-providers');
+  const extraTokens = el('div', 'omp-extra-tokens');
   for (const providerId of providerOrder) {
     const pAccounts = accounts.filter((acct) => (acct.providerId || 'unknown') === providerId);
-    const pTokens = tokenRollups.get(providerId);
+    const rawTokens = tokenRollups.get(providerId);
+    const pTokens = hasMeaningfulTokenRollup(rawTokens) ? rawTokens : null;
     if (!pAccounts.length && !pTokens) continue;
+    if (pTokens) {
+      const details = renderProviderTokenRollup(pTokens, { showProviderName: true });
+      details.open = openProviders.has(providerId);
+      extraTokens.append(details);
+    }
+    if (!pAccounts.length) continue;
     const pGroup = el('div', 'omp-provider-group');
     pGroup.dataset.provider = providerId;
     const pHead = el('div', 'omp-provider-head');
@@ -377,16 +425,11 @@ export function renderOmpUsagePanel({ resetText } = {}) {
     pGroup.append(pHead);
     const accountGrid = el('div', 'omp-provider-accounts');
     for (const acct of pAccounts) accountGrid.append(renderAccountBlock(acct, resetText));
-    if (!pAccounts.length) accountGrid.append(el('p', 'omp-acct-note', tr('mac.ompUsage.noProviderAccounts')));
     pGroup.append(accountGrid);
-    if (pTokens) {
-      const details = renderProviderTokenRollup(pTokens);
-      details.open = openProviders.has(providerId);
-      pGroup.append(details);
-    }
     providers.append(pGroup);
   }
-  frag.append(providers);
+  if (providers.childElementCount) frag.append(providers);
+  if (extraTokens.childElementCount) frag.append(extraTokens);
   sec.replaceChildren(frag);
   if (refreshHadFocus && refreshButton) refreshButton.focus({ preventScroll: true });
   else if (focusedProvider) {
