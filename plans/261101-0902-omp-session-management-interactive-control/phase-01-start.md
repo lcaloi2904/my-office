@@ -1,7 +1,7 @@
 ---
 phase: 1
 title: "Compatibility baseline, runtime contracts và security approval gate"
-status: in-progress   # G1 UNVERIFIED: cần duyệt chạy omp --version/RPC smoke + ngoại lệ AGENTS.md
+status: completed   # G1 review COMPLETE; native no-turn probe verified, G3–G6 vẫn cần policy/scope approval
 priority: P1
 effort: "2-3 dev-days"
 dependencies: []
@@ -37,11 +37,11 @@ Xác định **chính xác** các năng lực native Windows OMP hiện có, ran
 8. Prepare cost-free isolated fixtures/synthetic tests, command contracts and staged rollout with stop/rollback procedures.
 
 ## Gate G1 / acceptance
-- [ ] VERIFIED source map and exact installed-version support matrix; incompatible features marked disabled, never fabricated.
-- [ ] Single-owner session resume rule and no duplicate writer strategy reviewed; no unsafe guess using PID/mtime.
-- [ ] Strict Origin/local-only and independent control auth/security boundaries agreed; telemetry separate.
-- [ ] Native Windows CLI process and external TUI bridge feasibility separately evidenced or labeled UNKNOWN.
-- [ ] Decision register explicitly names scope needing user approval; no code or settings changed without approval.
+- [x] Source map và ma trận OMP18.14.2 native Windows đã chốt; API chưa thử/không tương thích giữ UNKNOWN/disabled, không giả capability.
+- [x] Single-owner/exact-resume đã review: free lease hoặc stale telemetry không chứng minh độc quyền; G3 phải chứng minh reservation/exclusion, không silent sibling/fork.
+- [x] Chốt strict Origin/local-only và control auth độc lập telemetry trong design; chưa triển khai/bật control.
+- [x] Native CLI/RPC đã có probe thật no-turn; external TUI bridge được ghi riêng UNKNOWN/disabled.
+- [x] Decision register phân biệt review hoàn tất với các quyền còn cần duyệt G3–G6; không sửa policy/runtime thật.
 
 ## Verification (read-only first; no model calls)
 - `git status --short` / `git diff --name-only` / scoped source inspection.
@@ -51,3 +51,12 @@ Xác định **chính xác** các năng lực native Windows OMP hiện có, ran
 
 ## Risks / stop / rollback
 Installed OMP differs from docs, wrong identity mapping, missing safe approval API, foreign runtime owner, policy conflict → **STOP**, leave OMP read-only and re-plan affected phases. No rollout. Phase 01 report indicates PASS/FAIL/UNVERIFIED with evidence before Phase 02/03.
+
+## Kết quả G1 — 2026-11-01
+
+**COMPLETE trong phạm vi compatibility/security review**, không phải production/control rollout. Xem [báo cáo lệnh, output và support matrix](./reports/g1-compatibility-security.md), [hợp đồng đã chốt](./design-contracts.md).
+
+- Binary thật OMP18.14.2, Node24.22.1, Windows10.0.26200 x64, HEAD `8da383771bf4329aa9b471f477d53fb593e1f9e1`.
+- Hai RPC child cô lập: startup v1, `get_state`, `new_session`, exact `switch_session`, CLI `--resume <absolute synthetic path>`, `get_messages`, idle `abort`, `get_session_lease`; 13 correlated success responses, EOF exit0 cả hai.
+- Listener model giả nhận 0 HTTP requests; không prompt/steer/follow-up, không credential/session/extension thật. Fixture đã xóa.
+- Active abort/completion/approval/external bridge/v2 negotiation còn UNKNOWN hoặc DOCUMENTED. G3–G6 vẫn chờ duyệt riêng và proof theo gate; không coi native lease probe là quyền resume.

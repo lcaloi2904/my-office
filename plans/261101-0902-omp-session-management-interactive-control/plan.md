@@ -19,7 +19,7 @@ Cho phép người dùng **quản lý agent OMP ngay trong sidebar và drawer My
 
 **Phân biệt:** `Mất kết nối` là thiếu heartbeat, **không phải** bằng chứng process đã dừng. `Ẩn` chỉ ảnh hưởng UI, **không** dừng tiến trình hoặc xóa JSONL. `Bỏ ghim` là ngừng theo dõi history cũ. `Tiếp tục` khởi tạo runtime khác nạp đúng persisted conversation (không phục hồi process đã chết). `Tạo mới` dùng context trống.
 
-**Plan-only:** lập tài liệu dưới `plans/` qua AgentKit CLI; không sửa source/test/config/credential; không chạy OMP/process/model call hoặc thêm package; không commit, push, merge. Mode `ak:plan --hard`, không hydrate external tasks, skip journal. User cần duyệt phạm vi từng phase trước khi cook.
+**Phạm vi đã duyệt:** kế hoạch ban đầu là plan-only; sau đó người dùng yêu cầu triển khai và hoàn tất Phase01–02. Hai phase đã nghiệm thu trong fixture cô lập; không commit/push ở lượt tiếp tục này. G3–G7 chưa được triển khai/bật; các quyền policy/control/runtime/extension/model trả phí vẫn cần duyệt riêng.
 
 ## Scope challenge: HOLD SCOPE
 
@@ -51,8 +51,8 @@ Server độc lập cấp quyền theo `sourceNamespace + sourceSessionId + runt
 
 | # | Phase | Mục tiêu | Gate | Depends |
 |---|---|---|---|---|
-| 01 | [Contracts, baseline, compatibility](./phase-01-start.md) | Exact OMP dialect/OS/session identity, threat model, approval boundary | G1 (UNVERIFIED) | — |
-| 02 | [Session visibility & lifecycle UX](./phase-02-session-visibility.md) | Ẩn/hiện, bỏ ghim, lọc disconnected/ended, lưu sở thích | G2 (code xong, thiếu e2e) | G1 |
+| 01 | [Contracts, baseline, compatibility](./phase-01-start.md) | Exact OMP dialect/OS/session identity, threat model, approval boundary | **G1 COMPLETE (review; không cấp quyền control)** | — |
+| 02 | [Session visibility & lifecycle UX](./phase-02-session-visibility.md) | Ẩn/hiện, Undo, refresh bằng chứng, bỏ ghim, lưu sở thích | **G2 PASS** | G1 |
 | 03 | [Native Windows RPC launch/resume](./phase-03-native-rpc-launch-resume.md) | Tạo mới, resume exact session, ownership & cleanup | G3 | G1,G2 |
 | 04 | [Managed interactive control & Live Agent Activity Bubbles](./phase-04-managed-interactive-control.md) | Chat và mô tả công việc realtime trên các ô nổi 3D | G4 | G3 |
 | 05 | [External TUI opt-in controller](./phase-05-external-tui-control-bridge.md) | Bridge đã cấp quyền tới phiên bên ngoài, không phá observer | G5 | G1,G4 |
@@ -101,7 +101,7 @@ Tận dụng `observeActor()`, `Worker.say()`, CSS2D declutter đã có; **80 k�
 
 ## Acceptance criteria tổng
 
-- [ ] Không mất lịch sử/context khi hide/unpin; hidden không tái xuất hiện sai sau SSE/server restart.
+- [x] Không mất lịch sử/context khi hide/unpin; hidden không tái xuất hiện sai sau SSE/server restart — G2, bằng chứng trong validation matrix.
 - [ ] Native new/resume dùng đúng project/profile/session, không duplicate process hoặc attached nhầm phiên.
 - [ ] Managed RPC gửi prompt/steer/followUp/abort tin cậy; accepted != settled, stale/unknown không giả thành done.
 - [ ] External TUI chỉ điều khiển khi extension riêng được bật và handshake, không ảnh hưởng observer-only.
@@ -114,10 +114,10 @@ Tận dụng `observeActor()`, `Worker.say()`, CSS2D declutter đã có; **80 k�
 
 [Source evidence](./evidence.md) · [Design contracts](./design-contracts.md) · [Validation matrix](./validation-matrix.md) · [Red-team review](./red-team-review.md).
 
-Default decisions: Managed RPC cho new/resume; external TUI phải opt-in; ẩn != unpin != terminate != delete; unverified liveness locks command; không mở phone; không auto-restore unfinished work. G1 phải xác nhận: exact native protocol, exact session resume, safe approval UI, simultaneous-run conflicts và shutdown semantics.
+Default decisions: Managed RPC cho new/resume; external TUI phải opt-in; ẩn != unpin != terminate != delete; unverified liveness locks command; không mở phone; không auto-restore unfinished work. G1 đã xác minh native startup/exact synthetic resume và idle EOF; free native lease không phải exclusive owner. Active completion/approval/external TUI còn UNKNOWN, disabled tới gate riêng.
 
 ## Handoff
 
-**Chỉ plan.** Phase 01 tiếp theo: compatibility/security validation read-only; người dùng phải duyệt phase trước cook. G3+ cần approval thêm cho thay policy read-only, launching process, installed extension và các smoke có chi phí. Không commit/push ở lượt này.
+**Phase01–02 hoàn tất.** [Validation matrix](./validation-matrix.md) ghi 356 unit PASS/3 SKIP, files6/6, hybrid1/1, agents13/13, build/lint/typecheck, UI VI mobile và server-restart smoke. Overall plan vẫn `in-progress`: G3 tiếp theo chỉ khi người dùng duyệt riêng ngoại lệ policy read-only, phạm vi native process/profile/project và proof exclusive resume. Không tự triển khai/bật G3–G7; không commit/push hay thay build của office đang chạy ở lượt này.
 
 <!-- slug: omp-session-management-interactive-control -->

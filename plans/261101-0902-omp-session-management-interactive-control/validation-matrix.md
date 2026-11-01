@@ -26,25 +26,64 @@
 | G7 | Perf | Measured CPU/RSS/handles, FPS/p95 frame-time, CSS2D DOM/layout churn before-after for 2/8/32/64 actors, event bursts, closed dashboard, Low Quality/List Mode |
 | G7 | Rollback | OFF flags restore observer-only; no transcript deletion/auto restart |
 
-## G1 status (2026-11-01, read-only) — xem `reports/g1-compatibility-security.md`
-| Check | Kết quả |
-|---|---|
-| Source map & ranh giới ownership | PASS (VERIFIED bằng đọc source) |
-| Guard Origin chặt cho route ghi mới (`sameOriginOf` cho phép Origin vắng) | PASS (phát hiện + yêu cầu ghi nhận) |
-| `ak plan validate` | PASS |
-| Installed `omp --version` / RPC no-model probe | NOT RUN — cần approval |
-| Chính sách `AGENTS.md` ngoại lệ | NOT RUN — cần user duyệt |
-| **G1 tổng** | **UNVERIFIED** — Phase 02 có thể đi tiếp; G3–G6 bị chặn |
+## G1 — COMPLETE: baseline và design review (2026-11-01)
 
-## G2 status (2026-11-01)
-| Check | Kết quả |
+Xem [báo cáo compatibility/security](./reports/g1-compatibility-security.md). Review hoàn tất không cấp quyền bật G3–G6.
+
+| Kiểm tra | Kết quả |
 |---|---|
-| `tests/unit/omp-visibility.test.mjs` (store: idempotent, 409, corrupt fail-closed, giới hạn, sanitize) | PASS 4/4 |
-| Toàn bộ `tests/unit/*.test.mjs` | PASS 348/348 |
-| HTTP negative qua handler thật (`agent-compat.test.mjs`): remote, thiếu Origin, Origin lạ, ompOff, id lạ/Claude, 409, hide/show + SSE | PASS |
-| ESLint (`eslint .`) / `tsc --noEmit` | PASS — người dùng chạy tay qua `node node_modules/...` (không output lỗi) |
-| Playwright e2e (`omp-visibility.spec.ts`), HTTP negative thật (LAN/tunnel/thiếu Origin) | NOT RUN |
-| Menu ⋯ đầy đủ trong rail; bộ lọc List Mode/3D riêng | Chưa làm: ẩn lọc ở server (snapshot + SSE) nên rail/List/3D cùng ẩn |
+| Source map, ownership và strict Origin/control auth tách telemetry | VERIFIED source; design đã chốt |
+| Binary/native environment | OMP18.14.2, Node24.22.1, Windows10.0.26200 x64; HEAD `8da383771bf4329aa9b471f477d53fb593e1f9e1` |
+| RPC no-turn với model giả loopback | VERIFIED: 2 child, 13 correlated success responses, 0 model HTTP requests, EOF exit0 |
+| `get_state`, `new_session`, exact `switch_session`, CLI exact `--resume`, `get_messages`, idle `abort`, lease response | VERIFIED trong synthetic fixture; free lease không chứng minh độc quyền |
+| External TUI bridge, prompt/steer/follow-up, active abort, approval/completion, v2 negotiation | UNKNOWN/DOCUMENTED, disabled; gate sau phải kiểm chứng riêng |
+| Ngoại lệ policy, real profile/runtime, extension install và paid model | Chưa duyệt; không prerequisite để đóng review G1, vẫn chặn G3–G6 |
+| Dọn fixture G1 | Đã xóa `test-results/g1-native-protocol-20261101`; không sửa policy/token/session thật |
+| **G1 tổng** | **COMPLETE cho review**; không phải rollout/control PASS |
+
+## G2 — PASS (2026-11-01)
+
+| Kiểm tra | Kết quả |
+|---|---|
+| Toàn bộ `tests/unit/*.test.mjs` | 359 trường hợp: **356 PASS, 3 SKIP, 0 FAIL** |
+| Store + route + UI visibility | PASS: restart persistence, idempotent/409, corrupt fail-closed, sanitize/limits, remote/Origin/ID negatives, Undo, refresh, replay callbacks |
+| Lifecycle dùng clock synthetic | PASS: connected/stale/disconnected/ended/expired; timeout không thành ended; restore-expired không tạo actor |
+| Production build cô lập | PASS, Next16.4.3; không thay `.next` của office thật |
+| ESLint / `tsc --noEmit` | PASS, exit0; chạy lại sau dọn fixture và khôi phục cấu hình build tạm |
+| `playwright.omp.config.ts` | **6/6 PASS**: files/history/privacy, hide/reload/restore, keyboard/Undo/rail/3D actor và unpin |
+| `playwright.hybrid.config.ts` | **1/1 PASS**: hide connected, telemetry đổi khi hidden, reload/restore current state, ended, reconnect, Claude/replay isolation |
+| `tests/e2e/agents.spec.ts --workers=1` | **13/13 PASS**: Claude lifecycle/control, quotas, mixed identity, bounded actors, mobile và replay |
+| UI thật tiếng Việt desktop/mobile | PASS: dialog/menu/refresh/hide/Undo, mobile width390/scrollWidth390, dialog356px, action targets44px; không pageerror trong smoke sạch |
+| Server thật restart | PASS: revision5 + hidden ID còn nguyên, catalog vẫn pinned, snapshot không actor; restore qua UI thành đúng 1 thẻ |
+| Transcript synthetic trước/sau hide/Undo/restart/restore | SHA256 không đổi: `85bac6973f0a3b02bef0d67b77182b61e99fd1503fac56f990cf8df2184528a6` |
+| **G2 tổng** | **PASS**; chỉ presentation, không quyền launch/control/kill/delete |
+
+### Runner, nguyên nhân lỗi và lệnh thực chạy
+
+- Source trước lượt tiếp tục đã có Hide nhưng test production dùng build có sẵn. Sau build mới, nút và luồng hoạt động; không sửa logic để che lỗi. Không chứng nhận byte-for-byte bản build cũ đã bị thay ở phiên trước.
+- Hai spec files dùng chung pin/visibility store: chốt 1 worker, reset qua API trước/sau mỗi ca để không nhiễm trạng thái khi một ca lỗi. Default Claude config bỏ qua spec OMP visibility; assertion đếm số nút đã bỏ, thay bằng hành vi thực tế.
+- Unit fixture lifecycle ban đầu bỏ lớp `record.live` của adapter nên projection trả unknown. Đã sửa fixture cho đúng hợp đồng production, giữ nguyên kỳ vọng connected/stale/disconnected.
+- Restore có accessible name chứa đúng ID/phiên để phân biệt tên trùng; E2E chọn theo `data-omp-id`, không ghim lại wording.
+- Backend đồ họa headless mặc định làm các bước tương tác 3D vượt tổng90s; trace ghi mọi bước vẫn hoàn tất (~98s). ANGLE/D3D11 native chạy nguyên 13 regression tests trong ~1,2 phút, không nới timeout/expectation. Cấu hình chính thức Windows đã pin D3D11; các hệ điều hành khác không đổi.
+- Hybrid token fixture phải có parent ACL an toàn. Runner dùng HOME/Claude config cô lập, giữ USERPROFILE của runner để tạo credential **synthetic riêng, UUID** dưới home an toàn; webServer vẫn dùng USERPROFILE cô lập. Không sửa ACL checkout hoặc nới private-storage; `afterAll` xóa token riêng. Thử đặt token dưới checkout đã bị từ chối trước startup đúng fail-closed.
+
+Lệnh đã chạy bằng Node24.22.1:
+
+```text
+node node_modules/next/dist/bin/next build
+node --test tests/unit/*.test.mjs
+node node_modules/eslint/bin/eslint.js .
+node node_modules/typescript/bin/tsc --noEmit
+node node_modules/@playwright/test/cli.js test -c playwright.omp.config.ts
+node node_modules/@playwright/test/cli.js test -c playwright.hybrid.config.ts
+node node_modules/@playwright/test/cli.js test tests/e2e/agents.spec.ts --workers=1
+```
+
+Build/E2E dùng cùng `OFFICE_DIST_DIR=.next-e2e-g2-20261101-continuation`, `E2E_OUT=test-results-g2-20261101-continuation`, port4497. Smoke restart dùng fixture riêng `test-results-g2-20261101-runtime`, port4498 và hai lần `node .../serve.mjs` với HOME/data/config chỉ thuộc fixture.
+
+Đã đóng các tab/server smoke; xóa toàn bộ ba thư mục tạm trên, wrapper GPU/launcher, trace/log/dữ liệu synthetic và hai screenshot `%TEMP%` của task. Các thay đổi tự sinh của Next trong `tsconfig.json`/`next-env.d.ts` đã trả về đường dẫn chuẩn. Không xóa artefact hay dữ liệu của phiên trước.
+
+Giới hạn: 3 unit SKIP có sẵn không bị tính PASS; không paid model/active approval/TUI-controller smoke, không deploy lên office đang chạy. G3–G7 vẫn có gate riêng.
 
 ## Proposed new tests (create during approved phase)
 - `tests/unit/omp-visibility.test.mjs`

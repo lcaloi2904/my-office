@@ -1,7 +1,7 @@
 ---
 phase: 2
 title: "Ẩn/hiện và quản lý lifecycle OMP trong sidebar/drawer"
-status: in-progress   # code xong (commit 36e0d40); unit/lint/tsc PASS; e2e Playwright NOT RUN
+status: completed   # G2 PASS: unit/HTTP/files/hybrid/agents, UI VI mobile và server restart đã kiểm chứng
 priority: P1
 effort: "3-4 dev-days"
 dependencies: [1]
@@ -41,20 +41,32 @@ Người dùng có thể Ẩn/Hiện OMP đã tắt/mất kết nối/đang ch�
 8. i18n VI/EN, keyboard/ARIA, responsive narrow rail, themes, Low Quality/List Mode, focus/scroll preservation and replay side-effect block.
 
 ## Gate G2 / acceptance
-- [ ] Ẩn một OMP connected, disconnected, ended và pinned history removes only UI entry/3D actor; transcript, pin and telemetry unchanged.
-- [ ] Hidden remains hidden after SSE reconnect and server restart; restore returns *current* state; undo works.
-- [ ] Bỏ ghim still works separately; historical catalog available; no ghost actors or stale counts.
-- [ ] Raw commands never sent to OMP, including during “Kiểm tra lại”. No unsupported API accessible remotely.
-- [ ] Claude sessions, OMP usage, replay and quotas unchanged; UI accessible.
+- [x] Ẩn connected/disconnected/ended/pinned history chỉ gỡ UI/3D actor; lifecycle, pin, telemetry và transcript được giữ nguyên.
+- [x] Giữ ẩn sau reload/reconnect/server restart; restore dùng trạng thái hiện tại; Undo khôi phục đúng ID.
+- [x] Bỏ ghim tách riêng, catalog giữ nguyên; kiểm tra rail/List/3D không còn actor thừa.
+- [x] Kiểm tra lại chỉ GET evidence; HTTP negatives chặn remote/Origin/ID giả, không gửi lệnh tới OMP.
+- [x] Regression Claude/quota/replay/usage PASS; keyboard/ARIA/VI-EN/Low Quality/List Mode và mobile đã kiểm chứng.
 
 ## Verification after approval
 ```bash
 node --test tests/unit/omp-visibility.test.mjs tests/unit/omp-adapter.test.mjs tests/unit/omp-lifecycle.test.mjs tests/unit/agent-compat.test.mjs
 node node_modules/eslint/bin/eslint.js .
 node node_modules/typescript/bin/tsc --noEmit
-node node_modules/@playwright/test/cli.js test tests/e2e/omp-visibility.spec.ts tests/e2e/agents.spec.ts --config=playwright.omp.config.ts
+node node_modules/@playwright/test/cli.js test -c playwright.omp.config.ts
+node node_modules/@playwright/test/cli.js test -c playwright.hybrid.config.ts
+node node_modules/@playwright/test/cli.js test tests/e2e/agents.spec.ts --workers=1
 ```
 Synthetic clock for stale/disconnected/ended; HTTP crafted IDs, LAN/tunnel, missing Origin, browser CSRF negative.
 
 ## Risks / stop / rollback
 Wrong visibility filter removes underlying sessions, inconsistent revisions or telemetry loss => STOP and rollback visibility flag; keep catalog/observer unchanged. No write to OMP files. Make schema/version migration reversible. No automated cleanup of users' old transcript.
+
+## Kết quả G2 — 2026-11-01
+
+**PASS.** Xem [validation matrix và lệnh thực chạy](./validation-matrix.md). Unit: 356 PASS, 3 SKIP có sẵn; files E2E 6/6, hybrid 1/1, agents regression 13/13; build/lint/typecheck PASS.
+
+- Visibility được lọc tập trung trước snapshot/SSE; không cần thêm bộ lọc trùng lặp trong `workers.js`/`live.js`. Client vẫn dùng reconcile hiện hữu để gỡ actor, backend giữ nguyên session.
+- Menu ⋯/drawer/List Mode, Undo, refresh evidence, restore-expired và replay guards đã hoàn tất; không cấp control OMP.
+- Smoke server thật: ẩn → restart process → vẫn ẩn và còn ghim → hiện lại đúng một thẻ. SHA256 transcript synthetic không đổi; UI tiếng Việt mobile 390px không tràn ngang.
+- Test files chia sẻ pin/visibility store nên chạy 1 worker, reset qua public API trước/sau mỗi ca. Windows dùng ANGLE/D3D11 để tránh timeout backend headless; giữ timeout/assertions gốc.
+- Build kiểm chứng dùng thư mục riêng, không thay `.next` production hoặc khởi động lại office thật. G3–G7 chưa triển khai/bật trong phase này.
