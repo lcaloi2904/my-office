@@ -11,6 +11,7 @@ import { createOmpLifecycle } from '../../server/agents/omp/lifecycle.mjs';
 import { normalizeOmpLiveEvent } from '../../server/agents/omp/normalize.mjs';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import { EventEmitter } from 'node:events';
 import { createT } from '../../src/i18n/index.js';
 
 const makeClaude = () => {
@@ -117,6 +118,11 @@ function loadUi(file, names, dependencies = {}) {
     ...dependencies,
   }, { timeout: 1000 });
 }
+function loadOmpHistory(names, dependencies) {
+  const launcher = loadUi('src/office/ui/omp-launch.js',
+    ['appendOmpLaunchActions', 'appendOmpNewToHistory', 'appendOmpResumeToRow', 'closeOmpLaunchOnReplay'], dependencies);
+  return loadUi('src/office/ui/omp-history.js', names, { ...dependencies, ...launcher });
+}
 const ui = (elementFactory = node) => {
   const helpers = loadUi('src/office/people/workers.js',
     ['AGENT_NAME', 'agentOf', 'canSession', 'claudeQuotaAccount', 'claudeCost', 'contextPercent', 'isPersisted', 'unknownLabel']);
@@ -165,8 +171,7 @@ test('actual Claude pub retains legacy fields for status, subagents, account and
   }
 });
 
-// Phase 03 intentionally changes the Phase 02 seam: files mode with an explicit config may now start the file-only
-// adapter. Every other mode keeps the original guarantee: only OFFICE_OMP is read and nothing is activated.
+// Khi OMP tắt, không đọc cấu hình/roots hay tạo adapter; cờ launcher độc lập không cấp quyền đó.
 function ompWiring(env, status = 'ready') {
   const start = serverSource.indexOf('const OMP_MODE =');
   const end = serverSource.indexOf('/* end OMP wiring */', start);
@@ -187,7 +192,7 @@ test('production mode and registration do not read config or activate an OMP ada
     const availability = w.ompAvailability();
     assert.equal(availability.effectiveMode, 'off');
     assert.equal(availability.requestedMode, resolveOmpMode(requested));
-    assert.deepEqual(w.reads, ['OFFICE_OMP'], 'must not inspect config/profile/token/roots');
+    assert.equal(w.reads.some((key) => /CONFIG|PROFILE|TOKEN|ROOT/.test(key)), false, 'must not inspect config/profile/token/roots');
     assert.equal(w.ompAdapter, null); assert.deepEqual(w.created, []);
     const { agents } = productionProjection(new Map([['internal', privateSession()]]));
     assert.deepEqual(agents.list().map((s) => s.agentKind), ['claude']);
@@ -206,6 +211,23 @@ test('production mode and registration do not read config or activate an OMP ada
   assert.deepEqual([on.ompAvailability().effectiveMode, on.ompAvailability().reason], ['files', 'files']);
   const bad = ompWiring({ OFFICE_OMP: 'files', OFFICE_OMP_CONFIG: '/synthetic/omp.json' }, 'config-invalid');
   assert.deepEqual([bad.ompAvailability().effectiveMode, bad.ompAvailability().reason], ['off', 'config-invalid']);
+});
+
+test('HTTP JSON body vượt giới hạn không được thực thi tiền tố JSON hợp lệ', async () => {
+  const start = serverSource.indexOf('function readJson(');
+  const end = serverSource.indexOf('\nconst json =', start);
+  const readJson = vm.runInNewContext(serverSource.slice(start, end) + '\n;readJson', { Buffer });
+  const body = Buffer.from('{"mode":"new"}'), max = 32;
+  const exact = new EventEmitter(), exactResult = readJson(exact, max);
+  exact.emit('data', body);
+  exact.emit('data', Buffer.alloc(max - body.length, 32));
+  exact.emit('end');
+  assert.deepEqual(plain(await exactResult), { mode: 'new' });
+  const oversized = new EventEmitter(), oversizedResult = readJson(oversized, max);
+  oversized.emit('data', body);
+  oversized.emit('data', Buffer.alloc(max - body.length + 1, 32));
+  oversized.emit('end');
+  assert.equal(await oversizedResult, null);
 });
 
 function routeFixture() {
@@ -371,7 +393,7 @@ test('actual drawer/account guards do not call controls or read a foreign conver
   const deps = { ...h, sessions, state: { selectedId: s.id, isLocal: true },
     $: (id) => { if (!elements.has(id)) elements.set(id, node()); return elements.get(id); }, el: node,
     toast: () => {}, acctActions: () => assert.fail('foreign account actions'),
-    appendOmpActions: (box, record) => loadUi('src/office/ui/omp-history.js', ['appendOmpActions'], {
+    appendOmpActions: (box, record) => loadOmpHistory(['appendOmpActions'], {
       ...h, el: node, state: { omp: { on: true, local: true } }, locale: () => 'en',
     }).appendOmpActions(box, record),
   };
@@ -797,7 +819,7 @@ test('visibility refresh tracks stale/disconnected/ended evidence and expired re
 function visibilityUiFixture(fetcher) {
   const replay = { on: false }, state = { omp: { on: true, local: true } }, body = railDom(), calls = [], messages = [];
   const document = { body, querySelector: () => null };
-  const api = loadUi('src/office/ui/omp-history.js', ['setOmpHidden', 'setOmpPin', 'appendOmpActions', 'ompActionsButton', 'openOmpHistory'], {
+  const api = loadOmpHistory(['setOmpHidden', 'setOmpPin', 'appendOmpActions', 'ompActionsButton', 'openOmpHistory'], {
     ...ui(railDom), el: railDom, replay, state, document, sessions: new Map(), locale: () => 'en', TOKEN: '',
     toast: (message) => messages.push(message),
     fetch: async (url, options) => { calls.push({ url, options }); return fetcher(url, options, calls.length); },

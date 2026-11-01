@@ -16,6 +16,9 @@ test-results-*/
 .next-*/
 playwright-report/
 
+# Bản build native riêng và manifest/checksum được giữ trong project, không đưa vào Git.
+/backups/
+
 # the online demo build (scripts/build-demo.mjs)
 /.demo-build/
 /demo-site/

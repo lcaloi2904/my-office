@@ -110,7 +110,7 @@ async function startOmpManaged() {
   }
 }
 function ompManagedStatus() {
-  return ompControlManager ? { ok: true, ...ompControlManager.status(), resumeAvailable: false } :
+  return ompControlManager ? { ok: true, ...ompControlManager.status() } :
     { ok: true, enabled: false, reason: ompLaunchReason, projects: [], profiles: [], sessions: [], resumeAvailable: false };
 }
 /* end OMP wiring */
@@ -1276,7 +1276,7 @@ function readJson(req, max = 64_000) {
   return new Promise((resolve) => {
     const chunks = []; let size = 0;
     req.on('data', (c) => { size += c.length; if (size <= max) chunks.push(c); });
-    req.on('end', () => { try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8'))); } catch { resolve(null); } });
+    req.on('end', () => { if (size > max) { resolve(null); return; } try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8'))); } catch { resolve(null); } });
   });
 }
 const json = (res, code, obj) => res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }).end(JSON.stringify(obj));

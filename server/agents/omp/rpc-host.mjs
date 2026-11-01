@@ -16,8 +16,9 @@ export function childEnvironment(source = process.env) {
 }
 
 export function createOmpRpcHost({ binary, args, cwd, env, spawnImpl = spawn, timeoutMs = 8000,
-  maxFrameBytes = MAX_FRAME, onExit = () => {} } = {}) {
+  maxFrameBytes = MAX_FRAME, requiredOwnershipProtocol, onExit = () => {} } = {}) {
   if (typeof binary !== 'string' || !Array.isArray(args) || typeof cwd !== 'string' ||
+      (requiredOwnershipProtocol !== undefined && requiredOwnershipProtocol !== 1) ||
       !Number.isSafeInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 30000) throw fault('RPC_INVALID');
   const maxFrame = Math.min(Math.max(maxFrameBytes, 1024), MAX_FRAME);
   let child = null, ready = false, closed = false, buffer = Buffer.alloc(0), readyResolve, readyReject;
@@ -42,6 +43,8 @@ export function createOmpRpcHost({ binary, args, cwd, env, spawnImpl = spawn, ti
     if (!message || typeof message !== 'object' || Array.isArray(message)) return fail('RPC_PROTOCOL');
     if (!ready) {
       if (message.type !== 'ready' || message.protocolVersion !== 1) return fail('RPC_VERSION');
+      if (requiredOwnershipProtocol !== undefined &&
+        message.officeOwnershipProtocol !== requiredOwnershipProtocol) return fail('RPC_OWNERSHIP_PROTOCOL');
       ready = true;
       if (!settled) { settled = true; readyResolve(); }
       return;

@@ -11,6 +11,7 @@ export default defineConfig({
   workers: 1, // Both specs mutate the same synthetic pin/visibility store.
   testIgnore: undefined,
   testMatch: '**/omp-{files,visibility,launch-resume}.spec.ts',
+  grepInvert: /native launcher ON/,
   webServer: {
     ...base.webServer as object,
     command: `node tests/e2e/omp-fixture.mjs "${FIXTURE_DIR}" && node server/index.mjs`,
