@@ -4,7 +4,7 @@ import { $, el, fmtBytes, fmtClock, hhmm, nowMs } from '../core/env.js';
 import { STATUS_LABEL, verb } from './event-text.js';
 import { TYPE_ICON, TYPE_TONE, icon } from './icons.js';
 import { hoverRing, selRing } from '../interact/rings.js';
-import { AGENT_NAME, agentMark, agentOf, canSession, claudeCost, colorOf, contextPercent, dn, dnOf, sessions, unknownLabel, workers } from '../people/workers.js';
+import { AGENT_NAME, agentMark, agentOf, canSession, claudeCost, colorOf, dn, dnOf, sessions, unknownLabel, workers } from '../people/workers.js';
 import { renderLite } from './lite.js';
 import { openSession, renderActivity, renderSessionHead, renderSubs, tab, toggleSession } from './session-drawer.js';
 import { macSnap } from './mac-drawer.js';
@@ -13,6 +13,7 @@ import { unseenDone } from '../life/your-turn.js';
 import { whereabouts } from '../people/outings.js';
 import { imageUrl, openImage } from './image-view.js';
 import { t as tr, num } from '../../i18n/index.js';
+import { appendSessionBadges, childState, projectLabel, sessionMetricView } from './session-info.js';
 
 let feedFilter = 'all';
 let query = '';
@@ -102,6 +103,7 @@ function ago(ts) {
   return tr('time.day', { n: Math.floor(s / 86400) });
 }
 export function doingOf(s) {
+  if (agentOf(s) === 'omp') return { ic: s.persistedOnly ? 'file' : s.status === 'wait' ? 'alert' : 'sparkle', text: unknownLabel(s) };
   if (railGroupOf(s) === 'unknown') return { ic: s.persistedOnly === true ? 'file' : 'sparkle', text: unknownLabel(s) };
   if (s.status === 'wait') return { ic: 'alert', text: tr('activity.doing.wait') };
   const where = whereabouts(workers.get(s.id));   // out of the office: at the shop, on the way home…
@@ -162,7 +164,7 @@ function railRow(s) {
 function subRow(s, x) {
   const li = el('li');
   const b = el('button', 'ri-sub'); b.type = 'button'; b.dataset.sess = s.id; b.dataset.agent = x.id;
-  b.append(icon('sparkle'), el('b', null, `${x.type}${x.desc ? ' · ' + x.desc : ''}`), el('span', null, x.last ? cap(verb(x.last)) : tr('activity.starting')));
+  b.append(icon('sparkle'), el('b', null, `${x.type}${x.desc ? ' · ' + x.desc : ''}`), el('span', null, x.persistedOnly ? childState(x) : x.last ? cap(verb(x.last)) : tr('activity.starting')));
   li.append(b);
   return li;
 }
@@ -179,14 +181,16 @@ function renderRail() {
     let r = railRows.get(s.id);
     if (!r) { r = railRow(s); railRows.set(s.id, r); }
     const color = colorOf(s), cur = String(s.id === state.selectedId);
-    r.b.dataset.status = group; r.b.dataset.done = unseenDone.has(s.id) ? '1' : ''; r.b.setAttribute('aria-current', cur); r.av.style.setProperty('--c', color);
+    r.b.dataset.status = group; r.b.dataset.lifecycle = s.lifecycle || ''; r.b.dataset.done = unseenDone.has(s.id) ? '1' : ''; r.b.setAttribute('aria-current', cur); r.av.style.setProperty('--c', color);
     { const k = agentOf(s); if (r.avTxt.firstChild?.dataset?.agent !== k) { r.avTxt.replaceChildren(agentMark(k)); r.av.title = AGENT_NAME[k]; } }
     const remote = canSession(s, 'remoteControl') && s.link;
-    const nk = dn(s) + '|' + (s.dir || '') + '|' + (s.origin || '') + (remote ? '|rc' : '');
+    const nk = [dn(s), s.dir, s.origin, remote, agentOf(s), s.connection, s.lifecycle, s.worktreeKey, s.actorOverflow?.root, s.actorOverflow?.children].join('|');
     if (r.nameKey !== nk) {
-      r.nameKey = nk; r.name.textContent = dn(s); r.top.querySelector('.ri-rc')?.remove(); r.top.querySelector('.ri-proj')?.remove();
-      const proj = String(s.dir || '').split('/').filter(Boolean).pop();
-      if (proj && proj !== dn(s)) { const pj = el('span', 'ri-proj', proj); pj.title = s.origin ? tr('activity.runsIn', { dir: s.dir, origin: s.origin }) : `${s.dir}`; r.name.after(pj); }
+      r.nameKey = nk; r.name.textContent = dn(s); r.top.replaceChildren(r.name);
+      if (agentOf(s) !== 'claude') r.top.append(el('span', 'ri-proj', AGENT_NAME[agentOf(s)]));
+      const proj = projectLabel(s);
+      if (proj && proj !== dn(s)) r.top.append(el('span', 'ri-proj', proj));
+      appendSessionBadges(r.top, s);
       if (remote) { const rc = el('span', 'ri-rc'); rc.title = tr('activity.remoteOn'); rc.append(icon('phone')); r.top.append(rc); }
     }
     r.b.title = `${dn(s)}${s.title ? ` (${s.name})` : ''} · ${s.dir || ''}`;
@@ -196,13 +200,11 @@ function renderRail() {
     r.time.textContent = metaTime(s);
     const mem = agentOf(s) === 'claude' ? ram.get(s.pid) : null; r.ram.textContent = mem ? fmtBytes(mem) : ''; r.ram.title = mem ? tr('activity.ramTitle') : '';
     setSpark(r.spark, sparkOf(s.id));
-    const u = contextPercent(s) !== null ? s.usage : null;
-    const f = u ? Math.min(1, u.ctx / u.ctxMax) : 0;
-    r.ctx.hidden = !u; r.ctxB.style.width = `${Math.round(f * 100)}%`; r.ctxB.className = f > 0.85 ? 'hi' : f > 0.6 ? 'mid' : '';
-    const cost = claudeCost(s);
-    r.ctx.title = u ? tr('activity.ctxTitle', { used: fmtTok(u.ctx), max: fmtTok(u.ctxMax), cost: cost === null ? '–' : fmtUsd(cost) }) : '';
+    const metrics = sessionMetricView(s), ctx = metrics.context, f = ctx ? Math.min(1, ctx.used / ctx.window) : 0;
+    r.ctx.hidden = !ctx; r.ctxB.style.width = `${Math.round(f * 100)}%`; r.ctxB.className = f > 0.85 ? 'hi' : f > 0.6 ? 'mid' : '';
+    r.ctx.title = ctx ? tr('activity.ctxTitle', { used: fmtTok(ctx.used), max: fmtTok(ctx.window), cost: metrics.cost === null ? '–' : fmtUsd(metrics.cost) }) + ' · ' + metrics.costNote : '';
     const subsNow = s.subs || [];
-    const sig = subsNow.map((x) => `${x.id}:${x.last?.label || ''}:${x.desc}`).join('|');
+    const sig = subsNow.map((x) => `${x.id}:${x.last?.label || ''}:${x.desc}:${x.lifecycle}:${x.parentAgentKey}`).join('|');
     if (sig !== r.subSig) { r.subSig = sig; r.subList.replaceChildren(...subsNow.map((x) => subRow(s, x))); }
     r.subList.hidden = !subsNow.length;
     const match = !q || s.name.toLowerCase().includes(q) || String(s.title || '').toLowerCase().includes(q) || String(s.dir || '').toLowerCase().includes(q);
@@ -236,7 +238,9 @@ const KPIS = [['prompts', 'clipboard'], ['read', 'file'], ['edit', 'pencil'], ['
 export function renderHud() {
   const list = [...sessions.values()];
   const waiting = list.filter((s) => s.status === 'wait').length;
-  const subCount = list.reduce((a, s) => a + (s.subs?.length || 0), 0);
+  const subCount = list.reduce((n, s) => n + (s.persistedOnly ? 0 : (s.subs || []).filter((x) =>
+    x.persistedOnly !== true && !['historical', 'parked', 'ended', 'aborted'].includes(x.lifecycle)
+    && (agentOf(s) === 'claude' || x.connection === 'connected' && ['active', 'waiting'].includes(x.activity))).length), 0);
   $('active-count').textContent = list.length ? tr('activity.sessions', { n: list.length }) + (subCount ? ` · ${tr('activity.subsRunning', { n: subCount })}` : '') : tr('activity.noSessions');
   $('feed-stats').replaceChildren(...KPIS.map(([k, ic]) => {
     const label = tr(`activity.kpi.${k}`);

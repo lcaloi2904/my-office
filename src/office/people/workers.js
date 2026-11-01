@@ -31,9 +31,9 @@ export const streetHooks = {};
 export const clockHooks = {};
 const viaClock = (kind, w, then) => (clockHooks[kind] ? clockHooks[kind](w, then) : then());
 export function hash(s) { let h = 2166136261; for (const ch of String(s)) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619); } return h >>> 0; }
-export const colorOf = (s) => (s.desk >= 0 ? PALETTE[s.desk] : PALETTE[hash(s.name) % PALETTE.length]);
-// What to call a session on screen: the chat's title (your rename, else Claude's), else its short name.
-// The short name stays the identity: looks, colours and the timeline are keyed by it.
+export const actorIdentity = (s) => s?.sessionKey || s?.id || s?.name || '';
+export const colorOf = (s) => PALETTE[hash(actorIdentity(s)) % PALETTE.length];
+// Display names may change; appearance follows the stable session identity.
 export const dn = (s) => (s ? s.title || s.name : '');
 export const dnOf = (e) => dn(sessions.get(e.sess)) || e.name || tr('common.session');
 // Which agent a session runs, shown as its logo in the list (Claude Code today; Codex and Gemini when the server
@@ -50,11 +50,29 @@ export const AGENT_NAME = { claude: 'Claude Code', codex: 'Codex', gemini: 'Gemi
   get unknown() { return tr('drawer.unknownAgent'); } };
 const SESSION_CAPABILITIES = new Set(['openWindow', 'closeSession', 'changeAccount', 'remoteControl', 'startTask', 'readConversation']);
 // UI hints only: server ownership checks remain authoritative. Old replay records keep legacy defaults.
-// A persisted OMP history actor may read its conversation when the server's source config allowed it; nothing else.
-export const isPersisted = (s) => agentOf(s) === 'omp' && s.persistedOnly === true && s.capabilities?.readConversation === true;
-export const unknownLabel = (s) => tr(agentOf(s) === 'omp' && s?.persistedOnly === true ? 'drawer.persistedState' : 'drawer.unknownState');
+// Conversation is the only OMP capability; the validated server hint also covers hybrid runtime/history rows.
+export const isPersisted = (s) => agentOf(s) === 'omp' && s.persistedOnly === true;
+export function unknownLabel(s) {
+  let key = 'unknownState';
+  if (agentOf(s) === 'omp') {
+    if (s.lifecycle === 'ended') key = 'endedState';
+    else if (s.persistedOnly === true) key = 'persistedState';
+    else if (s.connection === 'stale') key = 'staleState';
+    else if (s.connection === 'disconnected') key = 'disconnectedState';
+    else if (s.connection === 'connected' && s.eventGap !== true) {
+      if (s.activity === 'waiting' && s.waitReasons?.includes('approval')) key = 'approvalState';
+      else if (s.activity === 'waiting' && s.waitReasons?.includes('input')) key = 'inputState';
+      else if (s.activity === 'idle') key = 'idleState';
+      else if (s.activity === 'active') key = 'activeState';
+    }
+  }
+  return tr(`drawer.${key}`);
+}
 export function canSession(s, capability) {
-  if (capability === 'readConversation' && isPersisted(s) && /^omp:[0-9a-f]{64}$/.test(String(s.id || ''))) return true;
+  if (replay.on) return false;
+  if (capability === 'readConversation' && agentOf(s) === 'omp' && /^omp:[0-9a-f]{64}$/.test(String(s.id || ''))
+    && s.capabilities && typeof s.capabilities === 'object' && !Array.isArray(s.capabilities)
+    && Object.hasOwn(s.capabilities, capability) && s.capabilities[capability] === true) return true;
   if (agentOf(s) !== 'claude' || !SESSION_CAPABILITIES.has(capability) || /^(?:omp|agent):/i.test(String(s.id || ''))) return false;
   if (!Object.hasOwn(s, 'capabilities')) return !Object.hasOwn(s, 'agentKind');
   const caps = s.capabilities;
@@ -92,14 +110,73 @@ export function updateZs(dt) {
     if (z.life <= 0) { scene.remove(z.s); z.s.material.dispose(); zs.splice(i, 1); }
   }
 }
-function lookOf(s) { const h = hash(s.name); return { shirt: colorOf(s), hair: HAIRS[h % HAIRS.length], style: STYLES[(h >>> 3) % STYLES.length], acc: ACCS[(h >>> 7) % ACCS.length], coat: COATS[(h >>> 11) % COATS.length], bag: BAGS[(h >>> 15) % BAGS.length] }; }
+function lookOf(s) { const h = hash(actorIdentity(s)); return { shirt: colorOf(s), hair: HAIRS[h % HAIRS.length], style: STYLES[(h >>> 3) % STYLES.length], acc: ACCS[(h >>> 7) % ACCS.length], coat: COATS[(h >>> 11) % COATS.length], bag: BAGS[(h >>> 15) % BAGS.length] }; }
 export const workers = new Map();   // session id -> Worker
 export const npcs = [];             // people who aren't sessions: the director on the company floor
-export const subs = new Map();      // subagent id -> Worker
+export const subs = new Map();      // namespaced actor key -> Worker (Worker.id stays the raw API child id)
 export const sessions = new Map();  // session id -> latest session object from the server
 export let Worker;
+export const ACTOR_BUDGET = 64, CHILD_ACTOR_BUDGET = 32;
+export const childActorKey = (root, child) => child?.agentKey || JSON.stringify([actorIdentity(root), child?.id]);
+export const actorCount = () => workers.size + subs.size + leaving.size;
+export const childObservation = (root, child) => ({ ...child, agentKind: agentOf(root),
+  persistedOnly: child?.persistedOnly ?? root?.persistedOnly,
+  lifecycle: root?.lifecycle === 'ended' ? 'ended' : child?.lifecycle || 'unknown',
+  connection: child?.connection || 'unknown', activity: child?.activity || 'unknown' });
+export function settleReplayMotion(w) {
+  if (!replay.on || !w) return;
+  if (w.phase === 'walk') {
+    const station = w.destinationStation || (w.sub ? 'meeting' : 'desk');
+    const spot = w.destinationStation && w.spot ? w.spot : w.homeSpot();
+    if (w.spot !== spot && w.spot?.by === w) w.spot.by = null;
+    w.spot = spot; if ('by' in spot) spot.by = w;
+    w.pos.set(spot.x, spot.z); w.faceTarget = spot.face; w.pose = spot.sit ? 'sit' : 'stand'; w.station = station;
+  }
+  w.destinationStation = null; w.path.length = 0; w.onArrive = null; w.after = null; w.want = null; w.phase = 'idle'; w.restAt = Infinity;
+}
+// OMP animations use only public canonical metadata, never raw provider tool names or completion heuristics.
+export function observeActor(w, s) {
+  if (!w || !s) return;
+  if (agentOf(s) === 'claude') {
+    if (!replay.on) return;
+    const status = w.sub ? s.endedAt ? 'rest' : ['wait', 'ask'].includes(s.last?.type) ? 'wait' : s.last ? 'work' : 'unknown' : s.status;
+    const key = `${status}|${s.last?.type || ''}|${s.last?.label || ''}`;
+    if (w.replayVisualKey === key) return;
+    w.replayVisualKey = key; settleReplayMotion(w);
+    w.anim = status === 'wait' ? 'hand' : status === 'work' ? ACT[s.last?.type]?.anim || 'think' : 'idle';
+    w.tagEl.classList.toggle('tag--wait', status === 'wait');
+    if (status === 'wait') w.say('wait', tr('people.needsApproval'), 'wait');
+    else if (s.last && status === 'work') w.say(s.last.type, bubbleText(s.last));
+    else w.hush();
+    return;
+  }
+  w.observation = s;
+  w.setAgent(agentOf(s));
+  w.setDimmed(s.lifecycle === 'ended');
+  w.want = null; w.restAt = Infinity;
+  const fresh = s.lifecycle !== 'ended' && s.persistedOnly !== true && s.connection === 'connected' && s.eventGap !== true;
+  let anim = 'idle';
+  if (fresh && s.activity === 'active') anim = ({ read: 'read', edit: 'type', cmd: 'console', web: 'globe', other: 'think' })[s.toolCategories?.[0]] || 'think';
+  else if (fresh && s.activity === 'waiting') anim = s.waitReasons?.includes('approval') ? 'hand' : 'idle';
+  const waiting = fresh && s.activity === 'waiting';
+  w.anim = anim;
+  w.tagEl.classList.toggle('tag--wait', waiting);
+  w.say(waiting ? 'wait' : 'other', unknownLabel(s), waiting ? 'wait' : '');
+}
+// Recorded actions animate without dispatching live chat, notifications, controls or completion effects.
+export function observeReplayEvent(s, e, quiet) {
+  if (!replay.on || agentOf(s) !== 'claude') return;
+  const child = e.agent && (s.subs || []).find((x) => x.id === e.agent);
+  const w = e.agent ? subs.get(childActorKey(s, child || { id: e.agent })) : workers.get(s.id);
+  if (!w || ['start', 'end', 'substart', 'substop'].includes(e.type)) return;
+  const a = { ...(ACT[e.type] || ACT.other), type: e.type, text: bubbleText(e), e };
+  if (quiet) { settleReplayMotion(w); w.anim = a.anim || 'idle'; w.say(e.type, a.text, a.kind || ''); }
+  else { w.push(a); w.say(e.type, a.text, a.kind || ''); }
+}
 export function addWorker(s, walkIn) {
+  if (actorCount() >= ACTOR_BUDGET) return null;
   const w = new Worker({ name: s.name, ...lookOf(s) }, { id: s.id });
+  w.setAgent(agentOf(s));
   if (s.desk >= 0) chairs[s.desk].color.set(colorOf(s));
   const home = w.homeSpot();
   if (walkIn) {
@@ -116,34 +193,46 @@ export function addWorker(s, walkIn) {
     else { w.anim = 'type'; if (s.last) w.say(s.last.type, s.last.label || verb(s.last)); }
   }
   workers.set(s.id, w);
-  for (const sub of s.subs || []) spawnSub(w, sub.id, sub.type, !walkIn, sub);
+  observeActor(w, s);
   return w;
 }
 export function spawnSub(parent, agentId, type, instant = false, info = null) {
-  if (!agentId || subs.has(agentId)) return subs.get(agentId);
-  const h = hash(agentId);
+  if (!agentId) return null;
+  const root = sessions.get(parent.id), child = info || root?.subs?.find((x) => x.id === agentId) || { id: agentId };
+  const key = childActorKey(root || { id: parent.id }, child);
+  if (subs.has(key)) return subs.get(key);
+  if (actorCount() >= ACTOR_BUDGET || [...subs.values()].filter((x) => x.parent === parent).length >= CHILD_ACTOR_BUDGET) return null;
+  const h = hash(key);
   const w = new Worker({ name: type || 'agent', shirt: tint(parent.cfg.shirt, 0.3), hair: HAIRS[h % HAIRS.length], style: STYLES[(h >>> 3) % STYLES.length], acc: (h >>> 6) % 3 === 0 ? 'glasses' : null, pants: '#4C566A' }, { sub: true, scale: 0.78, parent, id: agentId });
-  subs.set(agentId, w);
-  const x = () => info || sessions.get(parent.id)?.subs?.find((y) => y.id === agentId);
+  w.actorKey = key;
+  w.setAgent(agentOf(root));
+  if (agentOf(root) !== 'claude') instant = true;
+  w.parentAgentKey = child.parentAgentKey; w.rootSessionKey = child.rootSessionKey; w.relationKind = child.relationKind;
+  subs.set(key, w);
+  const currentChild = () => {
+    const session = sessions.get(parent.id);
+    return session?.subs?.find((y) => childActorKey(session, y) === key) || child;
+  };
   const seated = () => {
     w.station = 'meeting'; w.anim = 'think';
-    const i = x();
+    const i = currentChild();
     if (i?.last) w.say(i.last.type, i.last.label || verb(i.last)); else w.say('agent', i?.desc || type || 'agent');
+    if (agentOf(root) !== 'claude') observeActor(w, childObservation(root, i));
   };
   if (instant) {   // already working when the page opened: straight to where its last step happens
     const seat = allocate('meeting', w);
     if ('by' in seat) seat.by = w;
     w.pos.set(seat.x, seat.z); w.spot = seat; w.face = w.faceTarget = seat.face; w.pose = seat.sit ? 'sit' : 'stand'; seated();
-    const last = x()?.last; if (last && ACT[last.type]) w.push(subAct({ type: last.type, label: last.label }));
+    const last = currentChild()?.last; if (agentOf(root) === 'claude' && last && ACT[last.type]) w.push(subAct({ type: last.type, label: last.label }));
     return w;
   }
   // new on the team: in through the door (up in the lift), to the boss for the brief, then off to work
   w.pos.set(DOOR_OUT.x, DOOR_OUT.z); w.face = w.faceTarget = Math.PI / 2; w.spot = DOOR_OUT; liftArrive(w);
   w.goTo(DOOR_IN, () => w.goTo(nearBoss(parent, w), () => {
     w.faceTarget = Math.atan2(parent.pos.x - w.pos.x, parent.pos.y - w.pos.y);
-    w.anim = 'idle'; w.say('agent', tr('people.subOnIt', { task: short(x()?.desc || type || tr('people.subagent'), 48) })); w.dwellUntil = state.sim + 1.6;
+    w.anim = 'idle'; w.say('agent', tr('people.subOnIt', { task: short(currentChild()?.desc || type || tr('people.subagent'), 48) })); w.dwellUntil = state.sim + 1.6;
     if (!parent.leaving && parent.phase !== 'walk') parent.faceTarget = Math.atan2(w.pos.x - parent.pos.x, w.pos.y - parent.pos.y);
-    if (!w.want) w.push({ station: 'desk', anim: 'think', type: 'agent', text: x()?.desc || tr('people.subThinking'), dwell: 1.2 });
+    if (!w.want) w.push({ station: 'desk', anim: 'think', type: 'agent', text: currentChild()?.desc || tr('people.subThinking'), dwell: 1.2 });
   }));
   return w;
 }
@@ -166,11 +255,17 @@ export function nearBoss(boss, me) {
 // Workers walking out of the office: no longer in workers/subs, but still animated until they reach the door.
 export const leaving = new Set();
 export const leavingIds = new Set();
+export function freeActor(w) {
+  leaving.delete(w); leavingIds.delete(w.id);
+  w.leaving = true;
+  w.onArrive = null; w.after = null; w.want = null; w.chore = null; w.path.length = 0;
+  w.remove();
+}
 export function dropSub(agentId, report = true) {
   const w = subs.get(agentId); if (!w) return;
   subs.delete(agentId); leaving.add(w);
   const boss = w.parent;
-  if (!report || reduceMotion || !boss || workers.get(boss.id) !== boss || boss.leaving || replay.on) { w.leave(); return; }
+  if (agentOf(sessions.get(boss?.id)) !== 'claude' || !report || reduceMotion || !boss || workers.get(boss.id) !== boss || boss.leaving || replay.on) { w.remove(); leaving.delete(w); return; }
   const desc = w.desc || '';
   w.want = null; w.hush();
   w.goTo(nearBoss(boss, w), () => {
@@ -218,6 +313,29 @@ export function setup() {
       this.bubbleObj = new CSS2DObject(bw); this.bubbleObj.position.set(0, 2.0, 0); this.bubbleObj.visible = false; root.add(this.bubbleObj);
     }
     setName(n) { if (this.tagText.data !== n) this.tagText.data = n; }
+    setAgent(kind) {
+      if (kind !== 'omp' && !this.agentEl) return;
+      if (!this.agentEl) { this.agentEl = el('span', 'tag-acct'); this.tagEl.append(this.agentEl); }
+      this.agentEl.hidden = kind !== 'omp'; this.agentEl.textContent = 'OMP';
+    }
+    setDimmed(on) {
+      if (this.dimmedRoot === this.root && this.dimmed === on) return;
+      this.dimmedRoot = this.root; this.dimmed = on;
+      this.tagEl.classList.toggle('tag--ended', on);
+      this.tagEl.dataset.lifecycle = on ? 'ended' : 'open';
+      this.tagEl.style.opacity = on ? '0.45' : '';
+      this.root.traverse((o) => {
+        if (!o.isMesh) return;
+        if (on && !o.userData.undimmedMaterial) {
+          o.userData.undimmedMaterial = o.material;
+          const dim = (m) => { const clone = m.clone(); clone.transparent = true; clone.opacity = m.opacity * 0.38; return clone; };
+          o.material = Array.isArray(o.material) ? o.material.map(dim) : dim(o.material);
+        } else if (!on && o.userData.undimmedMaterial) {
+          for (const m of Array.isArray(o.material) ? o.material : [o.material]) m.dispose();
+          o.material = o.userData.undimmedMaterial; delete o.userData.undimmedMaterial;
+        }
+      });
+    }
     // the height they stand at: the office floor, or down on the street (the pavement, or the road on a crossing)
     gy() { return this.street ? this.ground : 0; }
     // which account the session runs under, when this Mac has more than one (a second login's folder name)
@@ -232,6 +350,8 @@ export function setup() {
       this.teamEl.hidden = !n; this.teamEl.textContent = n ? tr('people.team', { n }) : '';
     }
     rebuild() {
+      const dimmed = this.dimmed;
+      this.setDimmed(false);
       const { root, P } = makeChibi({ ...this.cfg, look: state.LOOK }, this.scale);
       if (SEASON === 'noel') wearHat(P);
       root.position.copy(this.root.position); root.rotation.copy(this.root.rotation);
@@ -241,6 +361,7 @@ export function setup() {
       root.traverse((o) => { o.userData.worker = this; });
       if (parent) parent.add(root);
       if (this.dressed) wearOuter(P, true, this.cfg);
+      this.setDimmed(dimmed);
     }
     // coat and backpack on (arriving, going home) or off (at the desk)
     dress(on) { this.dressed = on; wearOuter(this.P, on, this.cfg); }
@@ -264,7 +385,8 @@ export function setup() {
     }
     hush() { this.bubbleObj.visible = false; }
     homeSpot() { const d = sessions.get(this.id)?.desk ?? -1; return d >= 0 ? DESK_SPOTS[d] : allocate('meeting', this); }
-    goTo(spot, cb) {
+    goTo(spot, cb, destinationStation = null) {
+      this.destinationStation = destinationStation;
       if (this.mealBox) hideMeal(this);
       if (this.queued && !COFFEE_Q.includes(spot)) leaveCoffee(this);
       const prev = this.spot;
@@ -294,6 +416,11 @@ export function setup() {
     }
     tick() {
       if (this.leaving || this.phase === 'walk' || this.after || this.liftWait || this.liftRide || this.homeBound) return;
+      const rootSession = sessions.get(this.sub ? this.parent?.id : this.id);
+      if (rootSession && agentOf(rootSession) !== 'claude') {
+        observeActor(this, this.observation || rootSession);
+        return;
+      }
       if (this.away) {
         const s = sessions.get(this.id), d = officeNow(), m = (d.getHours() - 8) * 60 + d.getMinutes();
         // (offDay: gone home for the day from the quán nhậu, people/nhau.js: back for work, or in the morning)
@@ -311,7 +438,7 @@ export function setup() {
         if (!a.station || a.station === this.station) { this.apply(a); return; }
         let spot = a.station === 'desk' ? this.homeSpot() : allocate(a.station, this, true);
         if (!spot) { if (a.anim === ANIM_AT[a.station]) a.anim = ANIM_AT.desk; a.station = 'desk'; spot = this.homeSpot(); }   // (that room is full: from their own desk)
-        this.goTo(spot, () => { this.station = a.station; this.apply(a); });
+        this.goTo(spot, () => { this.station = a.station; this.apply(a); }, a.station);
         a.go?.(this);   // (on the way: something in hand, say; life/post.js)
         return;
       }
@@ -477,7 +604,7 @@ export function setup() {
     /* Late at night, after a long rest: home by the lift, the desk left empty. Back as soon as there is work, or in the
        morning (from 8:00, a few minutes apart). */
     lateRest(s) {   // from 21:00 (each at their own minute, up to 21:25) to 6:00, resting for half an hour or more
-      if (this.sub || !s || s.status !== 'rest' || s.bg?.length || replay.on) return false;
+      if (this.sub || !s || agentOf(s) !== 'claude' || s.status !== 'rest' || s.bg?.length || replay.on) return false;
       const d = officeNow(), h = d.getHours();
       return (h > 21 || h < 6 || (h === 21 && d.getMinutes() >= hash(this.id) % 25)) && nowMs() - (s.doneAt || s.lastAt || nowMs()) >= 30 * 60e3;
     }
@@ -499,6 +626,7 @@ export function setup() {
       viaClock('in', this, () => this.goTo(home, () => { this.station = 'desk'; this.anim = 'type'; if (home === DESK_SPOTS[d]) this.unpack(d); else this.dress(false); }));
     }
     remove() {
+      this.setDimmed(false);
       { const k = deskKit.indexOf(this); if (k >= 0) deskKit[k] = null; }
       this.liftHold = false; this.liftWait = this.liftRide = null;
       if (this.queued) leaveCoffee(this);
@@ -523,7 +651,7 @@ export function setup() {
           if (!this.path.length) {
             this.phase = 'idle';
             if (this.spot) { this.faceTarget = this.spot.face; this.pose = this.spot.sit ? 'sit' : 'stand'; }
-            const cb = this.onArrive; this.onArrive = null; cb && cb();
+            const cb = this.onArrive; this.onArrive = null; this.destinationStation = null; cb && cb();
           }
         } else { this.pos.x += (dx / d) * step; this.pos.y += (dz / d) * step; this.faceTarget = Math.atan2(dx, dz); }
       }

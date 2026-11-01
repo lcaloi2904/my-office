@@ -7,6 +7,8 @@ import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import fsp from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 
 const run = (cmd, args, cwd, timeout = 5000) => new Promise((res) => {
   execFile(cmd, args, { cwd, timeout, maxBuffer: 4 << 20, env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' } }, (err, out) => res(err ? null : String(out)));
@@ -18,17 +20,43 @@ const GH = [process.env.GH_PATH, path.join(os.homedir(), '.local/bin/gh'), '/opt
   ...String(process.env.PATH || '').split(path.delimiter).filter(Boolean).map((d) => path.join(d, EXE))].find((p) => p && fs.existsSync(p)) || null;
 const CI_ON = process.env.OFFICE_CI !== '0';
 
+const canonical = (p) => process.platform === 'win32' ? p.toLowerCase() : p;
+const identityHash = (parts) => createHash('sha256').update(JSON.stringify(parts)).digest('hex');
+
+// Local plumbing only: no status, remote, gh or CI calls. Real git common-dir groups linked worktrees, not basenames.
+export async function readGitIdentity(cwd, { io = fsp, runGit = run } = {}) {
+  if (typeof cwd !== 'string' || !path.isAbsolute(cwd) || /[\x00-\x1f]/.test(cwd) || /^[\\/]{2}/.test(cwd) ||
+    (process.platform === 'win32' && !/^[A-Za-z]:[\\/]/.test(cwd))) return null;
+  try {
+    const rootText = await runGit('git', ['rev-parse', '--show-toplevel'], cwd);
+    if (!rootText?.trim()) return null;
+    const root = await io.realpath(rootText.trim());
+    const realCwd = await io.realpath(cwd), relative = path.relative(root, realCwd);
+    if (path.isAbsolute(relative) || relative === '..' || relative.startsWith('..' + path.sep)) return null;
+    const commonText = await runGit('git', ['rev-parse', '--git-common-dir'], root);
+    if (!commonText?.trim()) return null;
+    const common = await io.realpath(path.resolve(root, commonText.trim()));
+    if (!(await io.lstat(root)).isDirectory() || !(await io.lstat(common)).isDirectory()) return null;
+    return { root, projectKey: identityHash(['local-git', canonical(common)]),
+      worktreeKey: identityHash(['local-git-worktree', canonical(common), canonical(root)]) };
+  } catch { return null; }
+}
 /**
  * @param {{ onRepo: (r: object) => void, onCommit: (r: object, subject: string) => void, onPush: (r: object) => void, onCi: (r: object, was: string|null) => void }} o
  */
 export function createGit({ onRepo, onCommit, onPush, onCi }) {
   const roots = new Map();   // folder -> its repository root, '' when it is not in one
   const repos = new Map();   // root -> { root, name, branch, dirty, ahead, head, upstream, ci, ciName, ciUrl, born }
+  const identities = new Map();   // cwd -> verified local opaque identity, never inferred from a display name
   let polling = null, ciPolling = null;
 
   async function rootOf(cwd) {
     if (!cwd) return '';
-    if (!roots.has(cwd)) roots.set(cwd, ((await run('git', ['rev-parse', '--show-toplevel'], cwd)) || '').trim());
+    if (!roots.has(cwd)) {
+      const identity = await readGitIdentity(cwd);
+      roots.set(cwd, identity?.root || '');
+      if (identity) identities.set(cwd, { projectKey: identity.projectKey, worktreeKey: identity.worktreeKey });
+    }
     return roots.get(cwd);
   }
   async function read(root) {
@@ -84,6 +112,7 @@ export function createGit({ onRepo, onCommit, onPush, onCi }) {
     pollCi: () => (ciPolling ??= pollCiNow().finally(() => { ciPolling = null; })),
     repoOf: (cwd) => repos.get(roots.get(cwd)) || null,
     rootOf,
+    identityOf: (cwd) => identities.get(cwd) || null,
     ghAvailable: !!GH && CI_ON,
   };
 }

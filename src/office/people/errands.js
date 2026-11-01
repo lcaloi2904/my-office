@@ -17,7 +17,7 @@ import { PROPS } from '../interact/props.js';
 import { DEMO } from '../demo/demo.js';
 import { DESK_SPOTS, STATIONS, standBy, wayTo } from './navigation.js';
 import { COFFEE_Q } from './breaks.js';
-import { npcs, sessions, subs, workers } from './workers.js';
+import { agentOf, npcs, sessions, subs, workers } from './workers.js';
 import { director } from './director.js';
 import { sfx } from '../audio/sfx.js';
 import { t as tr } from '../../i18n/index.js';
@@ -25,7 +25,10 @@ import { t as tr } from '../../i18n/index.js';
 export const people = () => [...workers.values(), ...subs.values(), ...npcs];
 export const line = (key) => tr(key);   // an array in the dictionary: one line picked at random
 export const dist = (w, x, z) => Math.hypot(w.pos.x - x, w.pos.y - z);
-const shown = (w) => w.root.parent && w.root.visible && !w.leaving && !w.away && !w.homeBound;
+const shown = (w) => {
+  const s = sessions.get(w.sub ? w.parent?.id : w.id);
+  return (!s || agentOf(s) === 'claude') && w.root.parent && w.root.visible && !w.leaving && !w.away && !w.homeBound;
+};
 // free to get up: in place (not walking, riding the lift or in the middle of something), awake, nothing urgent waiting
 export const free = (w) => shown(w) && !w.staff && !w.chore && w.phase !== 'walk' && !w.after && !w.liftHold && !w.liftWait && !w.inStall && !w.wcBusy && !w.queued
   && !w.want?.priority && w.anim !== 'sleep' && w.anim !== 'wake' && (w !== director || (!director.job && director.station === 'home'));

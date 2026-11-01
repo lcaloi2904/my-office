@@ -10,9 +10,7 @@
 // Event names follow the OMP source pinned in plans/.../evidence.md (6a86df85…). That the installed build emits each of
 // them, in this order, is NOT verified here: see README.md for the support matrix.
 
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
+import { privateRoot, readPrivateJson } from './private-storage.js';
 
 const LOOPBACK = new Set(['127.0.0.1', 'localhost', '[::1]', '::1']);
 const DEFAULTS = Object.freeze({
@@ -30,9 +28,8 @@ const attempt = (fn, fallback) => { try { return fn(); } catch { return fallback
 // {"sourceId": "...", "token": "...", "url": "http://127.0.0.1:4310/ingest/omp/v1"}. Environment variables win over it.
 function readSettingsFile(file) {
   try {
-    const st = fs.statSync(file);
-    if (!st.isFile() || st.size > 4096) return {};
-    const j = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const j = readPrivateJson(file, { maxBytes: 4096 });
+    if (j === null) return {};
     return j && typeof j === 'object' && !Array.isArray(j) ? j : {};
   } catch { return {}; }
 }
@@ -55,7 +52,7 @@ export function createOfficeObserver(options = {}) {
   const env = options.env ?? (typeof process !== 'undefined' ? process.env : {});
   const cfg = { ...DEFAULTS, ...options.limits };
   const needFile = !(options.token ?? env.OFFICE_OMP_TOKEN) || !(options.sourceId ?? env.OFFICE_OMP_SOURCE);
-  const settings = needFile ? (options.settings ?? readSettingsFile(env.OFFICE_OMP_OBSERVER_CONFIG || path.join(attempt(() => os.homedir(), ''), '.omp', 'office-observer.json'))) : {};
+  const settings = needFile ? (options.settings ?? readSettingsFile(env.OFFICE_OMP_OBSERVER_CONFIG || privateRoot() + '/observer.json')) : {};
   const str = (v) => typeof v === 'string' ? v : undefined;
   const url = options.url ?? env.OFFICE_OMP_URL ?? str(settings.url) ?? DEFAULTS.url;
   const token = options.token ?? env.OFFICE_OMP_TOKEN ?? str(settings.token) ?? '';
@@ -281,4 +278,4 @@ export function createOfficeObserver(options = {}) {
   return factory;
 }
 
-export default createOfficeObserver();
+export default function officeObserver(pi) { return createOfficeObserver()(pi); }

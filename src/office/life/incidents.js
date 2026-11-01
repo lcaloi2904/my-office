@@ -1,12 +1,12 @@
 // Incidents: repeated failures turn the office red.
 import * as THREE from 'three';
 import { state } from '../core/state.js';
-import { $, nowMs, reduceMotion, short } from '../core/env.js';
+import { $, nowMs, reduceMotion, replay, short } from '../core/env.js';
 import { ACT, bubbleText } from '../ui/event-text.js';
 import { scene } from '../scene/renderer.js';
 import { printPage } from '../world/props/printer.js';
 import { STATIONS } from '../people/navigation.js';
-import { dn, dropSub, sessions, spawnSub, subAct, subs, workers } from '../people/workers.js';
+import { agentOf, childActorKey, dn, dropSub, observeActor, sessions, spawnSub, subAct, subs, workers } from '../people/workers.js';
 import { director } from '../people/director.js';
 import { launchRocket } from '../world/room-update.js';
 import { addFeed, toast } from '../ui/activity.js';
@@ -28,7 +28,7 @@ const alarm = new THREE.PointLight('#FF2A2A', 0, 18, 1.4);
 function startIncident(s) {
   state.incidentUntil = state.sim + 25; $('stage-wrap').classList.add('is-incident'); sfx.play('siren');
   const b = $('incident'); b.textContent = `${tr('incident.banner')}${s ? ` · ${dn(s)}` : ''}`; b.hidden = false;
-  for (const w of workers.values()) if (sessions.get(w.id)?.status === 'work') w.push({ ...ACT.fail, type: 'fail', text: tr('incident.bubble') });
+  for (const w of workers.values()) if (agentOf(sessions.get(w.id)) === 'claude' && sessions.get(w.id)?.status === 'work') w.push({ ...ACT.fail, type: 'fail', text: tr('incident.bubble') });
 }
 export function updateIncident(t) {
   const on = state.sim < state.incidentUntil;
@@ -36,6 +36,13 @@ export function updateIncident(t) {
   if (!on && !$('incident').hidden) { $('incident').hidden = true; $('stage-wrap').classList.remove('is-incident'); }
 }
 export function onEvent(e) {
+  const observed = sessions.get(e.sess);
+  if (replay.on || (observed && agentOf(observed) !== 'claude')) {
+    if (!e.quiet && e.type !== 'start') addFeed(e);
+    if (state.selectedId === e.sess) scheduleLog();
+    if (observed) observeActor(workers.get(e.sess), observed);
+    return;
+  }
   chatEvent(e);   // (the group chat: ui/group-chat.js)
   if (e.type === 'stop' || e.type === 'commit') printPage();   // every finished turn and every commit prints a page
   if (e.type === 'test' || e.type === 'testok' || e.type === 'testfail') onTest(e);   // the test board's lamps (tests.js)
@@ -56,9 +63,12 @@ export function onEvent(e) {
   if (state.selectedId === e.sess) scheduleLog();
   if (!w || !s) return;
   if (e.type === 'substart') { spawnSub(w, e.agent, e.label); return; }
-  if (e.type === 'substop') { const sw = subs.get(e.agent); if (sw && e.desc) sw.desc = e.desc; dropSub(e.agent); return; }
+  const child = (s.subs || []).find((x) => x.id === e.agent) || { id: e.agent, agentKey: e.agentKey };
+  const actorKey = childActorKey(s, child);
+  if (e.type === 'substop') { const sw = subs.get(actorKey); if (sw && e.desc) sw.desc = e.desc; dropSub(actorKey); return; }
   if (e.agent) {
-    const sw = subs.get(e.agent) || spawnSub(w, e.agent, e.agentType || 'agent');
+    const sw = subs.get(actorKey) || spawnSub(w, e.agent, e.agentType || 'agent', false, child);
+    if (!sw) return;   // actor overflow is retained in the session model, not rendered
     if (e.desc) sw.desc = e.desc;
     sw.push(subAct(e));
     if (sw.phase === 'walk' || sw.station === (ACT[e.type]?.station || 'desk')) { sw.say(e.type, bubbleText(e), e.type === 'fail' ? 'fail' : ''); sw.lastSay.e = e; }

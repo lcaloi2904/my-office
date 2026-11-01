@@ -37,20 +37,24 @@ export function validateConfig(raw) {
     const style = s.pathStyle === 'win32' ? path.win32 : path.posix;
     const projectMappings = mappings.map((m) => {
       if (!m || !validId(m.projectId) || !validId(m.worktreeId) || typeof m.from !== 'string' || m.from.length > 4096 || !style.isAbsolute(m.from) || (s.pathStyle === 'win32' && !driveAbsolute(m.from)) || /^[\\/]{2}/.test(m.from) || /[\x00-\x1f]/.test(m.from)) throw fault('CONFIG_INVALID');
-      return { from: style.normalize(m.from), projectId: m.projectId, worktreeId: m.worktreeId };
+      if (m.localRoot !== undefined && !nativeAbsolute(m.localRoot)) throw fault('CONFIG_INVALID');
+      return { from: style.normalize(m.from), projectId: m.projectId, worktreeId: m.worktreeId,
+        ...(m.localRoot === undefined ? {} : { localRoot: path.resolve(m.localRoot) }) };
     });
     return { id: s.id, root: path.resolve(s.root), pathStyle: s.pathStyle, conversation: s.conversation === true, projectMappings };
   });
   return { version: 1, sources, limits };
 }
 
-export function projectIdentity(source, cwd) {
+export function projectIdentity(source, cwd, verifiedMappings = null) {
   if (typeof cwd !== 'string' || cwd.length > 4096 || /[\x00-\x1f]/.test(cwd) || /^[\\/]{2}/.test(cwd)) return { projectKey: null, worktreeKey: null };
   const style = source.pathStyle === 'win32' ? path.win32 : path.posix;
   if (!style.isAbsolute(cwd) || (source.pathStyle === 'win32' && !driveAbsolute(cwd))) return { projectKey: null, worktreeKey: null };
   for (const m of [...source.projectMappings].sort((a, b) => b.from.length - a.from.length)) {
     const rel = style.relative(m.from, cwd);
     if (rel === '' || (!style.isAbsolute(rel) && rel !== '..' && !rel.startsWith('..' + style.sep))) {
+      const verified = verifiedMappings?.get(m.from);
+      if (verified) return { projectKey: verified.projectKey, worktreeKey: verified.worktreeKey };
       return { projectKey: digest([source.id, m.projectId]), worktreeKey: digest([source.id, m.projectId, m.worktreeId]) };
     }
   }

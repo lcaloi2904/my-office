@@ -9,12 +9,12 @@
 // on yours, recall); polls and reminders as cards in the middle; "… đang soạn tin"; the input bar: stickers and emoji,
 // "Tin nhắn", ••• (a poll, @ someone), the mic and a photo, or send once you type. No brand, logo, sticker art or sound
 // of theirs: the stickers are drawn here, the sound is the office's own.
-import { $, STATIC, el } from '../core/env.js';
+import { $, STATIC, el, replay } from '../core/env.js';
 import { state } from '../core/state.js';
 import { icon } from './icons.js';
 import { avatar } from './chat-avatars.js';
 import { photoOn } from './photo.js';
-import { dn, sessions } from '../people/workers.js';
+import { canSession, dn, sessions } from '../people/workers.js';
 import { openTaskSheet, dictate, shrink } from './task-sheet.js';
 import { toast } from './activity.js';
 import { TOKEN } from '../net/live.js';
@@ -247,7 +247,7 @@ function row(m, prev, nextM) {
   if (!mine) {
     const slot = el('span', 'zc-av-slot'); if (first || m.tag === 'claude') slot.append(avatar(faceOf(m.from, m.name), 32));
     const s = m.tag === 'claude' && sessions.get(m.from);   // (Claude's answer: a tap on its face opens that conversation)
-    if (s?.sid) { slot.classList.add('is-click'); slot.title = tr('chat.conv.open'); slot.addEventListener('click', () => openConv({ id: s.id, sid: s.sid, name: dn(s), folder: folderOf(s) })); }
+    if (s?.sid && canSession(s, 'startTask')) { slot.classList.add('is-click'); slot.title = tr('chat.conv.open'); slot.addEventListener('click', () => openConv({ id: s.id, sid: s.sid, name: dn(s), folder: folderOf(s) })); }
     r.append(slot);
   }
   const bare = !m.recalled && (m.kind === 'sticker' || m.kind === 'photo' || (m.kind === 'text' && bigEmoji(m.text)));
@@ -366,7 +366,7 @@ function syncBar() { bar.classList.toggle('has-text', !!input.value.trim()); roo
 function setReply(m) {
   replyTo = m;
   const s = m?.tag === 'claude' && sessions.get(m.from);   // (an answer from Claude: what you write back goes to it)
-  if (s?.sid) setTarget({ id: s.id, sid: s.sid, name: dn(s), folder: folderOf(s) });
+  if (s?.sid && canSession(s, 'startTask')) setTarget({ id: s.id, sid: s.sid, name: dn(s), folder: folderOf(s) });
   replyEl.hidden = !m;
   if (m) {
     const t = m.kind === 'text' ? mask(m.text) : m.kind === 'poll' ? `📊 ${m.poll.q}` : m.kind === 'photo' ? tr('chat.photo') : tr('chat.sticker');
@@ -376,12 +376,13 @@ function setReply(m) {
   }
 }
 function send() {
+  if (replay.on) { toast(tr('drawer.readOnly')); return; }
   const v = input.value; input.value = ''; syncBar(); mentionEl.hidden = true; input.style.height = '';
   if (target && (v.trim() || attach.length)) { sendTo(v.trim() || tr('chat.to.photoOnly')); setReply(null); return; }
   if (v.trim()) chatSend(v, { replyTo: replyTo?.id });
   setReply(null);
   // @ a conversation: give it this as work? (one tap opens the sheet with it filled in: its folder, photos, send)
-  const tagged = v.trim() && [...sessions.values()].sort((a, b) => dn(b).length - dn(a).length).find((s) => v.includes(`@${dn(s)}`));
+  const tagged = v.trim() && [...sessions.values()].filter((s) => canSession(s, 'startTask')).sort((a, b) => dn(b).length - dn(a).length).find((s) => v.includes(`@${dn(s)}`));
   if (tagged) setTimeout(() => {
     const ask = el('div', 'zc-ask'), yes = el('button', 'zc-ask-yes', tr('chat.task.askYes')), no = el('button', 'zc-ask-no', tr('chat.task.askNo'));
     yes.type = no.type = 'button';
@@ -399,6 +400,7 @@ const tq = () => (TOKEN ? `?k=${encodeURIComponent(TOKEN)}` : '');
 let target = null;   // { id, sid, name, folder } a conversation, { dir, name, folder, fresh } a new one in a project, or null: the whole group
 try { target = DEMO_CHAT ? null : JSON.parse(sessionStorage.getItem('office-chat-to') || 'null'); } catch { /* storage blocked */ }
 function setTarget(t) {
+  if (t?.id && sessions.has(t.id) && !canSession(sessions.get(t.id), 'startTask')) { toast(tr('drawer.readOnly')); return; }
   target = t; try { sessionStorage.setItem('office-chat-to', JSON.stringify(t)); } catch { /* storage blocked */ }
   if (pickEl) pickEl.hidden = true;
   drawTarget();
@@ -481,7 +483,7 @@ function pickPhotos() {
    date while open; what you write goes to it (server: GET /api/log, the session's transcript) ---------- */
 let conv = null;   // { id, sid, name, folder, timer, sig }
 function openConv(t) {
-  const s = sessions.get(t.id); if (!s) { toast(tr('chat.conv.gone')); return; }
+  const s = sessions.get(t.id); if (!s || !canSession(s, 'startTask')) { toast(tr('chat.conv.gone')); return; }
   closeConv();
   if (target?.sid !== t.sid) setTarget({ id: t.id, sid: t.sid, name: t.name, folder: t.folder });
   conv = { ...t, sig: '' };
@@ -541,7 +543,7 @@ async function openPick() {
   const items = [opt(el('span', 'zc-to-group', '💬'), tr('chat.to.group'), tr('chat.to.groupSub'), !target, () => setTarget(null))];
   if (r?.ok && !r.allowed) items.push(el('p', 'zc-to-note', tr('chat.to.notAllowed')));
   items.push(el('small', 'zc-to-h', tr('chat.to.sessions')));
-  const list = r?.sessions || [];
+  const list = (r?.sessions || []).filter((s) => canSession(sessions.get(s.id) || s, 'startTask'));
   if (!list.length) items.push(el('p', 'zc-to-note', r ? tr('chat.to.none') : tr('drawer.unreachable')));
   for (const s of list) {
     const folder = s.dir.split('/').slice(-2).join('/'), st = tr(s.status === 'rest' ? 'chat.memberRest' : s.status === 'wait' ? 'chat.memberWait' : 'chat.memberWork');
@@ -563,6 +565,8 @@ async function openPick() {
   pickEl.replaceChildren(...items);
 }
 async function sendTo(text) {
+  if (replay.on) { toast(tr('drawer.readOnly')); return; }
+  if (target?.id && sessions.has(target.id) && !canSession(sessions.get(target.id), 'startTask')) { setTarget(null); toast(tr('drawer.readOnly')); return; }
   const to = target, images = attach.slice(), body = to.dir ? { dir: to.dir, text, images, chat: true, fresh: !!to.fresh } : { sid: to.sid, text, images, chat: true };
   attach = []; drawAttach();
   const r = await fetch(`/api/tasks${tq()}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then((x) => x.json()).catch(() => null);
@@ -612,7 +616,7 @@ function mentions() {
   const m = /@([^\s@]*)$/.exec(input.value.slice(0, input.selectionStart));
   if (!m) { mentionEl.hidden = true; return; }
   const q = m[1].toLowerCase();
-  const list = [...sessions.values()].filter((s) => `${dn(s)} ${s.dir || ''}`.toLowerCase().includes(q)).sort((a, b) => (b.lastAt || 0) - (a.lastAt || 0)).slice(0, 8);
+  const list = [...sessions.values()].filter((s) => canSession(s, 'startTask') && `${dn(s)} ${s.dir || ''}`.toLowerCase().includes(q)).sort((a, b) => (b.lastAt || 0) - (a.lastAt || 0)).slice(0, 8);
   if (!list.length) { mentionEl.replaceChildren(el('small', 'zc-men-empty', tr('chat.noSessions'))); mentionEl.hidden = false; return; }
   mentionEl.replaceChildren(...list.map((s) => {
     const row = el('div', 'zc-men-row'), b = el('button', 'zc-men-o'); b.type = 'button';

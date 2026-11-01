@@ -1,8 +1,7 @@
 // Telemetry-only ingress for the OMP observer. It authenticates a source-bound token, bounds the request and hands
 // normalized events to the lifecycle. It never answers with a command, a path or anything the producer could act on.
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
-import fsp from 'node:fs/promises';
-import path from 'node:path';
+import { readPrivateJson, writePrivateJson } from '../../../integrations/omp/private-storage.js';
 import { normalizeOmpLiveEvent } from './normalize.mjs';
 
 const TOKEN = /^[0-9a-f]{64}$/;
@@ -12,26 +11,29 @@ const digest = (s) => createHash('sha256').update(s).digest();
 const reply = (status, body) => ({ status, body });
 const refuse = (status, code, extra) => reply(status, { ok: false, code, ...extra });
 
-// Source-bound tokens live in the office's private data folder (never in git). A missing one is created for a configured
-// source; a stale one for a source that is no longer configured is ignored, not deleted.
-export async function loadIngestTokens({ file, sourceIds, io = fsp, random = () => randomBytes(32).toString('hex') }) {
-  let stored = {};
-  try {
-    const parsed = JSON.parse(await io.readFile(file, 'utf8'));
-    if (parsed?.version === 1 && parsed.tokens && typeof parsed.tokens === 'object' && !Array.isArray(parsed.tokens)) stored = parsed.tokens;
-  } catch { /* first start, or an unreadable file that is replaced below */ }
+// Only private storage may supply source credentials. Missing files create fresh credentials; malformed, inaccessible
+// or unsafe stores fail closed instead of being mistaken for a first start.
+export async function loadIngestTokens({ file, sourceIds, storage = { read: readPrivateJson, write: writePrivateJson },
+  random = () => randomBytes(32).toString('hex') }) {
+  const parsed = await storage.read(file);
+  if (parsed !== null && (parsed?.version !== 1 || !parsed.tokens || typeof parsed.tokens !== 'object' || Array.isArray(parsed.tokens))) {
+    throw Object.assign(new Error('Invalid OMP credential store'), { code: 'ERR_OMP_PRIVATE_STORAGE' });
+  }
+  const stored = parsed?.tokens || {};
   const tokens = new Map();
   let dirty = false;
   for (const id of sourceIds) {
-    if (typeof stored[id] === 'string' && TOKEN.test(stored[id])) tokens.set(id, stored[id]);
-    else { tokens.set(id, random()); dirty = true; }
+    if (Object.hasOwn(stored, id)) {
+      if (typeof stored[id] !== 'string' || !TOKEN.test(stored[id])) {
+        throw Object.assign(new Error('Invalid OMP credential store'), { code: 'ERR_OMP_PRIVATE_STORAGE' });
+      }
+      tokens.set(id, stored[id]);
+    } else { tokens.set(id, random()); dirty = true; }
   }
   if (dirty) {
     const next = { ...stored };
     for (const [id, token] of tokens) next[id] = token;
-    await io.mkdir(path.dirname(file), { recursive: true });
-    await io.writeFile(file + '.tmp', JSON.stringify({ version: 1, tokens: next }), { mode: 0o600 });
-    await io.rename(file + '.tmp', file);
+    await storage.write(file, { version: 1, tokens: next });
   }
   return tokens;
 }

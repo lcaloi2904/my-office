@@ -2,7 +2,7 @@
 import { state } from '../core/state.js';
 import { $, fmtClock, hhmm, replay, officeNow } from '../core/env.js';
 import { icon } from '../ui/icons.js';
-import { leaving, leavingIds, sessions } from '../people/workers.js';
+import { leaving, leavingIds, sessions, settleReplayMotion, subs, workers } from '../people/workers.js';
 import { director } from '../people/director.js';
 import { queueUi, renderFeed, toast } from '../ui/activity.js';
 import { closeSession } from '../ui/session-drawer.js';
@@ -11,7 +11,7 @@ import { fp } from '../interact/first-person.js';
 import { TOKEN } from '../net/live.js';
 import { unseenDone } from '../life/your-turn.js';
 import { fails } from '../life/incidents.js';
-import { perms, renderPerms } from '../ui/permissions.js';
+import { perms, renderPerms, reportPresence } from '../ui/permissions.js';
 import { DEMO, applyMsg, connect, dropSessionNow, liveES } from '../demo/demo.js';
 import { recAuto, recorder, stopRecording } from './timeline.js';
 import { t as tr } from '../../i18n/index.js';
@@ -48,6 +48,8 @@ export async function startReplay(range = replay.range) {
     return;
   }
   if (!replay.on) {
+    reportPresence(true);
+    liveES?.close(); // No reconnect/presence traffic while recorded snapshots own the scene.
     replay.on = true; document.body.classList.add('is-replay');
     perms.clear(); renderPerms(); closeMac(); if (state.selectedId) closeSession();
   }
@@ -64,10 +66,16 @@ function resetScene() {
   leaving.clear(); leavingIds.clear();
   state.feed = []; state.stats = {}; fails.length = 0; unseenDone.clear(); state.incidentUntil = 0; renderFeed(); queueUi();
 }
+// Actors are mutable view state. Never let an upsert or rename mutate the source snapshot used by later seeks.
+function applyReplayItem(item, quiet) {
+  applyMsg(structuredClone(item.m), quiet);
+}
 export function seekTo(t) {
   if (t < replay.clock || replay.i === 0) { resetScene(); replay.i = 0; }
   replay.clock = t;
-  while (replay.i < replay.items.length && replay.items[replay.i].t <= t) applyMsg(replay.items[replay.i++].m, true);
+  while (replay.i < replay.items.length && replay.items[replay.i].t <= t) applyReplayItem(replay.items[replay.i++], true);
+  for (const w of workers.values()) settleReplayMotion(w);
+  for (const w of subs.values()) settleReplayMotion(w);
   for (const w of [...leaving]) w.remove();
   leaving.clear(); leavingIds.clear();
   renderFeed(); queueUi(); renderReplayTime(true);
@@ -79,7 +87,7 @@ export function replayTick() {
   if (next && next.t - replay.clock > replay.speed * 3000) replay.clock = next.t - replay.speed * 500;   // skip a quiet stretch
   replay.clock = Math.min(replay.to, replay.clock + dt * 1000 * replay.speed);
   let n = 0;
-  while (replay.i < replay.items.length && replay.items[replay.i].t <= replay.clock) applyMsg(replay.items[replay.i++].m, n++ > 30);
+  while (replay.i < replay.items.length && replay.items[replay.i].t <= replay.clock) applyReplayItem(replay.items[replay.i++], n++ > 30);
   if (replay.i >= replay.items.length && !next || replay.clock >= replay.to) {
     replay.playing = false; replay.ended = true; renderReplay();
     if (recorder && recAuto) setTimeout(stopRecording, 1500);
@@ -120,7 +128,7 @@ function drawHeat() {
   for (const x of replay.items) {
     if (x.m.k !== 'ev' || x.t < replay.from) continue;
     const k = Math.min(N - 1, Math.floor(((x.t - replay.from) / len) * N));
-    b[k]++; if (x.m.e.type === 'fail') bad[k]++; if (x.m.e.type === 'deploy') ship[k]++;
+    b[k]++; if (['fail', 'aborted'].includes(x.m.e.type) || ['error', 'failed', 'aborted'].includes(x.m.e.phase || x.m.e.outcome)) bad[k]++; if (x.m.e.type === 'deploy') ship[k]++;
   }
   const max = Math.max(4, ...b), bw = w / N;
   for (let k = 0; k < N; k++) {
@@ -133,8 +141,8 @@ function drawHeat() {
 function stopReplay() {
   if (!replay.on) { replay.loading = false; renderReplay(); return; }
   if (recorder) stopRecording();
-  replay.on = false; replay.playing = false; replay.items = []; document.body.classList.remove('is-replay');
-  resetScene(); state.connectedOnce = false;
+  replay.playing = false; resetScene();   // dispose recorded actors while replay guards still own the scene
+  replay.on = false; replay.items = []; document.body.classList.remove('is-replay'); state.connectedOnce = false;
   try { liveES?.close(); } catch { /* closed */ }
   connect(); renderReplay(); $('clock').textContent = hhmm(officeNow().getTime());
 }

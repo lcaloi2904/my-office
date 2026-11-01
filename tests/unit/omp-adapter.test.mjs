@@ -368,3 +368,41 @@ test('rescan lists an artifact folder again only when it changed, and a new chil
   assert.equal(artifactListings(), 6, 'only the changed folder is listed again');
   assert.equal(h.adapter.catalog({ limit: 50 }).items.find((x) => x.id === idOf('s2')).children, 2);
 });
+
+test('phase5 task artifacts retain root-scoped parents and tombstone evidence without fabricating execution outcomes', async (t) => {
+  const f = await fixture(t);
+  const task = (sessionId, extra = []) => lines([header({ id: sessionId }),
+    entry('init', null, { type: 'session_init', task: PRIVATE, systemPrompt: PRIVATE, agent: PRIVATE }),
+    ...extra, assistant('reply', extra.at(-1)?.id || 'init')]);
+  await put(f, 'a.jsonl', session('a')); await put(f, 'b.jsonl', session('b'));
+  await put(f, 'a/Child.jsonl', task('child-a', [entry('user', 'init')]));
+  await put(f, 'a/Child/Nested.jsonl', task('nested-a'));
+  await put(f, 'a/Killed.jsonl', task('killed-a', [entry('exit', 'init', { type: 'custom', customType: 'session_exit' }), entry('resumed', 'exit')]));
+  await put(f, 'a/Killed.jsonl.tombstone', '');
+  await put(f, 'a/__advisor.jsonl', task('advisor'));
+  await put(f, 'a/Stub.jsonl', lines([header({ id: 'stub' })]));
+  await put(f, 'b/Child.jsonl', task('child-b'));
+  const h = harness(t, f, { conversation: true });
+  await h.adapter.start(); await h.adapter.refresh();
+  await h.adapter.pin(idOf('a')); await h.adapter.pin(idOf('b'));
+  // Prefix byte budget intentionally defers children; enough controlled ticks read every candidate.
+  for (let i = 0; i < 8; i++) await h.adapter.refresh({ rescan: false });
+  const registry = createAgentRegistry({ adapters: [h.adapter] }), a = registry.resolve(idOf('a')).publicSession, b = registry.resolve(idOf('b')).publicSession;
+  assert.equal(h.adapter.catalog().total, 2);
+  assert.deepEqual(a.subs.map((c) => c.id).sort(), ['Child', 'Killed', 'Nested']);
+  assert.equal(a.doneSubs.length, 0); assert.equal(a.subs.find((c) => c.id === 'Killed').tombstoned, true);
+  assert.equal(a.subs.find((c) => c.id === 'Nested').parentAgentKey, a.subs.find((c) => c.id === 'Child').agentKey);
+  assert.notEqual(a.subs.find((c) => c.id === 'Child').agentKey, b.subs[0].agentKey);
+  assert.ok(a.subs.every((c) => c.status === 'unknown' && c.lifecycle === 'historical' && c.persistedOnly));
+  assert.equal(a.childSupport.advisor, 'unsupported'); assert.equal(a.childrenIncomplete, true, 'the header-only stub is not silently promoted');
+  assert.doesNotMatch(JSON.stringify(a), /SYNTHETIC_PRIVATE|\\.jsonl|systemPrompt/);
+  const page = await registry.readConversationPage(a.id, 1, 'Child');
+  assert.equal(page.items[0].role, 'assistant'); assert.ok(page.nextCursor);
+  const older = await registry.readConversationPage(a.id, 1, 'Child', page.nextCursor);
+  assert.equal(older.items[0].role, 'user'); assert.equal(older.nextCursor, null);
+  assert.deepEqual(await registry.readConversationPage(a.id, 1, '../b/Child'), { items: [], nextCursor: null, incomplete: true });
+  assert.deepEqual(await registry.readConversationPage(b.id, 1, 'Child', page.nextCursor), { items: [], nextCursor: null, incomplete: true });
+  assert.equal(h.stats.active, 0); assert.ok(h.stats.maxActive <= 1);
+  await h.adapter.pin(a.id, false);
+  assert.deepEqual(await registry.readConversationPage(a.id, 1, 'Child'), { items: [], nextCursor: null, incomplete: true });
+});

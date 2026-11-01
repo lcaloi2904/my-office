@@ -1,7 +1,7 @@
 // Approve / deny cards and Claude's questions.
 import { state } from '../core/state.js';
 import { dangerKey } from '../../shared/danger.js';
-import { $, STATIC, el } from '../core/env.js';
+import { $, STATIC, el, replay } from '../core/env.js';
 import { icon } from './icons.js';
 import { colorOf, dn, sessions, workers } from '../people/workers.js';
 import { toast } from './activity.js';
@@ -16,9 +16,9 @@ import { t as tr } from '../../i18n/index.js';
 /* ---------- approve / deny: held permission requests appear as cards over the office ---------- */
 export const perms = new Map();
 let PAGE_ID;
-export function reportPresence() {
-  if (STATIC) return;   // the online demo has no server to tell
-  const focused = !DEMO && state.permOn && document.visibilityState === 'visible' && document.hasFocus();
+export function reportPresence(release = false) {
+  if (STATIC || replay.on) return;   // a replay cannot claim to be an approval viewer
+  const focused = release !== true && !DEMO && state.permOn && document.visibilityState === 'visible' && document.hasFocus();
   fetch(`/api/presence${TOKEN ? `?k=${encodeURIComponent(TOKEN)}` : ''}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ page: PAGE_ID, focused }), keepalive: true }).catch(() => {});
 }
 // a risky shell command (src/shared/danger.js): a red warning, a second click, no "always"

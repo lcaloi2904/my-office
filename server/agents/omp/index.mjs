@@ -7,9 +7,16 @@ import { createReader } from './reader.mjs';
 import { createNormalizer } from './normalize.mjs';
 import { createOmpLifecycle } from './lifecycle.mjs';
 import { ompSessionIdentity } from '../schema.mjs';
+import { readGitIdentity } from '../../git.mjs';
+import { conversationPage, emptyConversationPage } from '../conversation.mjs';
 
 const PREFIX_BYTES = 8192, PREFIX_READS_PER_SCAN = 64, RECENT_COUNT = 16, MAX_PAGE = 50;
 const READ_TIMEOUT_MS = 8000, MAX_READ_POLLS = 256, MAX_CONVERSATIONS = 2;
+const MAX_CHILDREN = 128, CHILD_READS = 8, CHILD_PREFIX_BYTES = 64 * 1024;
+const childIdOf = (relative) => {
+  const stem = path.posix.basename(relative, '.jsonl');
+  return /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/.test(stem) && !stem.includes('.bak') && !stem.startsWith('__advisor') ? stem : null;
+};
 // A pinned file is read in slices; one pass keeps reading the same file for up to this long, so a large file is ready in a
 // few passes rather than one slice per pass. Still one handle at a time, abortable between slices.
 const PIN_PASS_BUDGET_MS = 200, SETTLED = new Set(['ready', 'unsupported', 'absent', 'degraded']);
@@ -44,11 +51,18 @@ export function createOmpAdapter({ config, configFile, io = fsp, now = Date.now,
   async function approve(source) {
     try { source.root = await approveRoot(source.cfg.root, io); source.state = 'ok'; }
     catch (e) { source.root = null; source.state = sourceStateOf(e); }
+    source.identities = new Map();
+    for (const mapping of source.cfg.projectMappings) {
+      if (!mapping.localRoot) continue;
+      const identity = await readGitIdentity(mapping.localRoot, { io });
+      if (identity) source.identities.set(mapping.from, identity);
+      else report('project-mapping-unverified');
+    }
   }
 
   // Shallow breadth-first walk under the approved root. Entry, directory, depth and catalogue caps are explicit.
-  // A folder below a session's own `<stem>.jsonl` holds that session's artifacts. Its transcripts are only counted (never
-  // actors, never opened), so they are not stat-ed one by one, and a folder whose mtime is unchanged is not listed again.
+  // A folder below a session's own `<stem>.jsonl` holds that session's artifacts. Discovery only counts these files;
+  // explicit pins inspect bounded task metadata prefixes separately.
   async function scanSource(source, signal) {
     const { limits } = cfg, found = [], seenFiles = new Set(), before = source.listings || new Map(), after = new Map();
     let directories = 0, truncated = false;
@@ -210,8 +224,86 @@ export function createOmpAdapter({ config, configFile, io = fsp, now = Date.now,
       if (!entry || !source?.root || runtimes.has(id)) continue;
       const reader = createReader({ root: source.root, relative: entry.relative, io, now, limits: cfg.limits,
         factory: () => createNormalizer({ sourceNamespace: source.cfg.id, includeContent: false, maxEntries: cfg.limits.maxEntries, maxIndexBytes: cfg.limits.maxIndexBytes }) });
-      runtimes.set(id, { reader, sourceId: entry.sourceId, relative: entry.relative, sig: '', absentSince: 0 });
+      runtimes.set(id, { reader, sourceId: entry.sourceId, relative: entry.relative, sig: '', absentSince: 0, children: new Map(), childCursor: 0, childrenIncomplete: false });
     }
+  }
+
+  // OMP's pinned persisted-agents contract uses direct <parent stem>/<child>.jsonl files. Arbitrary folders, forks,
+  // advisors and header-only stubs do not establish a task child. Prefixes never retain task/system prompt text.
+  async function pollChildren(rt, rootEntry, signal) {
+    const source = sources.get(rt.sourceId), candidates = [];
+    if (!source?.root || !rootEntry) { rt.children.clear(); return; }
+    for (const entry of catalog.values()) {
+      if (entry.sourceId !== rt.sourceId || !entry.parent) continue;
+      let cursor = entry, depth = 0;
+      while (cursor?.parent && depth++ <= cfg.limits.maxDepth) {
+        if (path.posix.dirname(cursor.relative) !== cursor.parent.slice(0, -6) || !childIdOf(cursor.relative)) break;
+        if (cursor.parent === rootEntry.relative) { candidates.push(entry); break; }
+        cursor = catalog.get(rt.sourceId + '\0' + cursor.parent);
+      }
+    }
+    candidates.sort((a, b) => a.relative.localeCompare(b.relative));
+    rt.childrenIncomplete = source.truncated || candidates.length > MAX_CHILDREN;
+    const selected = candidates.slice(0, MAX_CHILDREN), keep = new Set(selected.map((e) => e.relative));
+    for (const relative of rt.children.keys()) if (!keep.has(relative)) rt.children.delete(relative);
+    let budget = cfg.limits.bytesPerTick;
+    for (let i = 0; i < Math.min(CHILD_READS, selected.length) && budget > 0 && !signal.aborted; i++) {
+      const entry = selected[rt.childCursor++ % selected.length];
+      try {
+        const handle = await openContained(source.root, entry.relative, io);
+        let metadata = null;
+        try {
+          const length = Math.min(CHILD_PREFIX_BYTES, cfg.limits.maxLineBytes, budget), buffer = Buffer.alloc(length);
+          const { bytesRead } = await handle.read(buffer, 0, length, 0);
+          budget -= length;
+          const lines = buffer.subarray(0, bytesRead).toString('utf8').split('\n'); lines.pop();
+          let header = null, task = false, startedAt = 0;
+          for (const line of lines.slice(0, 64)) {
+            if (!line.trim()) continue;
+            let raw; try { raw = JSON.parse(line); } catch { break; }
+            if (!header) {
+              if (raw?.type === 'title') continue;
+              if (raw?.type !== 'session' || raw.version !== 3 || !ompSessionIdentity(source.cfg.id, raw.id)) break;
+              header = raw;
+              startedAt = typeof raw.timestamp === 'string' ? Date.parse(raw.timestamp) || 0 : 0;
+            } else if (raw?.type === 'session_init') { task = typeof raw.task === 'string'; break; }
+          }
+          if (header && task) metadata = { id: childIdOf(entry.relative), relative: entry.relative, parent: entry.parent,
+            sourceSessionId: header.id, startedAt, lifecycle: 'historical' };
+        } finally { await handle.close(); }
+        if (metadata) {
+          try {
+            const tombstone = await containedPath(source.root, entry.relative + '.tombstone', io);
+            const marker = await io.lstat(tombstone);
+            if (marker.isFile() && !marker.isSymbolicLink()) metadata.tombstoned = true;
+          } catch (e) { if (e?.code !== 'ENOENT') { report(errorCode(e)); rt.childrenIncomplete = true; } }
+          rt.children.set(entry.relative, metadata);
+        } else { rt.children.delete(entry.relative); rt.childrenIncomplete = true; }
+      } catch (e) { report(errorCode(e)); rt.children.delete(entry.relative); rt.childrenIncomplete = true; }
+    }
+    if (rt.children.size < selected.length) rt.childrenIncomplete = true;
+  }
+
+  function taskChildren(rt, rootEntry) {
+    if (!rt || !rootEntry) return [];
+    const key = rootEntry.header.id, ids = new Set(), duplicates = new Set();
+    for (const child of rt.children.values()) { if (ids.has(child.id)) duplicates.add(child.id); ids.add(child.id); }
+    const result = [];
+    for (const child of rt.children.values()) {
+      if (duplicates.has(child.id)) { rt.childrenIncomplete = true; continue; }
+      const parent = child.parent === rootEntry.relative ? null : rt.children.get(child.parent);
+      if (child.parent !== rootEntry.relative && (!parent || duplicates.has(parent.id))) { rt.childrenIncomplete = true; continue; }
+      let ancestor = parent, valid = true, depth = 0;
+      while (ancestor && ancestor.parent !== rootEntry.relative) {
+        if (++depth > cfg.limits.maxDepth || duplicates.has(ancestor.id)) { valid = false; break; }
+        ancestor = rt.children.get(ancestor.parent);
+        if (!ancestor) valid = false;
+      }
+      if (!valid) { rt.childrenIncomplete = true; continue; }
+      result.push({ id: child.id, agentKey: JSON.stringify([key, child.id]), parentAgentKey: parent ? JSON.stringify([key, parent.id]) : key,
+        rootSessionKey: key, relationKind: 'subagent', lifecycle: child.lifecycle, tombstoned: child.tombstoned === true, persistedOnly: true, startedAt: child.startedAt });
+    }
+    return result;
   }
 
   async function pollPins(signal) {
@@ -223,7 +315,8 @@ export function createOmpAdapter({ config, configFile, io = fsp, now = Date.now,
       const entry = byId.get(id);
       if (!entry && info.state === 'absent' && rt.absentSince && now() - rt.absentSince >= cfg.limits.ttlMs) { dropRuntime(id); changed.push(id); continue; }
       if (entry) rt.absentSince = 0;
-      const sig = `${info.state}:${info.epoch}:${info.snapshot?.revision || ''}:${entry?.mtimeMs || ''}`;
+      await pollChildren(rt, entry, signal);
+      const sig = `${info.state}:${info.epoch}:${info.snapshot?.revision || ''}:${entry?.mtimeMs || ''}:${JSON.stringify(taskChildren(rt, entry))}:${rt.childrenIncomplete}`;
       if (sig !== rt.sig) { rt.sig = sig; changed.push(id); }
     }
     return changed;
@@ -265,9 +358,10 @@ export function createOmpAdapter({ config, configFile, io = fsp, now = Date.now,
     if (!entry || !rt || !source) return null;
     const info = rt.reader.info(), snap = info.snapshot;
     if (!snap?.supported || snap.sourceSessionId !== entry.header.sessionId) return null;
-    const { projectKey, worktreeKey } = projectIdentity(source.cfg, entry.header.cwd);
+    const { projectKey, worktreeKey } = projectIdentity(source.cfg, entry.header.cwd, source.identities);
     return { sourceNamespace: source.cfg.id, sourceSessionId: snap.sourceSessionId, observedAt: snap.observedAt || Math.round(entry.mtimeMs),
       model: snap.model, metrics: snap.metrics, counts: snap.counts, persistedOnly: true, readerState: info.state, incomplete: snap.incomplete === true,
+      children: taskChildren(rt, entry), childrenIncomplete: rt.childrenIncomplete,
       project: baseName(source.cfg, entry.header.cwd), projectKey, worktreeKey, conversation: source.cfg.conversation === true };
   }
 
@@ -277,13 +371,14 @@ export function createOmpAdapter({ config, configFile, io = fsp, now = Date.now,
     if (!runtime) return file;
     const entry = byId.get(id), source = sources.get(runtime.sourceNamespace);
     if (!source) return file;
-    const identity = file || (entry?.header?.supported ? { ...projectIdentity(source.cfg, entry.header.cwd), project: baseName(source.cfg, entry.header.cwd) } : {});
+    const identity = file || (entry?.header?.supported ? { ...projectIdentity(source.cfg, entry.header.cwd, source.identities), project: baseName(source.cfg, entry.header.cwd) } : {});
     const recorded = file?.metrics && (file.metrics.cost || file.metrics.tokens?.provenance === 'recorded');
     return { sourceNamespace: runtime.sourceNamespace, sourceSessionId: runtime.sourceSessionId,
       observedAt: runtime.observedAt, model: runtime.model ?? file?.model ?? null,
       // The durable file replaces a provisional runtime snapshot; the two are never added together.
       metrics: recorded ? file.metrics : runtime.metrics ?? file?.metrics ?? null,
       counts: file?.counts, readerState: file?.readerState, incomplete: file?.incomplete === true, filePersisted: !!file,
+      children: file?.children, childrenIncomplete: file?.childrenIncomplete === true,
       project: identity.project, projectKey: identity.projectKey, worktreeKey: identity.worktreeKey,
       conversation: !!file && file.conversation === true, persistedOnly: false, live: runtime };
   }
@@ -334,7 +429,7 @@ export function createOmpAdapter({ config, configFile, io = fsp, now = Date.now,
           // not read yet (read budget or a failed read): not the same as a file that is not a supported session
           pending: !e.header || e.header.pending === true,
           project: e.header?.supported ? baseName(source.cfg, e.header.cwd) : '',
-          projectKey: e.header?.supported ? projectIdentity(source.cfg, e.header.cwd).projectKey : null,
+          projectKey: e.header?.supported ? projectIdentity(source.cfg, e.header.cwd, source.identities).projectKey : null,
           children: children.get(e.sourceId + '\0' + e.relative) || 0,
           pinned: !!id && pins.has(id), conflict: conflicts.has(e.header?.id) };
       });
@@ -355,14 +450,24 @@ export function createOmpAdapter({ config, configFile, io = fsp, now = Date.now,
     },
 
     // A separate one-shot parse with content enabled; nothing textual stays in the live snapshot.
-    async readConversation(record, n, childId) {
-      if (disposed || childId || !record || record.conversation !== true || activeConversations >= MAX_CONVERSATIONS) return [];
+    async readConversation(record, n, childId = null) {
+      return (await api.readConversationPage(record, n, childId)).items;
+    },
+    async readConversationPage(record, n = 120, childId = null, before = null) {
+      if (disposed || !record || record.conversation !== true || activeConversations >= MAX_CONVERSATIONS) return emptyConversationPage();
       const id = ompSessionIdentity(record.sourceNamespace, record.sourceSessionId)?.id, entry = byId.get(id), source = entry && sources.get(entry.sourceId);
-      if (!entry || !source?.root || source.cfg.conversation !== true || !pins.has(id)) return [];
+      if (!entry || !source?.root || source.cfg.conversation !== true || !pins.has(id)) return emptyConversationPage();
+      let relative = entry.relative, expectedSessionId = record.sourceSessionId;
+      if (childId !== null) {
+        const rt = runtimes.get(id);
+        if (typeof childId !== 'string' || !taskChildren(rt, entry).some((c) => c.id === childId)) return emptyConversationPage();
+        const child = [...rt.children.values()].find((c) => c.id === childId);
+        relative = child.relative; expectedSessionId = child.sourceSessionId;
+      }
       activeConversations++;
       const stop = new AbortController(), kill = setTimer(() => stop.abort(), READ_TIMEOUT_MS);
       kill?.unref?.();
-      const reader = createReader({ root: source.root, relative: entry.relative, io, now, limits: cfg.limits,
+      const reader = createReader({ root: source.root, relative, io, now, limits: cfg.limits,
         factory: () => createNormalizer({ sourceNamespace: source.cfg.id, includeContent: true, maxEntries: cfg.limits.maxEntries, maxIndexBytes: cfg.limits.maxIndexBytes }) });
       try {
         let info;
@@ -371,8 +476,10 @@ export function createOmpAdapter({ config, configFile, io = fsp, now = Date.now,
           if (['ready', 'unsupported', 'absent', 'degraded'].includes(info.state)) break;
         }
         const snap = info?.state === 'ready' ? info.snapshot : null;
-        return snap?.supported && snap.sourceSessionId === record.sourceSessionId ? snap.items.slice(-n) : [];
-      } finally { clearTimer(kill); activeConversations--; await reader.dispose().catch(() => {}); }
+        if (!snap?.supported || snap.sourceSessionId !== expectedSessionId) return emptyConversationPage();
+        return conversationPage(snap.items, { id, childId, limit: n, before, incomplete: snap.incomplete === true });
+      } catch (e) { report(errorCode(e)); return emptyConversationPage(); }
+      finally { clearTimer(kill); activeConversations--; await reader.dispose().catch(() => {}); }
     },
 
     status() {

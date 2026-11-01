@@ -2,13 +2,14 @@
 // it goes to (a conversation, carried on with its whole context as a branch of it, or a new conversation in a folder
 // sessions have worked in), what to do (typed, or spoken: 🎤 in the office's language), photos (from the camera or the
 // gallery, made smaller here before they go). From a phone only once the Mac allows it (the phone window).
-import { el } from '../core/env.js';
+import { el, replay } from '../core/env.js';
 import { icon } from './icons.js';
 import { toast } from './activity.js';
 import { avatar } from './chat-avatars.js';
 import { who } from './group-chat.js';
 import { TOKEN } from '../net/live.js';
 import { t as tr, locale } from '../../i18n/index.js';
+import { canSession, sessions } from '../people/workers.js';
 
 const q = () => (TOKEN ? `?k=${encodeURIComponent(TOKEN)}` : '');
 let sheet = null;
@@ -46,6 +47,8 @@ export async function shrink(file) {
 
 /** Opens the sheet inside the chat window; to: { sid } (a conversation) or { dir } (a folder) to start with; text. */
 export async function openTaskSheet(host, { to = null, text = '' } = {}) {
+  if (replay.on) { toast(tr('drawer.readOnly')); return; }
+  if (to?.id && sessions.has(to.id) && !canSession(sessions.get(to.id), 'startTask')) { toast(tr('drawer.readOnly')); return; }
   sheet?.remove();
   let stopMic = null;
   const r = await fetch(`/api/tasks${q()}`).then((x) => x.json()).catch(() => null);
@@ -56,9 +59,16 @@ export async function openTaskSheet(host, { to = null, text = '' } = {}) {
   sheet.append(head);
   if (!r?.ok) { sheet.append(el('p', 'zc-task-note', tr('drawer.unreachable'))); host.append(sheet); return; }
   if (!r.allowed) { sheet.append(el('p', 'zc-task-note', tr('chat.task.notAllowed'))); host.append(sheet); return; }
+  r.sessions = (r.sessions || []).filter((s) => canSession(sessions.get(s.id) || s, 'startTask'));
   // who it goes to: the conversations (their folder), then "a new one in…" each folder
-  const toSid = to?.id ? r.sessions.find((s) => s.id === to.id)?.sid : to?.sid;
-  let pick = toSid ? { sid: toSid } : to?.dir ? { dir: to.dir } : r.sessions[0] ? { sid: r.sessions[0].sid } : r.projects[0] ? { dir: r.projects[0].dir } : null;
+  const requested = to?.id ? r.sessions.find((s) => s.id === to.id) : to?.sid ? r.sessions.find((s) => s.sid === to.sid) : null;
+  let pick = null;
+  if (requested) pick = { sid: requested.sid };
+  else if (to?.dir && r.projects.some((p) => p.dir === to.dir)) pick = { dir: to.dir };
+  else if (!to) {
+    if (r.sessions[0]) pick = { sid: r.sessions[0].sid };
+    else if (r.projects[0]) pick = { dir: r.projects[0].dir };
+  }
   const list = el('div', 'zc-task-list');
   const option = (key, label, sub, face, sel) => {
     const b = el('button', `zc-task-o${sel ? ' is-on' : ''}`); b.type = 'button';

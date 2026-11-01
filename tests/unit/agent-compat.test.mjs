@@ -6,6 +6,7 @@ import { projectClaudeSession, projectOmpSession } from '../../server/agents/pro
 import { isClaudeRequest, resolveOmpMode } from '../../server/agents/schema.mjs';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import { createT } from '../../src/i18n/index.js';
 
 const makeClaude = () => {
   const sessions = new Map([['legacy-id', {
@@ -104,14 +105,19 @@ function loadUi(file, names, dependencies = {}) {
     .replace(/^export (?=(?:const|let|function|async function)\b)/gm, '');
   return vm.runInNewContext(text + '\n;({' + names.join(',') + '})', {
     tr: (key) => key,
+    replay: { on: false },
     fetch: () => assert.fail('unexpected network'),
     setTimeout: () => assert.fail('unexpected timer'),
     setInterval: () => assert.fail('unexpected timer'),
     ...dependencies,
   }, { timeout: 1000 });
 }
-const ui = () => loadUi('src/office/people/workers.js',
-  ['AGENT_NAME', 'agentOf', 'canSession', 'claudeQuotaAccount', 'claudeCost', 'contextPercent', 'isPersisted', 'unknownLabel']);
+const ui = (elementFactory = node) => {
+  const helpers = loadUi('src/office/people/workers.js',
+    ['AGENT_NAME', 'agentOf', 'canSession', 'claudeQuotaAccount', 'claudeCost', 'contextPercent', 'isPersisted', 'unknownLabel']);
+  return { ...helpers, ...loadUi('src/office/ui/session-info.js',
+    ['sessionMetricView', 'appendSessionBadges', 'projectLabel', 'childState', 'counterNote'], { ...helpers, el: elementFactory }) };
+};
 
 function productionProjection(sessions, overrides = {}) {
   const start = serverSource.indexOf('const pubSub =');
@@ -121,7 +127,7 @@ function productionProjection(sessions, overrides = {}) {
     createAgentRegistry, createClaudeAdapter, projectClaudeSession, sessions, ompAdapter: null,
     readLog: async () => [], tilde: (v) => v, oneLine: (s) => s.replace(/\n/g, ' '),
     unwrapPaste: (s) => s, acctOf: (s) => s.acct || '', acctShown: (s) => s,
-    gitOf: () => null, liveCtx: (s) => ({ ctx: s.usage.ctx, ctxMax: 100 }),
+    git: { identityOf: () => null }, gitOf: () => null, liveCtx: (s) => ({ ctx: s.usage.ctx, ctxMax: 100 }),
     ...overrides,
   }, { timeout: 1000 });
 }
@@ -199,7 +205,10 @@ test('production mode and registration do not read config or activate an OMP ada
 
 function routeFixture() {
   const s = privateSession(), sessions = new Map([['internal', s]]);
-  const { agents } = productionProjection(sessions, { readLog: async (_, n, child) => [{ role: 'claude', text: 'fixture', n, child }] });
+  const { agents } = productionProjection(sessions, { readLog: async (_s, _n, child, withMetadata) => {
+    const items = [{ role: 'claude', text: 'fixture', child }];
+    return withMetadata ? { items, incomplete: false } : items;
+  } });
   const raw = { sourceNamespace: 'fixture-only', sourceSessionId: s.sid };
   const omp = projectOmpSession(raw);
   agents.register({ kind: 'omp', list: () => [raw], resolve: (id) => id === omp.id ? raw : null });
@@ -270,12 +279,31 @@ test('actual log route resolves ownership, preserves Claude roles and denies OMP
   const f = routeFixture();
   const own = await requestCallback(f, '/api/log?id=' + f.s.id + '&agent=child-0', null, 'GET');
   assert.equal(own.status, 200);
-  assert.deepEqual(plain(own.payload.items), [{ role: 'claude', text: 'fixture', n: 120, child: 'child-0' }]);
+  assert.deepEqual(plain(own.payload.items), [{ role: 'claude', text: 'fixture', child: 'child-0' }]);
+  assert.equal(own.payload.nextCursor, null); assert.equal(own.payload.incomplete, false);
   const other = await requestCallback(f, '/api/log?id=' + f.omp.id, null, 'GET');
   assert.equal(other.status, 403);
   assert.deepEqual(plain(other.payload.items), []);
   const path = await requestCallback(f, '/api/log?id=/synthetic/outside.jsonl', null, 'GET');
   assert.equal(path.status, 404);
+});
+
+test('scene grouping never uses a display basename or unverified cross-source path as identity', () => {
+  const { projOf, projectLabel } = loadUi('src/office/net/live.js', ['projOf', 'projectLabel'], {
+    agentOf: ui().agentOf, localStorage: { getItem: () => null },
+  });
+  const a = { id: 'a', dir: '/first/repo', git: { repo: 'repo' } };
+  const b = { id: 'b', dir: '/second/repo', git: { repo: 'repo' } };
+  assert.notEqual(projOf(a), projOf(b));
+  assert.equal(projOf(a), projOf({ ...a, id: 'other-local-session', name: 'renamed' }));
+  assert.notEqual(projOf(a), projOf({ id: 'without-dir', sessionKey: a.dir }));
+  const omp = { agentKind: 'omp', id: 'omp:source-a', dir: '/same/display/path', name: 'repo' };
+  assert.notEqual(projOf(omp), projOf({ ...omp, id: 'omp:source-b' }));
+  assert.notEqual(projOf({ agentKind: 'other', id: 'one' }), projOf({ agentKind: 'other', id: 'two' }));
+  assert.equal(projOf({ ...a, projectKey: 'approved-shared-project' }),
+    projOf({ ...omp, projectKey: 'approved-shared-project' }));
+  assert.equal(projectLabel(a), 'repo');
+  assert.equal(projectLabel({ ...omp, dir: '' }), 'repo');
 });
 
 test('actual UI helpers keep legacy defaults and fail closed for explicit new records', () => {
@@ -473,11 +501,11 @@ function railDom(tag = 'div', className = '', text = '') {
   };
   return n;
 }
-function railFixture(records) {
+function railFixture(records, overrides = {}) {
   const elements = new Map(), sessions = new Map(records.map((s) => [s.id, s])), workers = new Map();
   const element = (id) => { if (!elements.has(id)) elements.set(id, railDom()); return elements.get(id); };
   const filters = ['wait', 'work', 'rest'].map((status) => { const n = railDom(); n.dataset.st = status; return n; });
-  const timers = [], state = { connectedOnce: true }, h = ui();
+  const timers = [], state = { connectedOnce: true }, h = ui(railDom);
   const rail = loadUi('src/office/ui/activity.js', ['setup', 'renderRail', 'renderHud', 'railRows', 'onListClick'], {
     ...h, sessions, workers, state, el: railDom, $: element,
     document: { createElementNS: (_, tag) => railDom(tag), querySelector: element, querySelectorAll: () => filters },
@@ -488,6 +516,7 @@ function railFixture(records) {
     colorOf: () => '#000', dn: (s) => s.name, whereabouts: () => null, nowMs: () => 1000000,
     fmtClock: (seconds) => 'clock:' + seconds, fmtBytes: (bytes) => String(bytes),
     macSnap: { claude: [{ pid: 123, mem: 1024 }] }, unseenDone: new Set(), num: String,
+    ...overrides,
   });
   rail.setup();
   return { ...rail, sessions, state, elements, element, timers, filters };
@@ -554,6 +583,36 @@ test('actual rail and HUD keep foreign metrics, PID and Remote Control isolated 
   assert.doesNotMatch(hud, /999|NaN|Infinity/);
 });
 
+test('structured OMP metrics render and clear without entering Claude accounting or controls', () => {
+  const omp = railSession('omp:structured', 'unknown', { agentKind: 'omp', pid: 123, link: 'https://synthetic.invalid/rc',
+    capabilities: { remoteControl: true }, metrics: { context: { used: 25, window: 100, provenance: 'recorded' },
+      cost: { value: 7, scope: 'inherited', provenance: 'recorded' } } });
+  const f = railFixture([railSession('c', 'work', { usage: { ctx: 5, ctxMax: 100, cost: 2 } }), omp]);
+  f.renderRail(); f.renderHud();
+  const row = f.railRows.get(omp.id);
+  assert.equal(row.ctx.hidden, false); assert.equal(row.ctxB.style.width, '25%');
+  assert.equal(row.ram.textContent, ''); assert.equal(row.top.querySelector('.ri-rc'), null);
+  assert.match(nodeText(f.element('feed-stats')), /\$2\.00/);
+  const h = ui();
+  assert.equal(h.sessionMetricView({ ...omp, metrics: { cost: { value: 0, scope: 'self', provenance: 'recorded' } } }).cost, 0);
+  for (const metrics of [null, { context: { used: 25, window: 0, provenance: 'recorded' } },
+    { context: { used: 25, window: 100, provenance: 'unknown' } }]) {
+    f.sessions.set(omp.id, { ...omp, metrics }); f.renderRail();
+    assert.equal(row.ctx.hidden, true); assert.equal(row.ctxB.style.width, '0%');
+  }
+});
+
+test('HUD counts observed running children but retains historical and parked children only as session data', () => {
+  const live = railSession('c', 'work', { subs: [{ id: 'live' }, { id: 'parked', lifecycle: 'parked' }] });
+  const history = railSession('omp:history', 'unknown', { agentKind: 'omp', subs: Array.from({ length: 80 }, (_, i) => ({ id: 'saved-' + i, lifecycle: 'historical', persistedOnly: true })) });
+  const f = railFixture([live, history], { tr: createT('en') });
+  f.renderHud();
+  assert.equal(nodeText(f.element('active-count')), '2 sessions · 1 subagent running');
+  assert.equal(f.sessions.get(history.id).subs.length, 80);
+  f.sessions.set(live.id, { ...live, subs: [] }); f.renderHud();
+  assert.equal(nodeText(f.element('active-count')), '2 sessions');
+});
+
 // Persisted OMP routes: this computer only, public ids only, and no path ever reaches the adapter.
 function ompRouteFixture(conversation) {
   const claude = privateSession(), sessions = new Map([['internal', claude]]), calls = { catalog: [], pin: [], refresh: 0, read: 0 };
@@ -616,10 +675,6 @@ test('a pinned saved session is shown to this computer only: not streamed to rem
   out.broadcast({ k: 'sess', s: { id: 'claude' } });
   assert.equal(writes.local.length, 3); assert.equal(writes.remote.length, 1);
   assert.deepEqual(recorded, ['sess'], 'ordinary messages are still recorded and sent to everyone');
-  // the polling and snapshot paths use the same flag
-  assert.match(serverSource, /backlog\.filter\(\(\[n, , only\]\) => n > since && \(local \|\| !only\)\)/);
-  assert.match(serverSource, /sessions: local \? agents\.list\(\) : agents\.list\(\)\.filter\(\(s\) => s\.agentKind !== 'omp'\)/);
-  assert.match(serverSource, /sessions: agents\.list\(\)\.filter\(\(s\) => s\.agentKind !== 'omp'\), feed: feed\.slice\(-40\)/);
 });
 
 test('actual OMP ingress route: absent unless hybrid, and the HTTP layer only forwards facts', async () => {

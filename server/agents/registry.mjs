@@ -1,6 +1,7 @@
 // Injectable read-only facade. Production registers Claude only in Phase 02.
 import { capabilitiesFor } from './schema.mjs';
 import { projectAgentSession } from './projection.mjs';
+import { conversationPage, emptyConversationPage, CONVERSATION_LIMIT } from './conversation.mjs';
 
 export function createAgentRegistry({ adapters = [] } = {}) {
   const providers = new Map(), issues = new Set();
@@ -68,6 +69,28 @@ export function createAgentRegistry({ adapters = [] } = {}) {
     return Array.isArray(items) ? items.slice(-bounded) : [];
   }
 
+  async function readConversationPage(id, limit = 120, childId = null, before = null) {
+    const owner = resolve(id);
+    if (!owner?.publicSession.capabilities.readConversation ||
+      (before !== null && (typeof before !== 'string' || before.length > 256 || !/^[A-Za-z0-9_-]+$/.test(before))) ||
+      (childId !== null && (typeof childId !== 'string' || childId.length > 256 || /[\x00-\x1f\x7f]/.test(childId)))) return emptyConversationPage();
+    const adapter = providers.get(owner.kind);
+    const bounded = Number.isSafeInteger(limit) ? Math.min(Math.max(limit, 0), 120) : 120;
+    if (!bounded) return emptyConversationPage(false);
+    try {
+      if (typeof adapter.readConversationPage === 'function') {
+        const page = await adapter.readConversationPage(owner.session, bounded, childId, before);
+        if (!page || !Array.isArray(page.items)) return emptyConversationPage();
+        const nextCursor = typeof page.nextCursor === 'string' && page.nextCursor.length <= 256 && /^[A-Za-z0-9_-]+$/.test(page.nextCursor) ? page.nextCursor : null;
+        return { items: page.items.slice(-bounded), nextCursor,
+          incomplete: page.incomplete === true || page.items.length > bounded || (page.nextCursor != null && !nextCursor) };
+      }
+      if (typeof adapter.readConversation !== 'function') return emptyConversationPage();
+      const items = await adapter.readConversation(owner.session, CONVERSATION_LIMIT + 1, childId);
+      return conversationPage(items, { id, childId, limit: bounded, before, incomplete: items?.length > CONVERSATION_LIMIT });
+    } catch { issues.add(owner.kind + ':conversation-failed'); return emptyConversationPage(); }
+  }
+
   function start() {
     if (disposed) return Promise.reject(new Error('Agent registry disposed'));
     return startPromise ??= (async () => {
@@ -87,5 +110,5 @@ export function createAgentRegistry({ adapters = [] } = {}) {
     providers.clear();
   }
 
-  return { register, list, resolve, resolveForControl, readConversation, start, dispose, diagnostics: () => [...issues] };
+  return { register, list, resolve, resolveForControl, readConversation, readConversationPage, start, dispose, diagnostics: () => [...issues] };
 }

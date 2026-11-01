@@ -11,7 +11,7 @@
 import * as THREE from 'three';
 import { state } from '../core/state.js';
 import { STATIC, officeNow, replay } from '../core/env.js';
-import { dn, npcs, sessions, workers } from '../people/workers.js';
+import { agentOf, dn, npcs, sessions, workers } from '../people/workers.js';
 import { sfx } from '../audio/sfx.js';
 import { DEMO } from '../demo/demo.js';
 import { ringBell } from '../people/gatherings.js';
@@ -43,7 +43,7 @@ export function who(from) {
 }
 /** The sessions' people in the office now (not out on the street), optionally only those resting. */
 export function people(resting = false) {
-  return [...sessions.values()].filter((s) => workers.has(s.id) && !workers.get(s.id).offstage && (!resting || s.status === 'rest')).map((s) => s.id);
+  return [...sessions.values()].filter((s) => agentOf(s) === 'claude' && workers.has(s.id) && !workers.get(s.id).offstage && (!resting || s.status === 'rest')).map((s) => s.id);
 }
 
 /* ---------- the conversation: the server's, or (the demo) this browser's own engine ---------- */
@@ -86,15 +86,16 @@ export function setOpen(on) { chat.open = on; if (on && chat.unread) { chat.unre
 /** Someone in the office says something (the office's life, from the module where it happens; on the Mac only). */
 export function chatSay(from, text, opts = {}) {
   if (replay.on || (!text && opts.sticker == null && !opts.photo)) return;
+  if (sessions.has(from) && agentOf(sessions.get(from)) !== 'claude') return;
   if (engine) { engine.say(from, text, opts); return; }
   if (!state.isLocal) return;   // (a phone shows the conversation; the Mac's page tells the office's life)
   const p = who(from); if (!p) return;
   post({ op: 'say', from: p.key, text, key: opts.key, sticker: opts.sticker, photo: opts.photo || undefined, pin: !!opts.pin, delay: opts.delay, react: opts.react, reacts: opts.reacts, answer: opts.answer });
 }
 // the work events: the server writes those itself (life/incidents.js calls this; only the demo needs it)
-export function chatEvent(e) { if (engine && !replay.on && !e.quiet) engine.onEvent({ ...e, limit: String(e.text || e.label || '').startsWith(tr('server.event.limitHit')) }); }
-export function chatLeft(s) { if (engine && s && !replay.on) engine.onLeft(dn(s)); }
-export function chatMoved(names, to) { if (!engine) return; for (const s of sessions.values()) if (names.includes(dn(s))) engine.onMoved(s.id, to); }
+export function chatEvent(e) { if (engine && !replay.on && !e.quiet && agentOf(sessions.get(e.sess)) === 'claude') engine.onEvent({ ...e, limit: String(e.text || e.label || '').startsWith(tr('server.event.limitHit')) }); }
+export function chatLeft(s) { if (engine && s && agentOf(s) === 'claude' && !replay.on) engine.onLeft(dn(s)); }
+export function chatMoved(names, to) { if (!engine) return; for (const s of sessions.values()) if (agentOf(s) === 'claude' && names.includes(dn(s))) engine.onMoved(s.id, to); }
 
 /* ---------- life in the office (called from the modules where it happens) ---------- */
 const life = (key, vars) => tr(`chat.life.${key}`, vars);
@@ -104,6 +105,7 @@ const lastLife = new Map();
 export function chatLife(kind, v = {}) {
   const every = v.every ?? 20 * 60e3, now = Date.now(), lk = `${kind}:${v.id || ''}`;
   if (replay.on || (lastLife.get(lk) || 0) > now) return;
+  if (v.id && sessions.has(v.id) && agentOf(sessions.get(v.id)) !== 'claude') return;
   lastLife.set(lk, now + every);
   const key = `life:${lk}:${Math.floor(now / every)}`;   // (two pages telling the same moment: one message)
   const name = v.name || (v.id ? who(v.id)?.name : '') || '';

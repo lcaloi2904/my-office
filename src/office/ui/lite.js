@@ -1,15 +1,15 @@
-// List mode: the sessions as cards, no 3D.
+// List mode: session cards over the existing scene lifecycle (not a zero-WebGL startup path).
 import { $, el, fmtClock, nowMs, short } from '../core/env.js';
-import { AGENT_NAME, agentOf, colorOf, contextPercent, dn, sessions, unknownLabel } from '../people/workers.js';
+import { AGENT_NAME, agentOf, colorOf, dn, sessions, unknownLabel } from '../people/workers.js';
 import { ompButton } from './omp-history.js';
 import { doingOf } from './activity.js';
 import { openSession } from './session-drawer.js';
 import { closePlace } from '../interact/place-cards.js';
 import { exitFp, fp } from '../interact/first-person.js';
 import { t as tr } from '../../i18n/index.js';
+import { appendSessionBadges, projectLabel, sessionMetricView } from './session-info.js';
 
-/* ---------- list mode: no 3D, just the sessions as cards (needs you / working / resting). Saves the battery on a
-   phone and works without WebGL. Idea from agent-office's lite page (MIT). ---------- */
+/* List mode uses the existing renderer lifecycle; all sessions remain available as cards. */
 export let lite = false;
 export function setLite(on) {
   lite = on; document.body.classList.toggle('is-lite', on); $('lite').hidden = !on; $('btn-lite').setAttribute('aria-pressed', String(on));
@@ -28,15 +28,16 @@ export function renderLite() {
     const rows = list.filter(f).sort((a, b) => (b.lastAt || 0) - (a.lastAt || 0)); if (!rows.length) continue;
     frag.append(el('h3', 'lite-h', `${title} · ${rows.length}`));
     for (const s of rows) {
-      const c = el('button', 'lite-card'); c.type = 'button'; c.dataset.status = key; c.style.setProperty('--c', colorOf(s));
+      const c = el('button', 'lite-card'); c.type = 'button'; c.dataset.sess = s.id; c.dataset.status = key; c.dataset.lifecycle = s.lifecycle || ''; c.style.setProperty('--c', colorOf(s));
       const st = key === 'unknown' ? { text: unknownLabel(s) } : doingOf(s), top = el('div', 'lite-top');
       top.append(el('i'), el('b', null, dn(s)));
       const kind = agentOf(s);
       if (kind !== 'claude') top.append(el('span', 'ri-proj', AGENT_NAME[kind]));
-      const proj = String(s.dir || '').split('/').filter(Boolean).pop(); if (proj && proj !== dn(s)) top.append(el('span', 'ri-proj', proj));
+      const proj = projectLabel(s); if (proj && proj !== dn(s)) top.append(el('span', 'ri-proj', proj));
+      appendSessionBadges(top, s);
       c.append(top, el('span', 'lite-now', st.text));
       if (s.lastPrompt) c.append(el('span', 'lite-task', `“${short(s.lastPrompt, 90)}”`));
-      const pct = contextPercent(s);
+      const pct = sessionMetricView(s).context?.pct ?? null;
       const meta = [s.subs?.length ? tr('lite.subs', { n: s.subs.length }) : '', pct !== null ? tr('lite.ctx', { pct }) : '', s.taskStart && s.status !== 'rest' && key !== 'unknown' ? fmtClock((nowMs() - s.taskStart) / 1000) : ''].filter(Boolean).join(' · ');
       if (meta) c.append(el('small', null, meta));
       c.addEventListener('click', () => openSession(s.id));

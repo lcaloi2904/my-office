@@ -1,15 +1,14 @@
 // Demo mode: fictional projects and a fictional Mac.
 import { state } from '../core/state.js';
 import { $, STATIC, rand, replay } from '../core/env.js';
-import { CHAIR_IDLE, chairs } from '../world/desks.js';
-import { sessions, subs, workers } from '../people/workers.js';
+import { agentOf, observeReplayEvent, sessions, subs, workers } from '../people/workers.js';
 import { chatAct, chatApply, chatLeft, chatLoad } from '../ui/group-chat.js';
 import { setTrophies } from '../life/trophies.js';
 import { addFeed, queueFeed, queueUi, renderFeed, toast } from '../ui/activity.js';
-import { closeSession, drM } from '../ui/session-drawer.js';
+import { drM } from '../ui/session-drawer.js';
 import { acctLogin, acctMoved, acctSwitched, limitWarned, liveWindows, loadMac, renderLimits, renderMac } from '../ui/mac-drawer.js';
 import { DEMO_TODOS, onTodos } from '../ui/whiteboard.js';
-import { TOKEN, freeDesk, removeSession, setConn, upsertSession } from '../net/live.js';
+import { TOKEN, removeSession, setConn, upsertSession } from '../net/live.js';
 import { onEvent } from '../life/incidents.js';
 import { onPerm, perms, renderPerms, reportPresence } from '../ui/permissions.js';
 import { renderPhone } from '../ui/topbar.js';
@@ -150,6 +149,29 @@ function demoChecklist(i) {
 }
 const REPLY_KEYS = ['cart', 'speed', 'schedule'];
 const demoReply = (i) => tr(`demo.replies.${REPLY_KEYS[i]}`);
+// Opt-in fictional metadata fixture (?demo&agents): duplicate names/child IDs, nested history and render overflow.
+export function mixedAgentFixtures() {
+  return [0, 1].map((index) => {
+    const id = `omp:${String(index + 1).repeat(64)}`, sessionKey = id, firstKey = JSON.stringify([sessionKey, 'shared-child']);
+    const child = (raw, parentAgentKey = sessionKey) => ({
+      id: raw, agentKey: JSON.stringify([sessionKey, raw]), rootSessionKey: sessionKey, parentAgentKey,
+      relationKind: 'subagent', type: 'task', status: 'unknown', lifecycle: 'historical', persistedOnly: true,
+      activity: 'unknown', connection: 'unknown', desc: '', steps: 0, last: null,
+    });
+    return {
+      id, sessionKey, agentKind: 'omp', agent: 'omp', name: 'shop-api', title: '', dir: '', desk: -1,
+      projectKey: String(index + 3).repeat(64), worktreeKey: String(index + 5).repeat(64),
+      capabilities: { readConversation: false }, status: index ? 'unknown' : 'work',
+      lifecycle: 'open', activity: index ? 'unknown' : 'active', connection: index ? 'stale' : 'connected',
+      persistedOnly: false, toolCategories: index ? [] : ['read'], waitReasons: [], lastTurnOutcome: 'unknown',
+      last: null, lastPrompt: '', lastAt: Date.now(), taskStart: 0, usage: null, metrics: null,
+      counts: { read: 0, edit: 0, cmd: 0, web: 0 }, todos: [],
+      subs: Array.from({ length: 40 }, (_, n) => child(n ? `child-${n}` : 'shared-child', n === 1 ? firstKey : sessionKey)),
+      doneSubs: [{ ...child('parked-child'), lifecycle: 'aborted' }],
+      childrenIncomplete: false, childSupport: { task: 'persisted', nested: 'bounded', advisor: 'unsupported', liveChildren: 'unsupported' },
+    };
+  });
+}
 export function startDemo() {
   $('demo-chip').hidden = false;
   state.todos = DEMO_TODOS.map((t) => ({ ...t })); onTodos();
@@ -159,6 +181,7 @@ export function startDemo() {
     upsertSession(s, false);
     demoLoop(s, p, i < 4);
   });
+  if (new URLSearchParams(location.search).has('agents')) for (const s of mixedAgentFixtures()) upsertSession(s, false);
   // the first project was continued from a long session: it opens with Claude's own summary
   const t0 = Date.now() - 50 * 60e3;
   demoLog.set('demo-0', [
@@ -185,16 +208,20 @@ function reloadSoon() {
   location.reload();
 }
 export function applyMsg(d, quiet = false) {
+  if (!d || typeof d !== 'object') return;
+  // Replay messages only update the recorded observation model. Never execute live control/notification handlers.
+  if (replay.on && !['snap', 'sess', 'gone', 'ev', 'stats', 'vi'].includes(d.k)) return;
   if (d.k === 'snap' || d.k === 'lang') {   // the office's language changed while this page was open: load it again in the new one
-    if (d.lang && d.lang !== document.documentElement.lang && !new URLSearchParams(location.search).has('lang')) { location.reload(); return; }
+    if (!replay.on && d.lang && d.lang !== document.documentElement.lang && !new URLSearchParams(location.search).has('lang')) { location.reload(); return; }
     if (d.k === 'lang') return;
   }
   if (d.k === 'snap') {
+    if (!Array.isArray(d.sessions)) return;
     const ids = new Set(d.sessions.map((s) => s.id));
     for (const id of [...sessions.keys()]) if (!ids.has(id)) (quiet ? dropSessionNow : removeSession)(id);
     for (const s of d.sessions) upsertSession(s, false);
     state.feed = d.feed || []; state.stats = d.stats || {}; renderFeed();
-    if ('local' in d) {   // only the live snapshot carries these
+    if (!replay.on && 'local' in d) {   // only the live snapshot carries these
       perms.clear(); for (const p of d.perms || []) perms.set(p.id, p); renderPerms(); reportPresence();
       if (!quiet) chatLoad();   // (the group chat as it is now: after a reconnect, what was missed)
       state.isLocal = !!d.local; state.lanUrl = d.lan || null; state.lanBase = d.lanBase || null; state.phonePin = d.pin || null; state.tsUrl = d.ts || null; state.tsHere = !!d.tsHere; state.phoneApprove = !!d.phoneApprove; state.phoneTasks = !!d.phoneTasks; state.lanFixed = !!d.lanFixed;
@@ -207,13 +234,27 @@ export function applyMsg(d, quiet = false) {
       $('btn-bell').hidden = !('Notification' in window) || !window.isSecureContext;
     }
     state.connectedOnce = true; queueUi();
-  } else if (d.k === 'sess') { upsertSession(d.s, !quiet && d.s?.persistedOnly !== true); if (d.stats) state.stats = d.stats; }   // (saved OMP history is pinned, not arriving: no walk-in)
-  else if (d.k === 'gone') { const history = sessions.get(d.id)?.persistedOnly === true; if (!quiet && !history) chatLeft(sessions.get(d.id)); (quiet || history ? dropSessionNow : removeSession)(d.id); }   // (unpinned history just disappears: no goodbye)
-  else if (d.k === 'ev') {
-    if (d.stats) state.stats = d.stats; upsertSession(d.s, !quiet);
-    if (!quiet) onEvent(d.e); else if (!d.e.quiet && d.e.type !== 'start') addFeed(d.e);
+  } else if (d.k === 'sess') {
+    upsertSession(d.s, !quiet && !replay.on && agentOf(d.s) === 'claude');
+    if (d.stats && agentOf(d.s) === 'claude') state.stats = d.stats;
+  } else if (d.k === 'gone') {
+    const s = sessions.get(d.id);
+    if (!quiet && !replay.on && agentOf(s) === 'claude') chatLeft(s);
+    removeSession(d.id);
+  } else if (d.k === 'ev') {
+    if (!d.s || !d.e) return;
+    const claude = agentOf(d.s) === 'claude', liveEvent = !quiet && !replay.on && claude;
+    if (d.stats && claude) state.stats = d.stats;
+    upsertSession(d.s, liveEvent);
+    if (liveEvent) onEvent(d.e);
+    else {
+      if (replay.on && claude) observeReplayEvent(d.s, d.e, quiet);
+      if (!d.e.quiet && d.e.type !== 'start') addFeed(d.e);
+    }
+  } else if (d.k === 'stats') {
+    if (!d.s || agentOf(d.s) === 'claude') state.stats = d.stats;
+    if (d.s) upsertSession(d.s, !quiet && !replay.on && agentOf(d.s) === 'claude');
   }
-  else if (d.k === 'stats') { state.stats = d.stats; if (d.s) upsertSession(d.s, !quiet); }
   else if (d.k === 'perm') onPerm(d.p);
   else if (d.k === 'permDone') { perms.delete(d.id); renderPerms(); }
   else if (d.k === 'todos') { state.todos = d.todos || []; onTodos(); }
@@ -272,13 +313,7 @@ export function connect() {
     applyMsg(d);
   };
 }
-export function dropSessionNow(id) {
-  const s = sessions.get(id); sessions.delete(id); freeDesk(id);
-  const w = workers.get(id);
-  if (w) { workers.delete(id); for (const [aid, sw] of subs) if (sw.parent === w) { subs.delete(aid); sw.remove(); } w.remove(); }
-  if (s && s.desk >= 0) chairs[s.desk].color.set(CHAIR_IDLE);
-  if (state.selectedId === id) closeSession();
-}
+export function dropSessionNow(id) { removeSession(id); }
 
 export function setup() {
   /* ---------- demo mode (?demo): fictional projects and a fictional Mac, so the office can be shown or screenshotted

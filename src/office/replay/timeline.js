@@ -21,7 +21,8 @@ const fmtSpan = (ms) => fmtAgo(Math.max(1, ms / 1000));
 const kindLabel = (k) => tr(`timeline.kind.${k}`);
 const rowName = (r) => r.name || (r.agent ? tr('timeline.subagent') : '');
 async function fetchTimeline(range) {
-  const { from, to } = rangeOf(range);
+  const { from, to } = replay.on ? replay : rangeOf(range);
+  if (replay.on) return buildTimeline(replay.items, from, to);
   if (DEMO) {
     const t0 = Math.min(from, ...state.feed.map((e) => e.ts));
     const items = [{ t: t0, m: { k: 'snap', sessions: [...sessions.values()].map((s) => ({ ...s, status: 'rest', lastPrompt: '' })) } }]
@@ -29,6 +30,7 @@ async function fetchTimeline(range) {
     return buildTimeline(items, from, to);
   }
   const r = await fetch(`/api/timeline?from=${from}&to=${to}${TOKEN ? `&k=${encodeURIComponent(TOKEN)}` : ''}`);
+  if (!r.ok) throw new Error('Timeline request failed');
   return r.json();
 }
 async function loadTimeline(range = tl.range) {
@@ -59,25 +61,26 @@ function renderTimeline() {
   $('tl-kpis').replaceChildren(
     kpi(tr('timeline.kpi.wait'), T.wait ? fmtSpan(T.wait) : tr('time.min', { n: 0 }), tr('timeline.kpi.waitNote'), 'red'),
     kpi(tr('timeline.kpi.turn'), T.turn ? fmtSpan(T.turn) : tr('time.min', { n: 0 }), tr('timeline.kpi.turnNote'), 'amber'),
-    kpi(tr('timeline.kpi.work'), T.work ? fmtSpan(T.work) : tr('time.min', { n: 0 }), tr('timeline.kpi.workNote')),
+    kpi(tr('timeline.kpi.work'), T.work ? fmtSpan(T.work) : tr('time.min', { n: 0 }), tr('timeline.kpi.workNote') + (T.unknown ? ` · ${tr('timeline.unknownNote', { time: fmtSpan(T.unknown) })}` : '')),
     kpi(tr('timeline.kpi.prompts'), String(T.prompts || 0)),
   );
   const leg = $('tl-legend'); leg.replaceChildren();
-  for (const k of ['think', 'read', 'edit', 'shell', 'web', 'agent', 'wait', 'turn']) { const c = el('span', 'tl-leg'); const sw = el('i'); sw.dataset.k = k; c.append(sw, document.createTextNode(kindLabel(k))); leg.append(c); }
+  for (const k of ['think', 'read', 'edit', 'shell', 'web', 'agent', 'wait', 'turn', 'unknown', 'stale', 'ended']) { const c = el('span', 'tl-leg'); const sw = el('i'); sw.dataset.k = k; c.append(sw, document.createTextNode(kindLabel(k))); leg.append(c); }
   const box = el('div', 'tl-grid');
   const axis = el('div', 'tl-row tl-axis'); const at = el('div', 'tl-track');
   for (const t of tlTicks(from, to)) { const k = el('span', 'tl-tick', hhmm(t)); k.style.left = pct(t); at.append(k); }
   axis.append(el('div', 'tl-name'), at); box.append(axis);
   if (!d.rows.length) box.append(el('p', 'tl-empty', tl.range === 'yesterday' ? tr('timeline.nothingYesterday') : tr('timeline.nothingHere')));
   d.rows.forEach((r, ri) => {
-    const line = el('div', 'tl-row' + (r.agent ? ' tl-row--sub' : ''));
+    const line = el('div', 'tl-row' + (r.agent ? ' tl-row--sub' : '')); line.dataset.r = ri;
     const name = el('button', 'tl-name'); name.type = 'button';
-    const s = sessions.get(r.sess), dot = el('i'); dot.style.background = r.agent ? 'var(--blue)' : s ? colorOf(s) : '#5E687B';
-    const proj = !r.agent && s?.dir ? String(s.dir).split('/').filter(Boolean).pop() : '';
-    const tt = r.totals, note = r.agent ? fmtSpan(tt.work) : `${proj ? proj + ' · ' : ''}${tr('timeline.rowWork', { time: fmtSpan(tt.work) })}${tt.wait > 60e3 ? ` · ${tr('timeline.rowWait', { time: fmtSpan(tt.wait) })}` : ''}`;
+    const s = r.sessionKey ? [...sessions.values()].find((s) => s.sessionKey === r.sessionKey) : sessions.get(r.sess), dot = el('i'); dot.style.background = r.agent ? 'var(--blue)' : s ? colorOf(s) : '#5E687B';
+    const proj = !r.agent && s?.dir ? String(s.dir).split(/[\\/]/).filter(Boolean).pop() : '';
+    const tt = r.totals, work = tt.work ? tr('timeline.rowWork', { time: fmtSpan(tt.work) }) : tt.unknown ? tr('timeline.rowUnknown', { time: fmtSpan(tt.unknown) }) : tr('timeline.rowWork', { time: fmtSpan(0) });
+    const note = `${proj ? proj + ' · ' : ''}${work}${tt.wait > 60e3 ? ` · ${tr('timeline.rowWait', { time: fmtSpan(tt.wait) })}` : ''}`;
     name.append(dot, el('b', null, (!r.agent && (dn(s) || r.title)) || rowName(r)), el('small', null, note));
-    name.title = s ? tr('timeline.openSession') : tr('timeline.sessionClosed');
-    name.addEventListener('click', () => { if (sessions.has(r.sess)) { closeTimeline(); openSession(r.sess, r.agent ? { tab: 'subs', agent: r.agent } : {}); } else toast(tr('timeline.sessionClosedToast')); });
+    name.title = `${s ? tr('timeline.openSession') : tr('timeline.sessionClosed')} · ${tr('timeline.rowScope')}${tt.unknown ? ` · ${tr('timeline.unknownNote', { time: fmtSpan(tt.unknown) })}` : ''}`;
+    name.addEventListener('click', () => { if (s && sessions.has(s.id)) { closeTimeline(); openSession(s.id, r.agent ? { tab: 'subs', agent: r.agent } : {}); } else toast(tr('timeline.sessionClosedToast')); });
     const track = el('div', 'tl-track');
     r.spans.forEach((x, si) => {
       if (x[2] === 'idle') return;
@@ -86,7 +89,7 @@ function renderTimeline() {
       track.append(b);
     });
     for (const [t, k, label] of r.marks) {
-      if (k !== 'prompt' && k !== 'fail' && k !== 'deploy') continue;
+      if (!['prompt', 'fail', 'aborted', 'end', 'deploy'].includes(k)) continue;
       const m = el('div', 'tl-mark'); m.dataset.k = k; m.style.left = pct(t); m.dataset.t = t; m.dataset.label = label || ''; track.append(m);
     }
     if (to >= Date.now() - 60e3) { const now = el('div', 'tl-now'); now.style.left = pct(Date.now()); track.append(now); }
@@ -100,7 +103,7 @@ function renderTimeline() {
 function tlTarget(e) {
   const sp = e.target.closest('.tl-span'), mk = e.target.closest('.tl-mark');
   if (sp) { const r = tl.data.rows[+sp.dataset.r], x = r.spans[+sp.dataset.s]; return { r, t: x[0], title: kindLabel(x[2]), label: x[3], when: `${hhmm(x[0])}–${hhmm(x[1])} · ${fmtSpan(x[1] - x[0])}` }; }
-  if (mk) { const r = tl.data.rows[+mk.closest('.tl-row').querySelector('.tl-span')?.dataset.r || 0]; return { r, t: +mk.dataset.t, title: ['prompt', 'fail', 'deploy'].includes(mk.dataset.k) ? tr(`timeline.mark.${mk.dataset.k}`) : undefined, label: mk.dataset.label, when: hhmm(+mk.dataset.t) }; }
+  if (mk) { const r = tl.data.rows[+mk.closest('.tl-row').dataset.r]; return { r, t: +mk.dataset.t, title: tr(`timeline.mark.${mk.dataset.k}`), label: mk.dataset.label, when: hhmm(+mk.dataset.t) }; }
   return null;
 }
 // the activity panel shows today's waiting time under its numbers
@@ -179,7 +182,7 @@ export function setup() {
     const d = tl.data; if (!d) return;
     const q = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`, ts = (t) => new Date(t).toLocaleString('sv-SE');
     const lines = [tr('timeline.csvHead')];
-    for (const r of d.rows) for (const [s, e, k, label] of r.spans) if (k !== 'idle') lines.push([q(r.agent ? d.rows.find((x) => !x.agent && r.key.startsWith(x.key + '|'))?.name || '' : r.name), q(r.agent ? rowName(r) : ''), q(ts(s)), q(ts(e)), Math.round((e - s) / 1000), q(kindLabel(k)), q(label)].join(','));
+    for (const r of d.rows) for (const [s, e, k, label] of r.spans) if (k !== 'idle') lines.push([q(r.agent ? d.rows.find((x) => x.key === r.rootKey)?.name || '' : r.name), q(r.agent ? rowName(r) : ''), q(ts(s)), q(ts(e)), Math.round((e - s) / 1000), q(kindLabel(k)), q(label)].join(','));
     const a = el('a'); a.href = URL.createObjectURL(new Blob(['﻿' + lines.join('\n')], { type: 'text/csv;charset=utf-8' }));
     a.download = tr('timeline.csvFile', { day: dayKey(d.from) }); document.body.append(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 4000);

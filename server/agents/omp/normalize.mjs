@@ -16,6 +16,24 @@ const KNOWN = new Set(['message', 'model_usage', 'model_change', 'thinking_level
 export function createNormalizer({ sourceNamespace, includeContent = false, maxEntries = 4096, maxIndexBytes = 1024 * 1024 } = {}) {
   let header = null, rejected = false, titleSeen = false, leaf = null, lastSelf = null, bytes = 0, capped = false;
   const entries = new Map(), sizes = new Map(), diagnostics = new Set();
+  // Non-aging membership prevents an evicted ID from rewinding the branch. Possible matches are explicitly uncertain.
+  const membership = new Uint8Array(Math.min(64 * 1024, Math.floor(maxIndexBytes / 8)));
+  const entryBudget = maxIndexBytes - membership.byteLength;
+  let possibleDuplicate = false;
+  function previouslySeen(id) {
+    let first = 2166136261, second = 5381;
+    for (let i = 0; i < id.length; i++) {
+      const ch = id.charCodeAt(i); first = Math.imul(first ^ ch, 16777619); second = Math.imul(second, 33) ^ ch;
+    }
+    second |= 1;
+    let seen = true;
+    for (let i = 0; i < 4; i++) {
+      const bit = ((first + Math.imul(i, second)) >>> 0) % (membership.length * 8), mask = 1 << (bit & 7), offset = bit >>> 3;
+      if (!(membership[offset] & mask)) seen = false;
+      membership[offset] |= mask;
+    }
+    return seen;
+  }
   const issue = (code) => { if (diagnostics.size < 24) diagnostics.add(code); };
   function push(raw, location = {}) {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) { issue('invalid-record'); return; }
@@ -55,7 +73,7 @@ export function createNormalizer({ sourceNamespace, includeContent = false, maxE
         e.calls = calls.slice(0, 64).map((p) => ({ id: p.id, category: toolCategory(p.name) }));
       }
       if (m.role === 'toolResult') { e.toolCallId = idOf(m.toolCallId); e.isError = m.isError === true; }
-      // Text only. No images, args, outputs, thinking, unknown roles, or custom payloads.
+      // Conversation text only. No images, args, outputs, thinking, unknown roles, or custom payloads.
       if (includeContent && ['assistant', 'user'].includes(e.role)) e.text = safeText(contentText(m.content));
     }
     const previous = entries.get(id), serialized = JSON.stringify(e), size = Buffer.byteLength(serialized);
@@ -63,13 +81,15 @@ export function createNormalizer({ sourceNamespace, includeContent = false, maxE
       if (JSON.stringify(previous) !== serialized) issue('conflicting-entry-id');
       return;
     }
+    if (!membership.length) { capped = true; issue('index-limit'); return; }
+    if (previouslySeen(id)) { possibleDuplicate = true; issue('possible-duplicate-entry-id'); return; }
     // Retransmitted IDs never move the leaf. A genuinely new capped leaf does: report incompleteness.
     leaf = selected;
     if (selected === id) lastSelf = id;
     // Past the cap the oldest entries are dropped, so the index keeps the tail that the active branch ends in. The
     // branch then starts mid-history and is reported incomplete, instead of losing the whole branch.
-    if (size > maxIndexBytes) { capped = true; issue('index-limit'); return; }
-    while (entries.size && (entries.size >= maxEntries || bytes + size > maxIndexBytes)) {
+    if (size > entryBudget) { capped = true; issue('index-limit'); return; }
+    while (entries.size && (entries.size >= maxEntries || bytes + size > entryBudget)) {
       const oldest = entries.keys().next().value;
       bytes -= sizes.get(oldest); sizes.delete(oldest); entries.delete(oldest);
       capped = true; issue('index-limit');
@@ -79,6 +99,7 @@ export function createNormalizer({ sourceNamespace, includeContent = false, maxE
 
   function value({ incomplete: inputIncomplete = false } = {}) {
     const issues = new Set(diagnostics);
+    if (possibleDuplicate) issues.add('possible-duplicate-entry-id');
     let active = leaf;
     if (active !== null && !entries.has(active)) {
       if (capped) issues.add('missing-capped-leaf');
@@ -95,7 +116,7 @@ export function createNormalizer({ sourceNamespace, includeContent = false, maxE
     branch.reverse();
     let selected = branch;
     const reset = selected.findLastIndex((e) => e.type === 'reset_boundary');
-    if (reset >= 0) selected = selected.slice(reset + 1);
+    if (reset >= 0) selected = selected.slice(reset);
     const compact = selected.findLastIndex((e) => e.type === 'compaction');
     if (compact >= 0) {
       const c = selected[compact], kept = selected.findIndex((e) => e.id === c.firstKeptEntryId);
@@ -111,8 +132,16 @@ export function createNormalizer({ sourceNamespace, includeContent = false, maxE
     for (const tool of tools.values()) if (Object.hasOwn(counts, tool.category)) counts[tool.category]++;
     const incomplete = inputIncomplete || capped || [...issues].some((s) => !['unknown-record', 'leaf-fallback'].includes(s));
     const items = includeContent ? selected.flatMap((e) => {
-      if (e.type === 'message' && ['user', 'assistant'].includes(e.role) && e.text) return [{ role: e.role, text: e.text, ts: e.ts }];
-      if (['compaction', 'branch_summary'].includes(e.type)) return [{ role: 'summary', text: e.text || '[Persisted summary]', ts: e.ts }];
+      if (e.type === 'message' && ['user', 'assistant'].includes(e.role)) {
+        const result = e.text ? [{ role: e.role, text: e.text, ts: e.ts }] : [];
+        for (const call of e.calls || []) result.push({ role: 'tool', type: call.category, label: call.category,
+          toolCallId: /^[A-Za-z0-9._-]{1,128}$/.test(call.id) ? call.id : null, phase: 'requested', ts: e.ts });
+        return result;
+      }
+      if (e.type === 'message' && e.role === 'toolResult') return [{ role: 'toolResult', text: '',
+        toolCallId: /^[A-Za-z0-9._-]{1,128}$/.test(e.toolCallId) ? e.toolCallId : null,
+        phase: e.isError ? 'error' : 'completed', ts: e.ts }];
+      if (['compaction', 'branch_summary', 'reset_boundary'].includes(e.type)) return [{ role: 'summary', kind: e.type, text: e.text || '', ts: e.ts }];
       return [];
     }) : [];
     return {
@@ -122,7 +151,7 @@ export function createNormalizer({ sourceNamespace, includeContent = false, maxE
       observedAt: branch.at(-1)?.ts || header?.timestamp || 0, counts,
       metrics: aggregateUsage(entries.values(), { inherited: header?.inherited, incomplete }),
       items, tools: [...tools.values()], incomplete, diagnostics: [...issues],
-      exitEvidence: [...entries.values()].some((e) => e.exitEvidence === true), indexEntries: entries.size, indexBytes: bytes,
+      exitEvidence: [...entries.values()].some((e) => e.exitEvidence === true), indexEntries: entries.size, indexBytes: bytes + membership.byteLength,
     };
   }
   return { push, value };

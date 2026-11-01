@@ -1,10 +1,10 @@
 // The session drawer: chat, steps, subagents.
 import { state } from '../core/state.js';
-import { $, el, fmtBytes, fmtClock, hhmm, nowMs, pad2, reduceMotion, short, small } from '../core/env.js';
+import { $, el, fmtBytes, fmtClock, hhmm, nowMs, pad2, reduceMotion, replay, short, small } from '../core/env.js';
 import { STATUS_LABEL, verb } from './event-text.js';
 import { TYPE_ICON, icon } from './icons.js';
 import { BASE_ZOOM } from '../scene/renderer.js';
-import { AGENT_NAME, agentOf, canSession, claudeCost, colorOf, contextPercent, dn, sessions, unknownLabel, workers } from '../people/workers.js';
+import { AGENT_NAME, agentOf, canSession, colorOf, dn, sessions, unknownLabel, workers } from '../people/workers.js';
 import { setOmpPin } from './omp-history.js';
 import { cap, feedRow, fmtTok, fmtUsd, openFromRow, queueUi, toast } from './activity.js';
 import { goView, setView } from './camera-bar.js';
@@ -14,11 +14,13 @@ import { unseenDone } from '../life/your-turn.js';
 import { DEMO, demoLog } from '../demo/demo.js';
 import { acctActions } from './session-account.js';
 import { t as tr, locale } from '../../i18n/index.js';
+import { appendSessionBadges, childState, counterNote, projectLabel, sessionMetricView } from './session-info.js';
 
 /* ---------- session drawer ---------- */
 export let tab = 'chat';
 let logItems = [], subItems = [];
 let logTimer = null;
+let nextCursor = null, subCursor = null, conversationIncomplete = false, logRequest = 0;
 export let drS;
 export let drM;
 export function toggleSession(id) { if (state.selectedId === id && !drS.hidden) closeSession(); else openSession(id); }
@@ -31,7 +33,7 @@ export function openSession(id, opts = {}) {
   const waver = workers.get(id); if (waver && !same) waver.waveUntil = state.sim + 1.8;
   if (small.matches) $('feed').classList.remove('feed--open');
   state.zoomGoal = (small.matches ? 2.1 : 1.6) * BASE_ZOOM;
-  if (!same) { logItems = []; subItems = []; }
+  if (!same) { logItems = []; subItems = []; nextCursor = null; subCursor = null; conversationIncomplete = false; }
   state.subView = opts.agent || null;
   setTab(opts.tab || 'chat');
   renderSessionHead(); renderActions();
@@ -41,15 +43,24 @@ export function openSession(id, opts = {}) {
 export function closeSession() { state.selectedId = null; state.subView = null; drS.hidden = true; goView('home'); queueUi(); }
 export function renderSessionHead() {
   const s = sessions.get(state.selectedId); if (!s) return;
+  if (!canSession(s, 'readConversation')) {
+    logItems = []; subItems = []; nextCursor = null; subCursor = null; logRequest++;
+    if (tab === 'chat' || (tab === 'subs' && state.subView)) $('ds-body').replaceChildren(el('p', 'chat-empty', tr('drawer.conversationDisabled')));
+  }
   $('ds-dot').style.background = colorOf(s);
   $('ds-name').textContent = dn(s);
-  $('ds-dir').textContent = s.origin ? `${s.dir} · ${s.origin}` : s.dir;
-  const st = $('ds-status'); st.textContent = STATUS_LABEL[s.status] || unknownLabel(s); st.dataset.status = s.status;
-  $('ds-read').textContent = s.counts?.read ?? 0; $('ds-edit').textContent = s.counts?.edit ?? 0; $('ds-cmd').textContent = s.counts?.cmd ?? 0;
+  const dir = $('ds-dir'); dir.replaceChildren(document.createTextNode([projectLabel(s), s.origin].filter(Boolean).join(' · '))); appendSessionBadges(dir, s);
+  const st = $('ds-status'); st.textContent = agentOf(s) === 'omp' ? unknownLabel(s) : STATUS_LABEL[s.status] || unknownLabel(s); st.dataset.status = s.status;
+  $('dr-session').dataset.lifecycle = s.lifecycle || '';
+  for (const k of ['read', 'edit', 'cmd']) { $('ds-' + k).textContent = s.counts?.[k] ?? '–'; $('ds-' + k).parentElement.title = counterNote(s); }
   $('ds-time').textContent = s.taskStart && ['work', 'wait'].includes(s.status) ? fmtClock((nowMs() - s.taskStart) / 1000) : '–';
-  const u = s.usage, pct = contextPercent(s), cost = claudeCost(s);
-  $('ds-ctx').textContent = pct !== null ? `${pct}%` : '–'; $('ds-ctx').parentElement.title = pct !== null ? tr('drawer.tokens', { used: fmtTok(u.ctx), max: fmtTok(u.ctxMax), model: u.model }) : tr('drawer.metricsUnavailable');
-  $('ds-cost').textContent = cost !== null ? fmtUsd(cost) : '–'; $('ds-cost').parentElement.title = cost !== null ? tr('drawer.priceNote') : tr('drawer.metricsUnavailable');
+  const metrics = sessionMetricView(s), ctx = metrics.context;
+  const contextValue = $('ds-ctx'), costValue = $('ds-cost');
+  contextValue.textContent = ctx ? `${ctx.pct}%` : '–';
+  contextValue.parentElement.title = ctx ? tr(agentOf(s) === 'omp' ? 'drawer.contextEvidence' : 'drawer.tokens', {
+    used: fmtTok(ctx.used), max: fmtTok(ctx.window), model: s.model || s.usage?.model || '–', provenance: tr('drawer.provenance.' + ctx.provenance),
+  }) : tr('drawer.metricsUnavailable');
+  costValue.textContent = metrics.cost !== null ? fmtUsd(metrics.cost) : '–'; costValue.parentElement.title = metrics.costNote;
   const n = s.subs?.length || 0;
   $('tab-subs').textContent = n ? tr('drawer.tabSubsN', { n }) : tr('drawer.tabSubs');
   if (actionsSig(s) !== drawnSig) renderActions();   // (it came to rest, went to work, or moved to another account)
@@ -69,6 +80,7 @@ const actionsSig = (s) => [s.id, agentOf(s), s.persistedOnly, s.incomplete, stat
 function renderActions() {
   const s = sessions.get(state.selectedId); if (!s) return;
   const box = $('ds-actions'); box.replaceChildren(); drawnSig = actionsSig(s);
+  if (replay.on) { box.append(el('p', 'dr-note', tr('drawer.readOnly'))); return; }
   if (agentOf(s) !== 'claude') {
     box.append(el('p', 'dr-note', tr(agentOf(s) === 'omp' ? 'drawer.readOnly' : 'drawer.unsupportedAgent')));
     if (agentOf(s) === 'omp' && s.persistedOnly === true) {   // a pinned history file: say so, and offer the way back out
@@ -137,28 +149,36 @@ function setTab(t) {
   else renderActivity();
   queueMicrotask(syncJump);
 }
-async function loadLog(scrollEnd = false) {
+async function loadLog(scrollEnd = false, earlier = false) {
   const id = state.selectedId; if (!id) return;
-  const agent = tab === 'subs' ? state.subView : null;
-  if (tab === 'subs' && !agent) return;
-  if (tab === 'act') return;
+  const requestTab = tab, agent = requestTab === 'subs' ? state.subView : null;
+  if ((requestTab === 'subs' && !agent) || requestTab === 'act') return;
   if (!canSession(sessions.get(id), 'readConversation')) {
-    logItems = []; subItems = [];
+    logItems = []; subItems = []; nextCursor = null; subCursor = null;
     $('ds-body').replaceChildren(el('p', 'chat-empty', tr('drawer.conversationDisabled')));
     return;
   }
-  if (DEMO) {
-    const items = (demoLog.get(agent || id) || []).slice(-120);
-    if (agent) { subItems = items; renderSubs(scrollEnd); } else { logItems = items; if (tab === 'chat') renderChat(scrollEnd); }
-    return;
-  }
+  const request = ++logRequest, cursor = earlier ? (agent ? subCursor : nextCursor) : null;
+  const isCurrentRequest = () => request === logRequest && id === state.selectedId && tab === requestTab
+    && canSession(sessions.get(id), 'readConversation') && (agent || null) === (tab === 'subs' ? state.subView : null);
   try {
-    const r = await fetch(`/api/log?id=${encodeURIComponent(id)}${agent ? `&agent=${encodeURIComponent(agent)}` : ''}${TOKEN ? `&k=${encodeURIComponent(TOKEN)}` : ''}`);
-    const d = await r.json();
-    if (id !== state.selectedId || !canSession(sessions.get(id), 'readConversation')) return;
-    if (agent) { if (agent !== state.subView || tab !== 'subs') return; subItems = d.items || []; renderSubs(scrollEnd); }
-    else { logItems = d.items || []; if (tab === 'chat') renderChat(scrollEnd); }
-  } catch { if (id === state.selectedId && tab === 'chat' && !logItems.length) $('ds-body').replaceChildren(el('p', 'chat-empty', tr('drawer.chatUnreadable'))); }
+    let d;
+    if (DEMO) {
+      const all = demoLog.get(agent || id) || [], end = cursor === null ? all.length : Number(cursor), start = Math.max(0, end - 120);
+      d = { items: all.slice(start, end), nextCursor: start ? String(start) : null };
+    } else {
+      const p = new URLSearchParams({ id }); if (agent) p.set('agent', agent); if (TOKEN) p.set('k', TOKEN); if (cursor !== null) p.set('before', cursor);
+      const r = await fetch('/api/log?' + p);
+      if (!r.ok) throw new Error('conversation-unavailable');
+      d = await r.json();
+    }
+    if (!isCurrentRequest()) return;
+    conversationIncomplete = d.incomplete === true;
+    const items = Array.isArray(d.items) ? d.items : [];
+    if (agent) { subCursor = d.nextCursor ?? null; subItems = earlier ? [...items, ...subItems] : items; renderSubs(scrollEnd); }
+    else { nextCursor = d.nextCursor ?? null; logItems = earlier ? [...items, ...logItems] : items; if (tab === 'chat') renderChat(scrollEnd); }
+    return true;
+  } catch { if (isCurrentRequest()) $('ds-body').replaceChildren(el('p', 'chat-empty', tr('drawer.chatUnreadable'))); }
 }
 export function scheduleLog() { clearTimeout(logTimer); logTimer = setTimeout(() => loadLog(false), 1200); }
 /* conversation: a small markdown renderer that only builds DOM nodes (never innerHTML), so a transcript can't inject
@@ -259,7 +279,7 @@ const chatOpen = new Set();
 const chatKey = (it, k) => `${it.role}:${it.ts}:${k}`;
 const LONG_CHARS = 1100, LONG_LINES = 18;
 // the tally word for each step type: a key under drawer.step
-const STEP_WORD = { read: 'read', grep: 'read', glob: 'read', skill: 'read', edit: 'edit', write: 'edit', bash: 'cmd', web: 'web', fetch: 'web', mcp: 'tool', agent: 'agent', plan: 'plan' };
+const STEP_WORD = { read: 'read', grep: 'read', glob: 'read', skill: 'read', edit: 'edit', write: 'edit', bash: 'cmd', cmd: 'cmd', web: 'web', fetch: 'web', mcp: 'tool', task: 'agent', agent: 'agent', plan: 'plan' };
 function chatDay(ts) {
   const d = new Date(ts), t0 = new Date(); t0.setHours(0, 0, 0, 0);
   const day = d >= t0 ? tr('drawer.today') : d >= t0.getTime() - 86400e3 ? tr('drawer.yesterday')
@@ -273,6 +293,17 @@ function foldable(details, key) {
 }
 function buildChat(items, who = 'Claude', isSub = false) {
   const chat = el('div', 'chat');
+  const cursor = isSub ? subCursor : nextCursor;
+  if (cursor !== null) {
+    const earlier = el('button', 'btn btn--sm chat-earlier', tr('drawer.loadEarlier')); earlier.type = 'button';
+    earlier.addEventListener('click', async () => {
+      const body = $('ds-body'), height = body.scrollHeight, top = body.scrollTop;
+      earlier.disabled = true;
+      if (await loadLog(false, true)) body.scrollTop = top + body.scrollHeight - height;
+    });
+    chat.append(earlier);
+  }
+  if (conversationIncomplete) chat.append(el('p', 'dr-note', tr('drawer.conversationIncomplete')));
   if (!items.length) chat.append(el('p', 'chat-empty', tr('drawer.chatEmpty')));
   let steps = null, lastTs = 0;
   const flush = () => {
@@ -288,7 +319,8 @@ function buildChat(items, who = 'Claude', isSub = false) {
     const ul = el('ul');
     for (const x of steps) {
       const li = el('li'), ic = el('span', 'st-step-ico'); ic.append(icon(TYPE_ICON[x.type] || 'sparkle'));
-      const txt = el('span', x.type === 'bash' ? 'st-cmd' : null, cap(verb(x)));
+      const text = agentOf(sessions.get(state.selectedId)) === 'omp' ? `${tr('drawer.toolInvocation')} · ${tr('drawer.step.' + (STEP_WORD[x.type] || 'other'), { n: 1 })}` : cap(verb(x));
+      const txt = el('span', x.type === 'bash' || x.type === 'cmd' ? 'st-cmd' : null, text);
       li.append(ic, txt); ul.append(li);
     }
     d.append(sum, ul); chat.append(d); steps = null;
@@ -297,13 +329,22 @@ function buildChat(items, who = 'Claude', isSub = false) {
     if (it.ts && (!lastTs || it.ts - lastTs > 20 * 60e3 || new Date(it.ts).getDate() !== new Date(lastTs).getDate())) { flush(); chat.append(el('div', 'chat-day', chatDay(it.ts))); }
     if (it.ts) lastTs = it.ts;
     if (it.role === 'tool') { (steps ||= []).push(it); return; }
+    if (it.role === 'toolResult') {
+      flush();
+      const d = el('details', 'msg-summary tool-result'), sm = el('summary', null, tr(it.phase === 'error' || it.isError ? 'drawer.toolError' : 'drawer.toolResult'));
+      d.dataset.phase = it.phase || (it.isError ? 'error' : 'completed');
+      if (it.toolCallId) sm.append(document.createTextNode(' · ' + it.toolCallId));
+      d.append(sm); if (it.text) d.append(el('pre', null, it.text));
+      chat.append(d); return;
+    }
     flush();
     // the server writes the note; one about a subagent gets a clipboard ("trợ lý" is the Vietnamese wording)
     if (it.role === 'note') { chat.append(el('div', 'msg-note', `${/trợ lý|subagent/i.test(it.text) ? '📋' : '✋'} ${it.text}${it.ts ? ' · ' + hhmm(it.ts) : ''}`)); return; }
     if (it.role === 'summary') {
       const d = foldable(el('details', 'msg-summary'), chatKey(it, 'sum')), sm = el('summary');
       const ic = el('span', 'sum-ico'); ic.append(icon('list'));
-      const tx = el('span', 'sum-txt'); tx.append(el('b', null, tr('drawer.summaryTitle')), el('small', null, tr(agentOf(sessions.get(state.selectedId)) === 'claude' ? 'drawer.summaryNote' : 'drawer.summaryNoteGeneric')));
+      const title = it.kind === 'reset_boundary' ? 'drawer.resetSummary' : it.kind === 'branch_summary' ? 'drawer.branchSummary' : 'drawer.summaryTitle';
+      const tx = el('span', 'sum-txt'); tx.append(el('b', null, tr(title)), el('small', null, tr(agentOf(sessions.get(state.selectedId)) === 'claude' ? 'drawer.summaryNote' : 'drawer.summaryNoteGeneric')));
       const chev = el('span', 'st-chev'); chev.append(icon('chevron'));
       sm.append(ic, tx, chev);
       const body = el('div', 'md'); body.append(mdBlocks(it.text.replace(/^This session is being continued[^\n]*\n+/, '').replace(/^Summary:\s*\n?/, '')));
@@ -356,28 +397,39 @@ export function renderSubs(scrollEnd = false) {
     const head = el('div', 'sub-head');
     const back = el('button', 'btn btn--sm', tr('drawer.allSubs')); back.type = 'button';
     back.addEventListener('click', () => { state.subView = null; renderSubs(); });
-    const pill = el('span', 'pill', x && !x.endedAt ? tr('drawer.working') : tr('drawer.done')); pill.dataset.status = x && !x.endedAt ? 'work' : 'rest';
+    const pill = el('span', 'pill', x ? childState(x) : tr('drawer.unknownState')); pill.dataset.status = x?.persistedOnly || !x ? 'unknown' : x.endedAt ? 'rest' : 'work';
     head.append(back, el('b', null, x ? `${x.type}${x.desc ? ': ' + x.desc : ''}` : tr('drawer.subagent')), pill);
-    const wrap = el('div'); wrap.append(head, subItems.length ? buildChat(subItems, x?.type || tr('drawer.subagent'), true) : el('p', 'chat-empty', tr('drawer.loadingSub')));
+    const wrap = el('div'); wrap.append(head, buildChat(subItems, x?.type || tr('drawer.subagent'), true));
     body.replaceChildren(wrap);
     if (scrollEnd || nearEnd) body.scrollTop = body.scrollHeight;
     syncJump();
     return;
   }
   const frag = document.createDocumentFragment();
-  const act = s?.subs || [], done = s?.doneSubs || [];
-  if (!act.length && !done.length) frag.append(el('p', 'chat-empty', tr(agentOf(s) === 'claude' ? 'drawer.noSubs' : 'drawer.noObservedSubs')));
-  const card = (x, running) => {
-    const b = el('button', 'sub-card'); b.type = 'button';
-    const ic = el('span', 'fi-ico'); if (running) ic.dataset.tone = 'blue'; ic.append(icon(running ? 'sparkle' : 'check'));
-    const steps = tr('drawer.steps', { n: x.steps || 0 });
-    b.append(ic, el('b', null, `${x.type}${x.desc ? ' · ' + x.desc : ''}`), el('small', null, running ? steps : tr('drawer.doneAt', { time: hhmm(x.endedAt) })),
-      el('span', null, running ? (x.last ? cap(verb(x.last)) : tr('drawer.starting')) : tr('drawer.subDoneMeta', { steps, time: hhmm(x.startedAt) })));
-    b.addEventListener('click', () => { state.subView = x.id; subItems = []; renderSubs(); loadLog(true); });
-    return b;
+  const all = [...(s?.subs || []), ...(s?.doneSubs || [])];
+  if (agentOf(s) === 'omp') frag.append(el('p', 'dr-note', tr('drawer.subSupport')));
+  if (s?.childrenIncomplete) frag.append(el('p', 'dr-note', tr('drawer.subIncomplete')));
+  if (s?.flattened) frag.append(el('p', 'dr-note', tr('drawer.flattenedTree')));
+  if (!all.length) frag.append(el('p', 'chat-empty', tr(agentOf(s) === 'claude' ? 'drawer.noSubs' : 'drawer.noObservedSubs')));
+  const rootKey = s?.sessionKey || s?.id, visited = new Set(), box = el('div', 'rows sub-tree');
+  const card = (x, depth, orphan = false) => {
+    visited.add(x);
+    const b = el('button', 'sub-card'); b.type = 'button'; b.dataset.agent = x.id; b.dataset.parent = x.parentAgentKey || '';
+    b.style.setProperty('--depth', Math.min(depth, 6));
+    const ic = el('span', 'fi-ico'); ic.append(icon(x.persistedOnly ? 'file' : x.endedAt ? 'check' : 'sparkle'));
+    b.append(ic, el('b', null, `${x.type || tr('drawer.subagent')}${x.desc ? ' · ' + x.desc : ''}`), el('small', null, childState(x)));
+    const parent = all.find((p) => p.agentKey === x.parentAgentKey);
+    b.append(el('span', 'sub-parent', orphan ? tr('drawer.relationUnknown') : tr('drawer.parentAgent', { name: parent?.type || dn(s) })));
+    b.addEventListener('click', () => { state.subView = x.id; subItems = []; subCursor = null; conversationIncomplete = false; renderSubs(); loadLog(true); });
+    box.append(b);
+    if (!x.agentKey) return;
+    for (const child of all) {
+      if (!visited.has(child) && child.parentAgentKey === x.agentKey) card(child, depth + 1);
+    }
   };
-  if (act.length) { frag.append(el('p', 'sub-group', tr('drawer.groupWorking', { n: act.length }))); const box = el('div', 'rows'); act.forEach((x) => box.append(card(x, true))); frag.append(box); }
-  if (done.length) { frag.append(el('p', 'sub-group', tr('drawer.groupDone'))); const box = el('div', 'rows'); done.forEach((x) => box.append(card(x, false))); frag.append(box); }
+  for (const x of all) if (!visited.has(x) && (!x.parentAgentKey || x.parentAgentKey === rootKey)) card(x, 0);
+  for (const x of all) if (!visited.has(x)) card(x, 0, true);
+  frag.append(box);
   body.replaceChildren(frag);
 }
 export function renderActivity() {

@@ -34,6 +34,7 @@ import { createOmpAdapter } from './agents/omp/index.mjs';
 import { createOmpBridge, loadIngestTokens } from './agents/omp/bridge.mjs';
 import { projectClaudeSession } from './agents/projection.mjs';
 import { isClaudeRequest, resolveOmpMode } from './agents/schema.mjs';
+import { privateRoot } from '../integrations/omp/private-storage.js';
 
 // OMP is off unless OFFICE_OMP=files names an explicit config (OFFICE_OMP_CONFIG, absolute path). No home discovery.
 // hybrid = files + the observer ingress (loopback only, a token per configured source). Anything else adds no listener.
@@ -64,7 +65,8 @@ async function startOmpIngress() {
   const ids = ompAdapter.sourceIds();
   if (!ids.length || !ompAdapter.lifecycle) { ompIngressFailed = true; return; }
   try {
-    const tokens = await loadIngestTokens({ file: path.join(DATA_DIR, 'omp-ingest.json'), sourceIds: ids });
+    const file = process.env.OFFICE_OMP_INGEST_FILE || path.join(privateRoot(), 'ingest.json');
+    const tokens = await loadIngestTokens({ file, sourceIds: ids });
     ompBridge = createOmpBridge({ lifecycle: ompAdapter.lifecycle, tokens });
   } catch { ompBridge = null; ompIngressFailed = true; }   // (no token, no ingress: files mode carries on)
 }
@@ -314,7 +316,7 @@ const legacyPub = (s) => ({ id: s.id, pid: s.pid, name: s.name, title: s.title |
   lastAt: s.lastEventAt || s.createdAt, doneAt: s.doneAt || 0, todos: s.todos || [], lastReply: s.lastReply || '', origin: s.origin || '',
   bg: s.bg ? [...s.bg.values()].slice(0, 6) : [],
   dayFirst: s.dayFirst || null,
-  git: gitOf(s),
+  git: gitOf(s), ...git.identityOf(s.cwd),
   usage: s.usage?.model ? { cost: Math.round(s.usage.cost * 100) / 100, ...liveCtx(s), model: s.usage.model, out: s.usage.out } : null });
 // Keep the legacy projection intact; only add server-owned agent metadata.
 const pub = (s) => projectClaudeSession(legacyPub(s));
@@ -323,6 +325,7 @@ const agents = createAgentRegistry({ adapters: [createClaudeAdapter({
   resolveSession: (id) => [...sessions.values()].find((s) => s.id === id) || null,
   publicSession: legacyPub,
   readLog,
+  readLogEntries: (s, n, childId) => readLog(s, n, childId, true),
 }), ...(ompAdapter ? [ompAdapter] : [])] });
 function gitOf(s) { const r = s.cwd && git.repoOf(s.cwd); return r ? { repo: r.name, branch: r.branch, dirty: r.dirty, ahead: r.ahead, ci: r.ci, ciName: r.ciName, ciUrl: r.ciUrl, born: r.born || null } : null; }
 // context: exact from the status line while it reports (last 15 min), else estimated from the transcript
@@ -835,6 +838,7 @@ async function onHook(p) {
   let e = null; // event for the page
   let toFeed = true;
   const mk = (type, label = '', extra = {}) => ({ id: ++seq, ts: now, sess: s.id, name: s.name, type, label, ...extra });
+  const toolCallId = typeof p.tool_use_id === 'string' && /^[A-Za-z0-9._:-]{1,160}$/.test(p.tool_use_id) ? p.tool_use_id : null;
 
   switch (ev) {
     case 'SessionStart':
@@ -863,7 +867,7 @@ async function onHook(p) {
       if (!agent) { if (s.status === 'rest' && !s.taskStart) s.taskStart = now; s.status = 'work'; s.inTool = true; s.last = { type: c.type, label: c.label }; }
       else { const x = s.subs[agent]; if (x) { x.last = { type: c.type, label: c.label }; x.steps++; } }   // (it may have stopped while the call was being read)
       const img = imageId(c.file);
-      e = mk(c.type, c.label, { desc: c.desc, agent, agentType: p.agent_type || null, quiet: !!agent, ...(c.runner ? { runner: c.runner } : {}), ...(img ? { img } : {}) });
+      e = mk(c.type, c.label, { desc: c.desc, agent, agentType: p.agent_type || null, quiet: !!agent, ...(toolCallId ? { toolCallId, phase: 'running' } : {}), ...(c.runner ? { runner: c.runner } : {}), ...(img ? { img } : {}) });
       if (agent) toFeed = false;
       break;
     }
@@ -939,22 +943,25 @@ async function onHook(p) {
     if (!s.viaOffice) chat.onEvent(e);
   } else if (s.status !== prevStatus) {
     broadcast({ k: 'sess', s: pub(s), stats });
-  } else if (ev === 'PostToolUse') {
-    broadcast({ k: 'stats', stats, s: pub(s), post: agent || 'main' });   // `post`: whose tool finished (timeline)
+  } else if (ev === 'PostToolUse' && !toolCallId) {
+    broadcast({ k: 'stats', stats, s: pub(s), post: agent || 'main' });   // legacy hooks without a correlation ID
+  }
+  if (toolCallId && (ev === 'PostToolUse' || ev === 'PostToolUseFailure')) {
+    broadcast({ k: 'stats', stats, s: pub(s), post: agent || 'main', toolCallId, phase: ev === 'PostToolUseFailure' ? 'error' : 'completed' });
   }
 }
 
 /* ---------- conversation view ---------- */
 const STRIP_TAGS = /<(system-reminder|ide_selection|ide_opened_file|command-message|command-name|command-args|local-command-stdout|local-command-stderr|local-command-caveat|task-notification|user-prompt-submit-hook|agent-message)[^>]*>[\s\S]*?<\/\1>/g;
-async function readLog(s, n = 120, agentId = null) {
+async function readLog(s, n = 120, agentId = null, withMetadata = false) {
   let file = s.transcript || (s.sid && s.cwd ? path.join(CLAUDE_DIR, 'projects', s.cwd.replace(/[^A-Za-z0-9-]/g, '-'), `${s.sid}.jsonl`) : null);
   if (agentId) {
     const dir = subDir(s);
     file = dir && /^[A-Za-z0-9_-]+$/.test(agentId) ? path.join(dir, `agent-${agentId}.jsonl`) : null;
   }
-  if (!file) return [];
+  if (!file) return withMetadata ? { items: [], incomplete: true } : [];
   let fh;
-  try { fh = await fsp.open(file, 'r'); } catch { return []; }
+  try { fh = await fsp.open(file, 'r'); } catch { return withMetadata ? { items: [], incomplete: true } : []; }
   try {
     const { size } = await fh.stat();
     const len = Math.min(size, 4_000_000);
@@ -990,7 +997,7 @@ async function readLog(s, n = 120, agentId = null) {
         }
       }
     }
-    return items.slice(-n);
+    return withMetadata ? { items: items.slice(-n), incomplete: size > len || items.length > n } : items.slice(-n);
   } finally { await fh.close(); }
 }
 
@@ -2263,7 +2270,7 @@ const server = http.createServer((req, res) => {
     if (!owner) { json(res, 404, { items: [] }); return; }
     if (!owner.publicSession.capabilities.readConversation) { json(res, 403, { items: [], code: 'agentReadOnly' }); return; }
     if (owner.kind === 'omp' && !isLoopback(req)) { json(res, 403, { items: [], code: 'agentLocalOnly' }); return; }   // persisted OMP text: this computer only
-    agents.readConversation(id, 120, url.searchParams.get('agent')).then((items) => json(res, 200, { items })).catch(() => json(res, 200, { items: [] }));
+    agents.readConversationPage(id, 120, url.searchParams.get('agent'), url.searchParams.get('before')).then((page) => json(res, 200, page)).catch(() => json(res, 500, { items: [], nextCursor: null, incomplete: true }));
     return;
   }
   if (url.pathname === '/api/timeline') {

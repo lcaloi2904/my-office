@@ -16,7 +16,7 @@ import { DESKS, dLocal, officeChair } from '../world/desks.js';
 import { DZ, LIFT_FRONT } from '../world/entrance.js';
 import { MEET } from '../world/furniture/meeting.js';
 import { DESK_SPOTS, faceTo } from './navigation.js';
-import { clockHooks, hash, sessions, workers } from './workers.js';
+import { agentOf, clockHooks, hash, sessions, workers } from './workers.js';
 import { staffKit } from './staff.js';
 import { birthday, gatheringNow } from './gatherings.js';
 import { later, line } from './errands.js';
@@ -86,7 +86,7 @@ function punch(w, name, kind, then, late = false) {
 const nameOf = (w) => sessions.get(w.id)?.name || w.cfg?.name || '';
 function clockIn(w, then) {
   roll();
-  if (!TERM || replay.on || w.sub || w.staff || log.has(w.id)) { then(); return; }
+  if (!TERM || replay.on || w.sub || w.staff || agentOf(sessions.get(w.id)) !== 'claude' || log.has(w.id)) { then(); return; }
   const at = officeNow(), name = nameOf(w), late = minutes() > LATE && at.getHours() < 12;
   log.set(w.id, { at, name, out: null });
   punch(w, name, 'in', then, late);
@@ -94,7 +94,7 @@ function clockIn(w, then) {
 function clockOut(w, then) {
   roll();
   const e = log.get(w.id);
-  if (!TERM || replay.on || w.sub || w.staff || !e || e.out) { then(); return; }
+  if (!TERM || replay.on || w.sub || w.staff || agentOf(sessions.get(w.id)) !== 'claude' || !e || e.out) { then(); return; }
   e.out = officeNow();
   punch(w, e.name, 'out', then);
 }
@@ -104,6 +104,7 @@ function infer() {
   roll();
   const now = officeNow();
   for (const s of sessions.values()) {
+    if (agentOf(s) !== 'claude') continue;
     const w = workers.get(s.id);
     if (!w || log.has(s.id) || w.away || w.leaving || w.homeBound || w.station === 'arriving' || !w.root.visible) continue;
     let at = null;

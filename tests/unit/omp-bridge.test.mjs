@@ -121,21 +121,36 @@ test('S3/S4: no producer path or text reaches the lifecycle snapshot', async () 
   assert.equal(life.list()[0].model, null);
 });
 
-test('S8: disposed bridge refuses; tokens are created privately, stable and only for configured sources', async () => {
-  const files = new Map(), calls = [];
-  const io = { readFile: async (f) => { if (!files.has(f)) throw Object.assign(new Error('no'), { code: 'ENOENT' }); return files.get(f); },
-    mkdir: async () => {}, writeFile: async (f, d, o) => { calls.push(o); files.set(f, d); }, rename: async (a, b) => { files.set(b, files.get(a)); files.delete(a); } };
+test('an invalid present source credential fails closed without replacement', async () => {
+  for (const value of [null, {}, 42, 'invalid']) {
+    const storage = { read: () => ({ version: 1, tokens: { fixture: value } }),
+      write: () => assert.fail('a malformed credential must never be replaced') };
+    await assert.rejects(loadIngestTokens({ file: '/private/t.json', sourceIds: ['fixture'], storage }),
+      { code: 'ERR_OMP_PRIVATE_STORAGE' });
+  }
+});
+
+test('S8: credentials stay stable, source-scoped and unavailable when storage fails', async () => {
+  const files = new Map();
+  const storage = { read: async (f) => files.get(f) ?? null, write: async (f, d) => { files.set(f, d); } };
   let n = 0;
   const random = () => String(++n).padStart(64, '0');
-  const first = await loadIngestTokens({ file: '/data/t.json', sourceIds: ['a', 'b'], io, random });
-  assert.equal(first.get('a'), '0'.repeat(63) + '1');
-  assert.equal(calls[0].mode, 0o600);
-  const again = await loadIngestTokens({ file: '/data/t.json', sourceIds: ['a', 'b'], io, random });
-  assert.equal(again.get('b'), first.get('b')); assert.equal(calls.length, 1, 'nothing is rewritten when nothing is missing');
-  const more = await loadIngestTokens({ file: '/data/t.json', sourceIds: ['a', 'c'], io, random });
-  assert.equal(more.get('a'), first.get('a')); assert.ok(more.get('c'));
-  files.set('/data/t.json', '{"version":1,"tokens":{"a":"not-a-token"}}');
-  assert.notEqual((await loadIngestTokens({ file: '/data/t.json', sourceIds: ['a'], io, random })).get('a'), 'not-a-token');
+  const first = await loadIngestTokens({ file: '/private/t.json', sourceIds: ['a', 'b'], storage, random });
+  const again = await loadIngestTokens({ file: '/private/t.json', sourceIds: ['a', 'b'], storage, random });
+  assert.equal(again.get('a'), first.get('a'));
+  assert.equal(again.get('b'), first.get('b'));
+  const more = await loadIngestTokens({ file: '/private/t.json', sourceIds: ['a', 'c'], storage, random });
+  assert.equal(more.get('a'), first.get('a'));
+  assert.ok(more.get('c') !== first.get('b'));
+  assert.equal(more.has('b'), false, 'an unconfigured source is not authenticated');
+  for (const invalid of [{}, { version: 2, tokens: {} }, { version: 1, tokens: [] }]) {
+    files.set('/private/t.json', invalid);
+    await assert.rejects(loadIngestTokens({ file: '/private/t.json', sourceIds: ['a'], storage, random }),
+      { code: 'ERR_OMP_PRIVATE_STORAGE' });
+  }
+  const denied = { read: async () => { throw Object.assign(new Error('private store denied'), { code: 'EACCES' }); },
+    write: async () => assert.fail('a denied store must not be replaced') };
+  await assert.rejects(loadIngestTokens({ file: '/private/t.json', sourceIds: ['a'], storage: denied, random }), { code: 'EACCES' });
 
   const { bridge, post } = make();
   bridge.dispose();

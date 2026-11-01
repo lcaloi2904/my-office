@@ -42,7 +42,7 @@ function setup(over = {}) {
   const clock = clockOf(), sent = [];
   const script = over.script || (() => ({ status: 200, json: { ok: true, results: [], resync: false } }));
   const transport = { send: async (body) => { const r = await script(body, sent.length); sent.push(body); if (r instanceof Error) throw r; return r; } };
-  const factory = createOfficeObserver({ token: TOKEN, sourceId: 'src', transport, setTimer: clock.setTimer, clearTimer: clock.clearTimer,
+  const factory = createOfficeObserver({ token: TOKEN, sourceId: 'src', settings: {}, transport, setTimer: clock.setTimer, clearTimer: clock.clearTimer,
     random: () => 0.5, newId: (() => { let n = 0; return () => 'rt-' + ++n; })(), ...over.options });
   return { clock, sent, factory };
 }

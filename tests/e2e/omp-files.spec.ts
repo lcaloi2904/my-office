@@ -66,11 +66,31 @@ test('pin a saved session: persisted-only label, opt-in conversation, read-only 
   await expect(page.locator('#ds-actions button')).toHaveCount(1);          // only Unpin: no open/close/account/remote controls
   await expect(page.locator('#ds-actions a')).toHaveCount(0);
   await expect(page.locator('#ds-body')).toContainText('E2E synthetic assistant reply');
+  await expect(page.locator('#ds-body .tool-result[data-phase="error"]')).toContainText('Tool error');
+  await expect(page.locator('#ds-body')).toContainText('Branch summary');
+  await expect(page.locator('#ds-body .msg-body img')).toHaveCount(0);
+  expect(await page.evaluate(() => '__injected' in window)).toBe(false);
+  await expect(page.locator('#ds-body')).not.toContainText('NEVER_RENDER_TOOL_ARGUMENTS');
+  await expect(page.locator('#ds-body')).not.toContainText('NEVER_RENDER_TOOL_OUTPUT');
+  await expect(page.locator('#ds-body')).not.toContainText('Synthetic page message 0');
+  await page.getByRole('button', { name: 'Load earlier messages' }).click();
+  await expect(page.locator('#ds-body')).toContainText('E2E synthetic user message');
+  await expect(page.locator('#ds-body')).toContainText('Synthetic page message 0');
+  await page.locator('#tab-subs').click();
+  await expect(page.locator('.sub-card')).toHaveCount(2);
+  await expect(page.locator('#ds-body')).toContainText('Live child activity');
+  const nested = page.locator('.sub-card[data-agent="Nested"]');
+  await expect(nested).toContainText('History · not live');
+  await expect(nested).toContainText('Parent:');
+  await nested.click();
+  await expect(page.locator('#ds-body')).toContainText('Synthetic child reply nested-session');
+  await expect(page.locator('#ds-body')).not.toContainText('NEVER_RENDER_CHILD');
 
   // The snapshot (and so the replay log) carries metadata only, never the conversation.
   const snap = JSON.stringify(await (await request.get('/api/live?since=-1')).json());
   expect(snap).toContain('"persistedOnly":true');
   expect(snap).not.toContain('E2E synthetic');
+  for (const hidden of ['NEVER_RENDER_TOOL', 'NEVER_RENDER_CHILD']) expect(snap).not.toContain(hidden);
 
   await page.locator('#ds-actions').getByRole('button', { name: 'Unpin' }).click();
   await expect(page.locator('#lite .lite-card').filter({ hasText: 'e2e-repo' })).toHaveCount(0);

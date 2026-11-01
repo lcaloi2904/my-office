@@ -2,13 +2,13 @@
 import * as THREE from 'three';
 import { CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 import { state } from '../core/state.js';
-import { $, el, short } from '../core/env.js';
+import { $, el, replay, short } from '../core/env.js';
 import { scene } from '../scene/renderer.js';
 import { CHAIR_IDLE, DESKS, PODS, UNITS, chairs, unitOfDesk } from '../world/desks.js';
 import { canvasTex } from '../scene/blocks.js';
 import { DEPTS } from '../world/layout.js';
 import { DEPT_SIGNS } from '../world/pro/wing.js';
-import { PALETTE, addWorker, dn, dropSub, hash, leaving, leavingIds, sessions, spawnSub, subs, workers } from '../people/workers.js';
+import { ACTOR_BUDGET, CHILD_ACTOR_BUDGET, PALETTE, actorCount, actorIdentity, addWorker, agentOf, childActorKey, childObservation, dn, freeActor, hash, leaving, observeActor, sessions, spawnSub, subs, workers } from '../people/workers.js';
 import { queueUi } from '../ui/activity.js';
 import { closeSession } from '../ui/session-drawer.js';
 import { t as tr } from '../../i18n/index.js';
@@ -21,7 +21,14 @@ export function setConn(on) { const c = $('conn'); c.dataset.state = on ? 'on' :
    the nearest free area. Areas are remembered on this device, so a project comes back to the same desks tomorrow; an
    area someone else remembers is the last one handed to a newcomer. Only when every area is taken do projects share. */
 const deskOf = new Map(), rowTeam = new Map();
-const projOf = (s) => s?.git?.repo || String(s?.dir || '').split('/').filter(Boolean).pop() || tr('activity.live.otherProject');
+export const projOf = (s) => {
+  if (s?.projectKey) return s.projectKey;
+  const kind = agentOf(s);
+  return kind === 'claude' && s?.dir
+    ? JSON.stringify(['unverified-project', kind, 'legacy-local-dir', s.dir])
+    : JSON.stringify(['unverified-project', kind, 'session', s?.sessionKey || s?.id]);
+};
+const projectLabel = (s) => s?.git?.repo || String(s?.dir || '').split(/[\\/]/).filter(Boolean).pop() || (agentOf(s) === 'omp' ? s?.name : '') || tr('activity.live.otherProject');
 // partners sit face to face across a pod's screen (back-left, then front-right…): one faces the camera, the other's
 // screens do; a room fills its first pod before the second
 const SEAT_ORDER = [0, 3, 1, 2, 4, 7, 5, 6];
@@ -29,6 +36,7 @@ const AREAS_KEY = 'office-areas';
 let homes = {};   // project -> [area, …] it had, latest first (localStorage)
 try { homes = JSON.parse(localStorage.getItem(AREAS_KEY) || '{}') || {}; } catch { /* storage blocked */ }
 function remember(proj, u) {
+  if (replay.on) return;
   homes[proj] = [u, ...(homes[proj] || []).filter((x) => x !== u)].slice(0, 3);
   const keep = Object.keys(homes).slice(-24);   // (the 24 projects seen last)
   homes = Object.fromEntries(keep.map((k) => [k, homes[k]]));
@@ -69,47 +77,92 @@ export function updateTeamTags() {
     // both halves of a pod with one project: one chip for the pod (on the first half), both carpets
     const twin = UNITS[u].pod != null ? u ^ 1 : -1, joined = twin >= 0 && here[twin].length && nameOf(twin) === nameOf(u);
     const people = joined ? [...here[u], ...here[twin]] : here[u];
-    const projs = [...new Set(people.map(projOf))], name = nameOf(u), chip = here[u].length && !(joined && twin < u);
-    const key = here[u].length ? `${name}|${projs.length}|${people.length}|${chip}` : '';
+    const projs = [...new Set(people.map(projOf))], project = nameOf(u), name = projectLabel(people.find((s) => projOf(s) === project) || people[0]), chip = here[u].length && !(joined && twin < u);
+    const key = here[u].length ? `${project}|${name}|${projs.length}|${people.length}|${chip}` : '';
     if (key === tg.key) return; tg.key = key; tg.o.visible = !!chip; if (tg.rug) tg.rug.visible = !!here[u].length;
-    const dept = UNITS[u].dept; if (dept >= 0) DEPT_SIGNS[dept]?.(here[u].length ? name : '');   // the room's door plaque
+    const dept = UNITS[u].dept; if (dept >= 0) DEPT_SIGNS[dept]?.(here[u].length ? name : '');
     if (!here[u].length) return;
-    const colour = PALETTE[hash(name) % PALETTE.length];
+    const colour = PALETTE[hash(project) % PALETTE.length];
     tg.rug?.material.color.set(colour);
     if (joined && twin < u) return;
     if (joined) tg.o.position.x = (DESKS[UNITS[u].desks[0]].x + DESKS[UNITS[twin].desks[0]].x) / 2 + 1.72 * Math.sign(DESKS[UNITS[twin].desks[0]].x - DESKS[UNITS[u].desks[0]].x);
     else if (UNITS[u].pod != null) tg.o.position.x = PODS[UNITS[u].pod][0] + 1.72 * UNITS[u].side;
     tg.txt.textContent = tr('activity.live.team', { name, more: projs.length > 1 ? ` +${projs.length - 1}` : '', n: people.length });
     tg.dot.style.background = colour;
-    tg.o.element.title = projs.length > 1 ? tr('activity.live.teamShared', { name, others: projs.slice(1).join(', ') }) : tr('activity.live.teamTitle', { name });
+    tg.o.element.title = projs.length > 1 ? tr('activity.live.teamShared', { name, others: [...new Set(people.filter((s) => projOf(s) !== project).map(projectLabel))].join(', ') }) : tr('activity.live.teamTitle', { name });
   });
 }
-export function upsertSession(s, walkIn = true) {
-  s.desk = proDesk(s);   // (every layout: the project's area)
-  const had = sessions.has(s.id);
-  sessions.set(s.id, s);
-  let w = workers.get(s.id);
-  if (!w && !leavingIds.has(s.id)) w = addWorker(s, walkIn && had === false && state.connectedOnce);
-  if (w) {
-    w.setName(short(dn(s), 26));
-    const live = new Set((s.subs || []).map((x) => x.id));
-    for (const [aid, sw] of subs) if (sw.parent === w && !live.has(aid)) dropSub(aid);
-    for (const x of s.subs || []) { if (!subs.has(x.id)) spawnSub(w, x.id, x.type); const sw = subs.get(x.id); if (sw && x.desc) sw.desc = x.desc; }
-    w.setTeam([...subs.values()].filter((x) => x.parent === w).length);
-    w.setAcct(s.acct);
+// Root actors take priority. The list model stays lossless; only the render projection is bounded.
+export function reconcileActors(walkInId = null) {
+  const roots = [];
+  for (const s of sessions.values()) {
+    roots.push(s);
+    if (roots.length === ACTOR_BUDGET) break;
   }
+  const rootIds = new Set(roots.map((s) => s.id));
+  const wanted = new Map();
+  let room = ACTOR_BUDGET - roots.length;
+  for (const s of sessions.values()) {
+    const children = s.subs || [], rendered = rootIds.has(s.id), rootKey = actorIdentity(s);
+    const visible = rendered ? children.slice(0, Math.min(CHILD_ACTOR_BUDGET, room)) : [];
+    room -= visible.length;
+    s.actorOverflow = { root: !rendered, children: children.length - visible.length };
+    if (!rendered) { freeDesk(s.id); s.desk = -1; }
+    s.flattened = children.some((x) => x.parentAgentKey && x.parentAgentKey !== rootKey);
+    for (const child of visible) wanted.set(childActorKey(s, child), { s, child });
+  }
+  for (const [key, w] of subs) if (!wanted.has(key) || !rootIds.has(w.parent?.id)) { subs.delete(key); freeActor(w); }
+  for (const [id, w] of workers) if (!rootIds.has(id)) { workers.delete(id); freeActor(w); freeDesk(id); }
+  // A reconnect or a full scene must not retain an old walk-out alongside its replacement.
+  const needed = roots.length + wanted.size;
+  for (const w of [...leaving]) {
+    if (sessions.has(w.parent?.id || w.id) || actorCount() >= ACTOR_BUDGET || needed + leaving.size > ACTOR_BUDGET) freeActor(w);
+  }
+  for (const s of roots) {
+    s.desk = proDesk(s);
+    let w = workers.get(s.id);
+    if (!w) {
+      w = addWorker(s, s.id === walkInId && agentOf(s) === 'claude' && state.connectedOnce);
+    }
+    if (!w) continue;
+    w.setName(short(dn(s), 26)); w.setAgent(agentOf(s)); w.setAcct(agentOf(s) === 'claude' ? s.acct : '');
+    w.setTeam((s.subs || []).length);
+    observeActor(w, s);
+  }
+  for (const [key, { s, child }] of wanted) {
+    const parent = workers.get(s.id);
+    if (!parent) continue;
+    const w = subs.get(key) || spawnSub(parent, child.id, child.type, true, child);
+    if (w) {
+      w.desc = child.desc || ''; w.parentAgentKey = child.parentAgentKey; w.rootSessionKey = child.rootSessionKey; w.relationKind = child.relationKind;
+      observeActor(w, childObservation(s, child));
+    }
+  }
+}
+export function upsertSession(s, walkIn = true) {
+  if (!s || typeof s.id !== 'string') return;
+  const previous = sessions.get(s.id), had = !!previous;
+  if (previous && projOf(previous) !== projOf(s)) {
+    freeDesk(s.id);
+    if (previous.desk >= 0) chairs[previous.desk].color.set(CHAIR_IDLE);
+    for (const [key, child] of subs) if (child.parent?.id === s.id) { subs.delete(key); freeActor(child); }
+    const w = workers.get(s.id);
+    if (w) { workers.delete(s.id); freeActor(w); }
+  }
+  s.desk = deskOf.get(s.id) ?? -1;
+  sessions.set(s.id, s);
+  reconcileActors(walkIn && !had ? s.id : null);
   queueUi();
 }
 export function removeSession(id) {
   const s = sessions.get(id); sessions.delete(id); freeDesk(id);
+  for (const [key, w] of subs) if (w.parent?.id === id) { subs.delete(key); freeActor(w); }
+  for (const w of [...leaving]) if (w.id === id || w.parent?.id === id) freeActor(w);
   const w = workers.get(id);
-  if (w) {
-    workers.delete(id); leavingIds.add(id); leaving.add(w);
-    for (const [aid, sw] of subs) if (sw.parent === w) dropSub(aid, false);   // the boss is leaving: no report
-    w.leave(() => leavingIds.delete(id));
-  }
+  if (w) { workers.delete(id); freeActor(w); }
   if (s && s.desk >= 0) chairs[s.desk].color.set(CHAIR_IDLE);
   if (state.selectedId === id) closeSession();
+  reconcileActors();
   queueUi();
 }
 

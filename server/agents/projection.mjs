@@ -13,6 +13,8 @@ export function projectClaudeSession(session) {
     agentKind: 'claude', agent: 'claude',
     // Compatibility key: Claude retains its existing public ID and restart semantics.
     sessionKey: 'claude:' + session.id,
+    projectKey: HEX64.test(session.projectKey) ? session.projectKey : null,
+    worktreeKey: HEX64.test(session.worktreeKey) ? session.worktreeKey : null,
     capabilities: capabilitiesFor('claude'),
   };
 }
@@ -65,7 +67,7 @@ function liveFields(live) {
   if (!live || typeof live !== 'object') return null;
   const connection = CONNECTIONS.has(live.connection) ? live.connection : 'disconnected';
   const ended = live.lifecycle === 'ended';
-  const activity = !ended && connection === 'connected' && ACTIVITIES.has(live.activity) ? live.activity : 'unknown';
+  const activity = !ended && connection === 'connected' && live.gap !== true && ACTIVITIES.has(live.activity) ? live.activity : 'unknown';
   return {
     persistedOnly: false, lifecycle: ended ? 'ended' : 'open', activity, connection,
     status: LEGACY_STATUS[activity] || 'unknown',
@@ -75,6 +77,40 @@ function liveFields(live) {
     waitReasons: Array.isArray(live.waitReasons) ? live.waitReasons.filter((k) => k === 'approval' || k === 'input').slice(0, 2) : [],
     eventGap: live.gap === true,
   };
+}
+
+const CHILD_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/;
+function childFields(record, rootKey) {
+  const input = Array.isArray(record.children) ? record.children : [], children = [], seen = new Set();
+  for (const child of input.slice(0, 128)) {
+    if (!child || !CHILD_ID.test(child.id) || seen.has(child.id) || child.rootSessionKey !== rootKey ||
+      child.relationKind !== 'subagent' || child.agentKey !== JSON.stringify([rootKey, child.id])) continue;
+    const parent = child.parentAgentKey;
+    // Accept only this root or a namespaced child tuple. Never use transcript entry.parentId for lineage.
+    let validParent = parent === rootKey;
+    if (!validParent && typeof parent === 'string') {
+      try { const tuple = JSON.parse(parent); validParent = Array.isArray(tuple) && tuple.length === 2 && tuple[0] === rootKey && CHILD_ID.test(tuple[1]) && tuple[1] !== child.id; } catch { /* invalid parent */ }
+    }
+    if (!validParent) continue;
+    seen.add(child.id);
+    children.push({ id: child.id, agentKey: child.agentKey, rootSessionKey: rootKey, parentAgentKey: parent,
+      relationKind: 'subagent', type: 'task', desc: '', last: null, steps: 0, status: 'unknown', persistedOnly: true,
+      lifecycle: 'historical', tombstoned: child.tombstoned === true,
+      startedAt: finiteNonnegative(child.startedAt) ?? 0, endedAt: null });
+  }
+  const byKey = new Map(children.map((c) => [c.agentKey, c]));
+  const valid = children.filter((child) => {
+    const visited = new Set([child.agentKey]);
+    let parent = child.parentAgentKey;
+    while (parent !== rootKey) {
+      if (visited.has(parent) || !byKey.has(parent)) return false;
+      visited.add(parent); parent = byKey.get(parent).parentAgentKey;
+    }
+    return true;
+  });
+  return { subs: valid, doneSubs: [],
+    childrenIncomplete: record.childrenIncomplete === true || input.length > 128 || valid.length !== input.length,
+    childSupport: { task: 'persisted', nested: 'bounded', advisor: 'unsupported', liveChildren: 'unsupported' } };
 }
 
 export function projectOmpSession(record) {
@@ -92,7 +128,7 @@ export function projectOmpSession(record) {
     pid: null, link: null, acct: null, desk: -1, status: 'unknown',
     lifecycle: 'unknown', activity: 'unknown', connection: 'unknown',
     taskStart: 0, counts: { read: 0, edit: 0, cmd: 0, web: 0 },
-    subs: [], doneSubs: [], last: null, lastPrompt: '',
+    ...childFields(record, identity.sessionKey), last: null, lastPrompt: '',
     lastAt: finiteNonnegative(record.observedAt) ?? 0,
     usage: null, model: safeModel(record.model), metrics: ompMetrics(record.metrics),
     projectKey: null, worktreeKey: null, capabilities: capabilitiesFor('omp'),

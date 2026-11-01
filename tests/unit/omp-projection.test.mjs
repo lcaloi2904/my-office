@@ -40,13 +40,13 @@ test('only the server flag on a persisted record opens conversation reads; nothi
 test('UI hint: only a pinned persisted OMP id with the flag may read its conversation; controls stay Claude-only', () => {
   const text = fs.readFileSync(new URL('../../src/office/people/workers.js', import.meta.url), 'utf8').replace(/^import .*;\r?$/gm, '')
     .replace(/^export \{[^}]+\};\r?$/gm, '').replace(/^export (?=(?:const|let|function|async function)\b)/gm, '');
-  const ui = vm.runInNewContext(text + '\n;({ canSession, isPersisted, unknownLabel })', { tr: (k) => k }, { timeout: 1000 });
+  const ui = vm.runInNewContext(text + '\n;({ canSession, isPersisted, unknownLabel })', { tr: (k) => k, replay: { on: false } }, { timeout: 1000 });
   const id = projectOmpSession(base).id, caps = { readConversation: true };
   const row = { id, agentKind: 'omp', persistedOnly: true, capabilities: caps };
   assert.equal(ui.canSession(row, 'readConversation'), true);
   for (const control of ['openWindow', 'closeSession', 'changeAccount', 'remoteControl', 'startTask']) assert.equal(ui.canSession({ ...row, capabilities: { ...caps, [control]: true } }, control), false);
   assert.equal(ui.canSession({ ...row, capabilities: { readConversation: false } }, 'readConversation'), false);
-  assert.equal(ui.canSession({ ...row, persistedOnly: false }, 'readConversation'), false);
+  assert.equal(ui.canSession({ ...row, persistedOnly: false }, 'readConversation'), true, 'hybrid file+live retains server-authorized reads');
   assert.equal(ui.canSession({ ...row, id: 'omp:short' }, 'readConversation'), false);
   assert.equal(ui.canSession({ ...row, agentKind: 'claude' }, 'readConversation'), false);
   assert.equal(ui.unknownLabel(row), 'drawer.persistedState');

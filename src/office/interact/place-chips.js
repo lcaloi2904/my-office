@@ -68,7 +68,7 @@ function declutterTags() {
     w.tagObj.getWorldPosition(_tp); const d = _tp.clone().sub(camera.position).dot(_fwd); _tp.project(camera);
     const cl = w.bubbleEl.classList, urgent = bub && (cl.contains('bubble--wait') || cl.contains('bubble--fail'));
     // sizes are measured only when the text changes: reading them every tick forced a layout of every label
-    const sz = (w.lblSize ||= {}), tk = `${w.tagText.data}|${w.teamEl?.textContent || ''}|${w.tagEl.classList.contains('tag--wait')}`, bk = `${w.sayKey}|${cl.contains('bubble--sub')}`;
+    const sz = (w.lblSize ||= {}), tk = `${w.tagText.data}|${w.agentEl?.textContent || ''}|${w.teamEl?.textContent || ''}|${w.tagEl.classList.contains('tag--wait')}`, bk = `${w.sayKey}|${cl.contains('bubble--sub')}`;
     if (tagOn && sz.tk !== tk) { sz.tk = tk; sz.wd = w.tagEl.offsetWidth || 90; sz.h = w.tagEl.offsetHeight || 24; }
     if (bub && sz.bk !== bk) { sz.bk = bk; sz.bw = w.bubbleEl.offsetWidth || 180; sz.bh = w.bubbleEl.offsetHeight || 40; }
     list.push({ w, x: (_tp.x + 1) / 2 * W, y: (1 - _tp.y) / 2 * H, d, tagOn, bub, urgent, wd: sz.wd || 90, h: sz.h || 24, bw: sz.bw || 180, bh: sz.bh || 40 });

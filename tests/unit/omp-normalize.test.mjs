@@ -49,7 +49,8 @@ test('F7: reset, compaction and branch summaries retain the declared active-cont
   const result = decode([header(), before, keep, compact, summary], { includeContent: true });
   assert.deepEqual(result.items.map((i) => i.text), ['Synthetic condensed history', 'Synthetic assistant keep', 'Synthetic branch summary']);
   const reset = decode([header(), before, keep, compact, entry('reset', 'compact', { type: 'reset_boundary' }), entry('after', 'reset')], { includeContent: true });
-  assert.deepEqual(reset.items.map((i) => i.text), ['Synthetic message after']);
+  assert.deepEqual(reset.items.map((i) => i.text), ['', 'Synthetic message after']);
+  assert.equal(reset.items[0].kind, 'reset_boundary');
   const invalid = decode([header(), before, entry('c', 'before', { type: 'compaction', firstKeptEntryId: 'not-present' })]);
   assert.equal(invalid.incomplete, true);
 });
@@ -139,6 +140,36 @@ test('U3: duplicate entries never rewind the selected branch or add usage twice'
   assert.equal(n.value().metrics.cost, null, 'conflicting IDs invalidate certainty, not add spend');
   assert.ok(n.value().diagnostics.includes('conflicting-entry-id'));
   assert.equal(n.value().items.at(-1).text, 'Synthetic assistant b');
+});
+
+test('evicted entry retransmissions cannot rewind the retained branch or resurrect old usage', () => {
+  const a = assistant('a', null), n = normalizer({ includeContent: true, maxEntries: 2 });
+  [header(), a, assistant('b', 'a'), assistant('c', 'b')].forEach((r) => n.push(r));
+  const before = n.value();
+  n.push(a); n.push(assistant('a', null, { content: 'Changed retransmission', usage: usage(999) }));
+  assert.deepEqual(n.value().items, before.items);
+  assert.equal(n.value().observedAt, before.observedAt);
+  assert.equal(n.value().incomplete, true); assert.equal(n.value().metrics.cost, null);
+  assert.ok(n.value().diagnostics.includes('possible-duplicate-entry-id'));
+  n.push(assistant('d', 'c'));
+  assert.equal(n.value().items.at(-1).text, 'Synthetic assistant d');
+  n.push(assistant('new-branch', 'a'));
+  assert.equal(n.value().items.at(-1).text, 'Synthetic assistant new-branch');
+  assert.ok(n.value().diagnostics.includes('missing-parent'));
+});
+
+test('possible-duplicate membership is bounded and saturation explicitly degrades rather than rewinding', () => {
+  const n = normalizer({ includeContent: true, maxEntries: 2, maxIndexBytes: 1024 });
+  n.push(header());
+  for (let i = 0; i < 3000; i++) n.push(assistant('saturated-' + i, i ? 'saturated-' + (i - 1) : null));
+  const before = n.value();
+  assert.equal(before.incomplete, true); assert.ok(before.indexBytes <= 1024);
+  assert.ok(before.diagnostics.includes('possible-duplicate-entry-id'));
+  n.push(assistant('saturated-0', null));
+  assert.deepEqual(n.value().items, before.items);
+  const rebuilt = decode([header(), assistant('saturated-0', null)], { includeContent: true, maxIndexBytes: 1024 });
+  assert.equal(rebuilt.items.at(-1).text, 'Synthetic assistant saturated-0');
+  assert.equal(rebuilt.incomplete, false);
 });
 
 test('bounded tree and per-message tool caps are visible, not silent truncation', () => {

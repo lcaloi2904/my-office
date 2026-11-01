@@ -3,7 +3,7 @@ import { state } from '../core/state.js';
 import { PRO, nowMs, officeNow, rand, reduceMotion, short } from '../core/env.js';
 import { NODES, STATIONS, faceTo } from './navigation.js';
 import { PODS } from '../world/desks.js';
-import { dn, hash, sessions, workers } from './workers.js';
+import { agentOf, dn, hash, sessions, workers } from './workers.js';
 import { director } from './director.js';
 import { later, quip } from './errands.js';
 import { busyNow } from './accountant.js';
@@ -18,7 +18,7 @@ const SLOTS = [600, 930], REACH = 2.5, DONE_MS = 10 * 60e3;
 let round = null, day = '', slots = [], checkAt = 0;
 const minutes = () => { const d = officeNow(); return d.getHours() * 60 + d.getMinutes(); };
 const atHome = (D) => D.station === 'home' && !D.job && !D.queue.length && D.phase !== 'walk' && !D.chore && state.sim >= (D.holdUntil || 0);
-const present = (w) => !w.sub && w.root.visible && !w.away && !w.street && !w.offstage && !w.leaving && !w.outing;
+const present = (w) => !w.sub && agentOf(sessions.get(w.id)) === 'claude' && w.root.visible && !w.away && !w.street && !w.offstage && !w.leaving && !w.outing;
 const near = (D, w) => Math.hypot(w.pos.x - D.pos.x, w.pos.y - D.pos.y) < REACH;
 // someone coming to report (a station by the director's desk taken, or on the way there)
 function reportIncoming(D) {
