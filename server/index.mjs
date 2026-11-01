@@ -85,8 +85,10 @@ async function startOmpIngress() {
     ompBridge = createOmpBridge({ lifecycle: ompAdapter.lifecycle, tokens });
   } catch { ompBridge = null; ompIngressFailed = true; }   // (no token, no ingress: files mode carries on)
 }
-// Phase 03: an independent, opt-in native Windows process boundary; no OMP commands while disabled.
+// Phase 03/04: independent, opt-in native Windows process and interactive command boundaries; OFF by default.
 const OMP_LAUNCH_ON = process.env.OFFICE_OMP_LAUNCH === '1';
+const OMP_CONTROL_ON = OMP_LAUNCH_ON && process.env.OFFICE_OMP_CONTROL === '1';
+const OMP_ACTIVITY_DETAIL_ON = process.env.OFFICE_OMP_ACTIVITY_DETAIL === '1';
 let ompControlManager = null, ompLaunchReason = OMP_LAUNCH_ON ? 'starting' : 'disabled';
 async function startOmpManaged() {
   if (!OMP_LAUNCH_ON) return;
@@ -98,6 +100,8 @@ async function startOmpManaged() {
     const resolver = await createOmpLaunchResolver({ configFile, adapter: ompAdapter });
     ompControlManager = createOmpControlManager({
       resolver, adapter: ompAdapter,
+      controlEnabled: OMP_CONTROL_ON,
+      allowActivitySubject: OMP_ACTIVITY_DETAIL_ON,
       onChange(id) {
         const r = ompVisibility.isHidden(id) ? null : agents.resolve(id);
         broadcast(r ? { k: 'sess', s: r.publicSession } : { k: 'gone', id }, true);
@@ -109,9 +113,9 @@ async function startOmpManaged() {
     ompControlManager = null; ompLaunchReason = 'config-invalid';
   }
 }
-function ompManagedStatus() {
-  return ompControlManager ? { ok: true, ...ompControlManager.status() } :
-    { ok: true, enabled: false, reason: ompLaunchReason, projects: [], profiles: [], sessions: [], resumeAvailable: false };
+function ompManagedStatus(targetId = null) {
+  return ompControlManager ? { ok: true, ...ompControlManager.status(targetId) } :
+    { ok: true, enabled: false, controlEnabled: false, reason: ompLaunchReason, projects: [], profiles: [], sessions: [], resumeAvailable: false, ...(targetId ? { session: null } : {}) };
 }
 /* end OMP wiring */
 const OMP_USAGE_ON = !['0', 'false', 'off'].includes(String(process.env.OFFICE_OMP_USAGE ?? '1').trim().toLowerCase());
@@ -2393,7 +2397,7 @@ const server = http.createServer((req, res) => {
   }
   if (url.pathname === '/api/omp/control/status' && req.method === 'GET') {
     if (!ompControlLocal(req)) { json(res, 403, { ok: false, code: 'agentLocalOnly' }); return; }
-    json(res, 200, ompManagedStatus());
+    json(res, 200, ompManagedStatus(url.searchParams.get('id')));
     return;
   }
   if (url.pathname === '/api/omp/control/launch' && req.method === 'POST') {
@@ -2407,6 +2411,29 @@ const server = http.createServer((req, res) => {
       json(res, result.ok ? 200 : result.code === 'LAUNCH_INVALID' ? 400 :
         ['LAUNCH_OWNER_UNVERIFIED', 'LAUNCH_OWNER_CONFLICT', 'LAUNCH_OWNER_UNKNOWN', 'LAUNCH_BUSY'].includes(result.code) ? 409 : 403, result);
     }).catch(() => json(res, 500, { ok: false, code: 'LAUNCH_FAILED' }));
+    return;
+  }
+  if (url.pathname === '/api/omp/control/command' && req.method === 'POST') {
+    if (!ompControlLocal(req) || !req.headers.origin || !sameOriginOf(req) ||
+        !/^application\/json(?:\s*;|$)/i.test(String(req.headers['content-type'] || ''))) {
+      json(res, 403, { ok: false, code: 'agentLocalOnly' }); return;
+    }
+    if (!ompControlManager || !OMP_CONTROL_ON) { json(res, 403, { ok: false, code: 'COMMAND_DISABLED' }); return; }
+    readJson(req, 20_480).then(async (body) => {
+      if (!body) { json(res, 400, { ok: false, code: 'COMMAND_INVALID' }); return; }
+      const result = await ompControlManager.command(body);
+      const status = result.ok ? 200
+        : /^COMMAND_(?:INVALID|TEXT_)/.test(result.code) ? 400
+          : result.code === 'COMMAND_UNKNOWN_SESSION' ? 404
+            : result.code === 'COMMAND_RATE_LIMIT' ? 429
+              : result.code === 'COMMAND_ACK_UNKNOWN' ? 504
+                : ['COMMAND_STALE_OWNER', 'COMMAND_DISCONNECTED', 'COMMAND_ID_CONFLICT', 'COMMAND_BUSY',
+                  'COMMAND_STATE_UNKNOWN', 'COMMAND_SESSION_BUSY', 'COMMAND_SESSION_IDLE', 'COMMAND_NOTHING_TO_ABORT',
+                  'COMMAND_QUEUE_EMPTY', 'COMMAND_NOT_REMOVED'].includes(result.code) ? 409 : 403;
+      // Audit metadata only: never log prompt text, tool arguments or user input.
+      fsp.appendFile(ACTION_LOG, `${new Date().toISOString()} omp command ${String(body?.kind || '?').slice(0, 16)} -> ${result.code || (result.ok ? 'OK' : 'ERR')}\n`).catch(() => {});
+      json(res, status, result);
+    }).catch(() => json(res, 500, { ok: false, code: 'COMMAND_FAILED' }));
     return;
   }
   if (url.pathname === '/api/omp/visibility') {   // hide / show an OMP session in the office; never touches the process, telemetry or files

@@ -10,7 +10,7 @@ export default defineConfig({
   ...base,
   workers: 1, // Both specs mutate the same synthetic pin/visibility store.
   testIgnore: undefined,
-  testMatch: '**/omp-{files,visibility,launch-resume}.spec.ts',
+  testMatch: '**/omp-{files,visibility,launch-resume,controls,activity-bubbles}.spec.ts',
   grepInvert: /native launcher ON/,
   webServer: {
     ...base.webServer as object,

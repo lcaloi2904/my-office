@@ -1,10 +1,13 @@
-// OMP RPC stdio transport. Phase 03: internal get_state/new_session only; never sends model turns.
+// OMP RPC stdio transport. Phase 03: internal get_state/new_session only; Phase 04 adds interactive commands when allowControl=true.
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { MAX_COMMAND_BYTES, MAX_COMMAND_CHARS } from './command-schema.mjs';
 
-const RPC_METHODS = new Set(['get_state', 'new_session', 'get_session_lease']);
+const BASE_RPC_METHODS = new Set(['get_state', 'new_session', 'get_session_lease']);
+const CONTROL_RPC_METHODS = new Set(['prompt', 'steer', 'follow_up', 'abort', 'remove_queued_message']);
 const MAX_FRAME = 1024 * 1024;
-const fault = (code) => Object.assign(new Error(code), { code });
+const MAX_OUTBOUND = 20 * 1024;
+const fault = (code, extra) => Object.assign(new Error(code), { code, ...extra });
 
 // Never spread process.env: provider credentials, injection hooks and arbitrary OMP flags stay outside a child.
 export function childEnvironment(source = process.env) {
@@ -16,9 +19,11 @@ export function childEnvironment(source = process.env) {
 }
 
 export function createOmpRpcHost({ binary, args, cwd, env, spawnImpl = spawn, timeoutMs = 8000,
-  maxFrameBytes = MAX_FRAME, requiredOwnershipProtocol, onExit = () => {} } = {}) {
+  maxFrameBytes = MAX_FRAME, requiredOwnershipProtocol, allowControl = false,
+  onEvent = () => {}, onExit = () => {} } = {}) {
   if (typeof binary !== 'string' || !Array.isArray(args) || typeof cwd !== 'string' ||
       (requiredOwnershipProtocol !== undefined && requiredOwnershipProtocol !== 1) ||
+      typeof allowControl !== 'boolean' || typeof onEvent !== 'function' ||
       !Number.isSafeInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 30000) throw fault('RPC_INVALID');
   const maxFrame = Math.min(Math.max(maxFrameBytes, 1024), MAX_FRAME);
   let child = null, ready = false, closed = false, buffer = Buffer.alloc(0), readyResolve, readyReject;
@@ -49,7 +54,12 @@ export function createOmpRpcHost({ binary, args, cwd, env, spawnImpl = spawn, ti
       if (!settled) { settled = true; readyResolve(); }
       return;
     }
-    if (message.type !== 'response') return; // Notifications are not commands or proof of a turn.
+    if (message.type !== 'response') {
+      if (typeof message.type === 'string' && message.type.length <= 80) {
+        try { onEvent(message); } catch { /* event listeners cannot crash RPC framing */ }
+      }
+      return;
+    }
     const id = message.id;
     if (typeof id !== 'string' || !pending.has(id)) return;
     const task = pending.get(id);
@@ -57,7 +67,10 @@ export function createOmpRpcHost({ binary, args, cwd, env, spawnImpl = spawn, ti
     if (message.command !== task.method || typeof message.success !== 'boolean') {
       task.reject(fault('RPC_PROTOCOL')); fail('RPC_PROTOCOL'); return;
     }
-    if (!message.success) { task.reject(fault('RPC_REJECTED')); return; }
+    if (!message.success) {
+      task.reject(fault('RPC_REJECTED', { rpcCode: typeof message.code === 'string' ? message.code : null }));
+      return;
+    }
     task.resolve(message.data ?? null);
   };
   const ingest = (chunk) => {
@@ -95,17 +108,44 @@ export function createOmpRpcHost({ binary, args, cwd, env, spawnImpl = spawn, ti
     timer.unref?.();
     try { await boot; return api; } finally { clearTimeout(timer); }
   };
-  const request = (method, data) => {
-    if (!ready || closed || !RPC_METHODS.has(method) || pending.size >= 8) return Promise.reject(fault('RPC_UNAVAILABLE'));
-    if (data !== undefined && (method !== 'get_session_lease' ||
-      !data || !Array.isArray(data.sessionIds) || data.sessionIds.length !== 1 ||
-      typeof data.sessionIds[0] !== 'string' || data.sessionIds[0].length > 256)) return Promise.reject(fault('RPC_INVALID'));
-    const id = randomUUID();
+  const validData = (method, data) => {
+    if (method === 'get_state' || method === 'new_session' || method === 'abort') return data === undefined;
+    if (method === 'get_session_lease') {
+      return !!data && Array.isArray(data.sessionIds) && data.sessionIds.length === 1 &&
+        typeof data.sessionIds[0] === 'string' && data.sessionIds[0].length > 0 && data.sessionIds[0].length <= 256;
+    }
+    if (method === 'prompt' || method === 'steer' || method === 'follow_up') {
+      return !!data && typeof data === 'object' && !Array.isArray(data) &&
+        Object.keys(data).length === 1 && typeof data.message === 'string' &&
+        data.message.length > 0 && data.message.length <= MAX_COMMAND_CHARS &&
+        Buffer.byteLength(data.message, 'utf8') <= MAX_COMMAND_BYTES;
+    }
+    if (method === 'remove_queued_message') {
+      return !!data && typeof data === 'object' && !Array.isArray(data) &&
+        Object.keys(data).length === 2 && typeof data.message === 'string' &&
+        data.message.length > 0 && data.message.length <= MAX_COMMAND_CHARS &&
+        Buffer.byteLength(data.message, 'utf8') <= MAX_COMMAND_BYTES &&
+        (data.queue === 'steering' || data.queue === 'followUp');
+    }
+    return false;
+  };
+  const request = (method, data, opts = {}) => {
+    const allowed = BASE_RPC_METHODS.has(method) || (allowControl && CONTROL_RPC_METHODS.has(method));
+    if (!ready || closed || !allowed || pending.size >= 8) return Promise.reject(fault('RPC_UNAVAILABLE'));
+    if (!validData(method, data)) return Promise.reject(fault('RPC_INVALID'));
+    const id = typeof opts?.requestId === 'string' && /^[A-Za-z0-9._:-]{4,128}$/.test(opts.requestId)
+      ? opts.requestId : randomUUID();
+    if (pending.has(id)) return Promise.reject(fault('RPC_DUPLICATE_ID'));
+    const maxBytes = CONTROL_RPC_METHODS.has(method) ? MAX_OUTBOUND : 4096;
     const command = JSON.stringify({ id, type: method, ...(data === undefined ? {} : data) }) + '\n';
-    if (Buffer.byteLength(command) > 4096 || child.stdin.destroyed || child.stdin.writableLength > 16 * 1024) return Promise.reject(fault('RPC_BACKPRESSURE'));
+    if (Buffer.byteLength(command) > maxBytes || child.stdin.destroyed || child.stdin.writableLength > 32 * 1024) {
+      return Promise.reject(fault('RPC_BACKPRESSURE'));
+    }
+    const keepOpenOnTimeout = opts?.killOnTimeout === false;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
-        pending.delete(id); reject(fault('RPC_TIMEOUT')); fail('RPC_TIMEOUT');
+        pending.delete(id); reject(fault('RPC_TIMEOUT', { requestId: id }));
+        if (!keepOpenOnTimeout) fail('RPC_TIMEOUT');
       }, timeoutMs);
       timer.unref?.();
       pending.set(id, { method, resolve, reject, timer });

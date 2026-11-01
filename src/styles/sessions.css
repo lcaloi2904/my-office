@@ -261,3 +261,24 @@
   .omp-undo { bottom: calc(206px + env(safe-area-inset-bottom, 0px)); flex-wrap: wrap; }
   .omp-actions-content .btn { min-height: 44px; }
 }
+
+/* Phase 04 managed OMP interactive composer, mode selector and queue chips */
+.omp-control-panel { width: 100%; display: grid; gap: 8px; padding: 10px 11px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); box-sizing: border-box; }
+.omp-cmd-status { padding: 5px 8px; border-radius: 8px; font: 600 .72rem/1.3 var(--font); background: var(--card-2); border: 1px solid var(--line); color: var(--muted); overflow-wrap: anywhere; }
+.omp-cmd-status[data-status="accepted"], .omp-cmd-status[data-status="running"] { color: var(--green-ink); border-color: rgba(61, 220, 132, .4); background: var(--green-soft); }
+.omp-cmd-status[data-status="queued"], .omp-cmd-status[data-status="pending"] { color: var(--amber); border-color: rgba(242, 181, 68, .4); background: var(--amber-soft); }
+.omp-cmd-status[data-status="failed"], .omp-cmd-status[data-status="unknown"] { color: #FF9C9C; border-color: rgba(255, 95, 95, .45); background: var(--red-soft); }
+.omp-mode-bar { display: flex; flex-wrap: wrap; gap: 6px; }
+.omp-mode-btn[aria-pressed="true"] { border-color: var(--accent-line); background: var(--accent-soft); color: var(--ink); }
+.omp-composer-form { display: grid; gap: 8px; }
+.omp-composer-input { width: 100%; min-height: 54px; max-height: 140px; padding: 8px 10px; border: 1px solid var(--line-2); border-radius: 9px; background: var(--side); color: var(--ink); font: 400 .8rem/1.4 var(--font); resize: vertical; box-sizing: border-box; }
+.omp-composer-input:focus-visible { outline: 2px solid var(--accent); }
+.omp-composer-input:disabled { opacity: .6; cursor: not-allowed; }
+.omp-composer-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.omp-queue-list { display: grid; gap: 6px; padding-top: 6px; border-top: 1px solid var(--line); }
+.omp-queue-chip { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 6px 8px; border-radius: 8px; background: var(--card-2); border: 1px solid var(--line); font-size: .74rem; }
+.omp-queue-badge { padding: 2px 6px; border-radius: 6px; background: rgba(106, 174, 255, .15); color: var(--blue); font: 700 .64rem/1.2 var(--font); }
+.omp-queue-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); }
+@media (max-width: 720px) {
+  .omp-mode-bar .btn, .omp-composer-actions .btn, .omp-queue-remove { min-height: 44px; }
+}

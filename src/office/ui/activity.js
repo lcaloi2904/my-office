@@ -1,7 +1,7 @@
 // The activity column and the session list.
 import { state } from '../core/state.js';
 import { $, el, fmtBytes, fmtClock, hhmm, nowMs, replay } from '../core/env.js';
-import { STATUS_LABEL, verb } from './event-text.js';
+import { STATUS_LABEL, ompBubbleView, verb } from './event-text.js';
 import { TYPE_ICON, TYPE_TONE, icon } from './icons.js';
 import { hoverRing, selRing } from '../interact/rings.js';
 import { AGENT_NAME, agentMark, agentOf, canSession, claudeCost, colorOf, dn, dnOf, sessions, unknownLabel, workers } from '../people/workers.js';
@@ -105,9 +105,15 @@ function ago(ts) {
   return tr('time.day', { n: Math.floor(s / 86400) });
 }
 export function doingOf(s) {
-  if (agentOf(s) === 'omp') return { ic: s.persistedOnly ? 'file' : s.status === 'wait' ? 'alert' : 'sparkle', text: unknownLabel(s) };
+  if (agentOf(s) === 'omp') {
+    const fresh = s.lifecycle !== 'ended' && s.persistedOnly !== true && s.connection === 'connected' && s.eventGap !== true;
+    if (fresh && (s.activity === 'active' || s.activity === 'waiting') && typeof ompBubbleView === 'function') {
+      const b = ompBubbleView(s, { fallbackText: unknownLabel(s) });
+      return { ic: s.activity === 'waiting' ? 'alert' : (TYPE_ICON[b.type] || 'sparkle'), text: b.text };
+    }
+    return { ic: s.persistedOnly ? 'file' : s.status === 'wait' ? 'alert' : 'sparkle', text: unknownLabel(s) };
+  }
   if (railGroupOf(s) === 'unknown') return { ic: s.persistedOnly === true ? 'file' : 'sparkle', text: unknownLabel(s) };
-  if (s.status === 'wait') return { ic: 'alert', text: tr('activity.doing.wait') };
   if (s.stuck && s.status !== 'rest') return { ic: 'alert', text: tr(`activity.doing.stuck.${s.stuck.kind}`, { label: s.stuck.label.length > 40 ? `${s.stuck.label.slice(0, 39)}…` : s.stuck.label }), stuck: true };
   const where = whereabouts(workers.get(s.id));   // out of the office: at the shop, on the way home…
   if (where) return where;

@@ -900,3 +900,50 @@ test('a revision conflict arriving after replay starts cannot retry the write', 
   assert.equal(f.calls.length, 1, 'no replay-triggered retry');
   assert.equal(f.body.children.length, 0);
 });
+
+test('actual OMP command route enforces strict local Origin/Host, content-type, flag gate and redacts prompt text from action logs', async () => {
+  const f = routeFixture();
+  const validBody = {
+    id: f.omp.id,
+    runtimeInstanceId: '00000000-0000-4000-8000-000000000099',
+    generation: 1,
+    requestId: 'req-http-1',
+    kind: 'prompt',
+    text: 'SENSITIVE_USER_PROMPT_NEVER_LOG',
+  };
+  const logged = [];
+  const managerCalls = [];
+  const fakeManager = {
+    command: async (b) => {
+      managerCalls.push(b);
+      return { ok: true, code: 'OK', status: 'accepted', requestId: b.requestId };
+    },
+  };
+  const baseExtra = (local = true, origin = 'http://127.0.0.1:4310', contentType = 'application/json', controlOn = true) => ({
+    ompControlLocal: () => local,
+    sameOriginOf: () => origin === 'http://127.0.0.1:4310',
+    OMP_CONTROL_ON: controlOn,
+    ompControlManager: controlOn ? fakeManager : null,
+    fsp: { appendFile: async (_file, line) => { logged.push(line); } },
+    req: { headers: { 'content-type': contentType, ...(origin ? { origin } : {}), host: '127.0.0.1:4310' } },
+  });
+
+  // Non-local / LAN / tunnel rejected before touching manager
+  assert.equal((await requestCallback(f, '/api/omp/control/command', validBody, 'POST', baseExtra(false))).status, 403);
+  // Missing Origin rejected
+  assert.equal((await requestCallback(f, '/api/omp/control/command', validBody, 'POST', baseExtra(true, ''))).status, 403);
+  // Foreign Origin rejected
+  assert.equal((await requestCallback(f, '/api/omp/control/command', validBody, 'POST', baseExtra(true, 'http://evil.example'))).status, 403);
+  // Invalid Content-Type rejected
+  assert.equal((await requestCallback(f, '/api/omp/control/command', validBody, 'POST', baseExtra(true, 'http://127.0.0.1:4310', 'text/plain'))).status, 403);
+  // Flag OFF rejected
+  assert.equal((await requestCallback(f, '/api/omp/control/command', validBody, 'POST', baseExtra(true, 'http://127.0.0.1:4310', 'application/json', false))).status, 403);
+  assert.equal(managerCalls.length, 0);
+
+  // Valid local request dispatches once and never logs prompt text
+  const ok = await requestCallback(f, '/api/omp/control/command', validBody, 'POST', baseExtra(true));
+  assert.equal(ok.status, 200);
+  assert.equal(managerCalls.length, 1);
+  assert.equal(logged.length, 1);
+  assert.equal(logged[0].includes('SENSITIVE_USER_PROMPT_NEVER_LOG'), false);
+});

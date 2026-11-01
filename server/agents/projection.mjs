@@ -1,6 +1,6 @@
 // Public projection with a strict OMP allowlist. Claude's legacy payload is retained.
 import { capabilitiesFor, ompCapabilities, ompSessionIdentity, reservedAgentId } from './schema.mjs';
-
+import { deriveLiveActivitySummary, normalizeActivitySummary } from './omp/activity-summary.mjs';
 const finiteNonnegative = (n) => typeof n === 'number' && Number.isFinite(n) && n >= 0 ? n : null;
 const safeModel = (s) => typeof s === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,95}$/.test(s) ? s : null;
 const safeProvider = (s) => typeof s === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/.test(s) ? s.toLowerCase() : null;
@@ -99,15 +99,86 @@ function liveFields(live) {
   const connection = CONNECTIONS.has(live.connection) ? live.connection : 'disconnected';
   const ended = live.lifecycle === 'ended';
   const activity = !ended && connection === 'connected' && live.gap !== true && ACTIVITIES.has(live.activity) ? live.activity : 'unknown';
+  const eventGap = live.gap === true || live.eventGap === true;
+  const toolCategories = Array.isArray(live.toolCategories) ? live.toolCategories.filter((k) => TOOL_KINDS.has(k)).slice(0, 5) : [];
+  const waitReasons = Array.isArray(live.waitReasons) ? live.waitReasons.filter((k) => k === 'approval' || k === 'input').slice(0, 2) : [];
+  const normalizedSummary = !ended && connection === 'connected' && !eventGap && live.activitySummary
+    ? normalizeActivitySummary(live.activitySummary, {
+      expectedRuntimeInstanceId: typeof live.runtimeInstanceId === 'string' ? live.runtimeInstanceId : null,
+      expectedGeneration: Number.isSafeInteger(live.generation) ? live.generation : null,
+      allowSubject: live.activitySummary.source === 'managedRpc' || live.activitySummary.source === 'externalController',
+      ttlMs: 0,
+    })
+    : null;
+  const activitySummary = normalizedSummary ?? deriveLiveActivitySummary({
+    ...live,
+    connection,
+    lifecycle: ended ? 'ended' : 'open',
+    activity,
+    gap: eventGap,
+    toolCategories,
+    waitReasons,
+  }, { allowSubject: false, ttlMs: 0 });
   return {
     persistedOnly: false, lifecycle: ended ? 'ended' : 'open', activity, connection,
     status: LEGACY_STATUS[activity] || 'unknown',
     taskStart: (activity === 'active' || activity === 'waiting') ? (finiteNonnegative(live.taskStart) ?? 0) : 0,
     lastTurnOutcome: OUTCOMES.has(live.lastTurnOutcome) ? live.lastTurnOutcome : 'unknown',
     pendingTools: count(live.pendingTools),
-    toolCategories: Array.isArray(live.toolCategories) ? live.toolCategories.filter((k) => TOOL_KINDS.has(k)).slice(0, 5) : [],
-    waitReasons: Array.isArray(live.waitReasons) ? live.waitReasons.filter((k) => k === 'approval' || k === 'input').slice(0, 2) : [],
-    eventGap: live.gap === true,
+    toolCategories,
+    waitReasons,
+    eventGap,
+    activitySummary,
+  };
+}
+
+const CONTROL_STATES = new Set(['read-only', 'ready', 'unavailable', 'conflict', 'disabled']);
+const COMMAND_STATUSES = new Set(['pending', 'accepted', 'queued', 'running', 'settled', 'aborted', 'failed', 'unknown']);
+const COMMAND_KINDS = new Set(['prompt', 'steer', 'followUp', 'abort', 'queueRemove']);
+const UUID_RE = /^[0-9a-f-]{36}$/i;
+const REQ_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{3,127}$/;
+const cleanQueueItem = (s) => typeof s === 'string' ? s.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120) : '';
+
+function sanitizeControl(raw, live) {
+  const fallback = { owner: 'observer', state: 'read-only', canPrompt: false, canResume: false };
+  if (!raw || typeof raw !== 'object' || raw.owner !== 'managed') return fallback;
+  if (typeof raw.runtimeInstanceId !== 'string' || !UUID_RE.test(raw.runtimeInstanceId)) return fallback;
+  if (!Number.isSafeInteger(raw.generation) || raw.generation <= 0 || raw.generation >= 1_000_000) return fallback;
+  const state = CONTROL_STATES.has(raw.state) ? raw.state : 'read-only';
+  const connected = !live || (live.connection === 'connected' && live.lifecycle !== 'ended');
+  const ready = state === 'ready' && connected;
+  const queuedRaw = raw.queued && typeof raw.queued === 'object' ? raw.queued : null;
+  const steering = Array.isArray(queuedRaw?.steering) ? queuedRaw.steering.map(cleanQueueItem).filter(Boolean).slice(0, 8) : [];
+  const followUp = Array.isArray(queuedRaw?.followUp) ? queuedRaw.followUp.map(cleanQueueItem).filter(Boolean).slice(0, 8) : [];
+  const liveSteered = Number.isSafeInteger(queuedRaw?.liveSteered) && queuedRaw.liveSteered >= 0 ? Math.min(queuedRaw.liveSteered, 8) : 0;
+  const queuedCount = steering.length + followUp.length;
+  const cmdRaw = raw.lastCommand && typeof raw.lastCommand === 'object' ? raw.lastCommand : null;
+  const lastCommand = cmdRaw && REQ_ID_RE.test(String(cmdRaw.requestId || '')) &&
+    COMMAND_KINDS.has(cmdRaw.kind) && COMMAND_STATUSES.has(cmdRaw.status)
+    ? {
+      requestId: cmdRaw.requestId,
+      kind: cmdRaw.kind,
+      status: cmdRaw.status,
+      ...(typeof cmdRaw.errorCode === 'string' && /^[A-Z_]{2,40}$/.test(cmdRaw.errorCode) ? { errorCode: cmdRaw.errorCode } : {}),
+      updatedAt: finiteNonnegative(cmdRaw.updatedAt) ?? 0,
+    }
+    : null;
+  return {
+    owner: 'managed',
+    state: connected ? state : 'unavailable',
+    runtimeInstanceId: raw.runtimeInstanceId,
+    generation: raw.generation,
+    canPrompt: ready && raw.canPrompt === true,
+    canSteer: ready && raw.canSteer === true,
+    canFollowUp: ready && raw.canFollowUp === true,
+    canAbort: ready && raw.canAbort === true,
+    canQueueRemove: ready && raw.canQueueRemove === true,
+    canResume: false,
+    canApproveTool: false,
+    canReviewPlan: false,
+    canAnswerAsk: false,
+    queued: { steering, followUp, liveSteered, count: queuedCount },
+    lastCommand,
   };
 }
 
@@ -166,16 +237,13 @@ export function projectOmpSession(record) {
     usage: null, model: safeModel(record.model), provider: safeProvider(record.provider), metrics: ompMetrics(record.metrics),
     projectKey: null, worktreeKey: null, capabilities: capabilitiesFor('omp'),
     control: { owner: 'observer', state: 'read-only', canPrompt: false, canResume: false },
+    activitySummary: null,
   };
   if (!persisted && !live) return base;
   const named = persisted ?? projectFields(record);
   return { ...base, ...named, ...live, name: named.name ? named.name : base.name,
     capabilities: ompCapabilities(record.conversation && persisted ? record.conversation : false),
-    control: record.managed?.owner === 'managed' && record.managed?.state === 'ready' &&
-      typeof record.managed.runtimeInstanceId === 'string' && /^[0-9a-f-]{36}$/i.test(record.managed.runtimeInstanceId) &&
-      Number.isSafeInteger(record.managed.generation) && record.managed.generation > 0 && record.managed.generation < 1_000_000
-      ? { owner: 'managed', state: 'ready', canPrompt: false, canResume: false, generation: record.managed.generation }
-      : base.control };
+    control: sanitizeControl(record.managed, live) };
 }
 
 export function projectAgentSession(kind, record) {

@@ -399,7 +399,7 @@ export function createOmpAdapter({ config, configFile, io = fsp, now = Date.now,
       children: file?.children, childrenIncomplete: file?.childrenIncomplete === true,
       project: identity.project, projectKey: identity.projectKey, worktreeKey: identity.worktreeKey,
       conversation: !!file && file.conversation === true, persistedOnly: false, live: runtime,
-      ...(managed.has(id) && { managed: { owner: 'managed', runtimeInstanceId: managed.get(id).runtimeInstanceId,
+      ...(managed.has(id) && { managed: managed.get(id).control ?? { owner: 'managed', runtimeInstanceId: managed.get(id).runtimeInstanceId,
         generation: managed.get(id).generation, state: 'ready' } }) };
   }
   const knownIds = () => new Set([...pins, ...(lifecycle?.ids() ?? []), ...managed.keys()]);
@@ -442,6 +442,13 @@ export function createOmpAdapter({ config, configFile, io = fsp, now = Date.now,
         typeof record.runtimeInstanceId !== 'string' || managed.has(record.id) || !!lifecycle?.resolve(record.id) || !sources.has(record.sourceNamespace)) return false;
       managed.set(record.id, { ...record, sourceNamespace: record.sourceNamespace, sourceSessionId: record.sourceSessionId });
       safe(() => onChange([record.id]));
+      return true;
+    },
+    updateManaged(id, instance, nextRecord) {
+      const prev = managed.get(id);
+      if (disposed || !prev || prev.runtimeInstanceId !== instance || !nextRecord) return false;
+      managed.set(id, { ...prev, ...nextRecord, id, sourceNamespace: prev.sourceNamespace, sourceSessionId: prev.sourceSessionId, runtimeInstanceId: instance });
+      safe(() => onChange([id]));
       return true;
     },
     removeManaged(id, instance) {

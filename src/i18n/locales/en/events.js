@@ -70,4 +70,18 @@ export default {
     testok: ['All green! ✅', 'Tests pass 🎉', 'Not a single failure!'],
     testfail: ['Red. Let me look…', 'One test broke, on it', 'Huh, why is that red 🤔'],
   },
+  ompBubble: {
+    read: 'Reading files',
+    readSubject: 'Reading {subject}',
+    edit: 'Editing code',
+    editSubject: 'Editing {subject}',
+    cmd: 'Running command',
+    test: 'Running tests',
+    testSubject: 'Testing {subject}',
+    web: 'Searching web',
+    processing: 'Processing request',
+    waitingApproval: 'Waiting for approval',
+    waitingInput: 'Waiting for input',
+    idle: 'Ready for user',
+  },
 };

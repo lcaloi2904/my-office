@@ -4,7 +4,7 @@ import { CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
 import { makeChibi, chibiPose, applyChibiPose, wearOuter, wearHat, wearLanyard, disposeChibi } from './chibi-rig.js';
 import { state } from '../core/state.js';
 import { PRO, SEASON, V2, el, fmtAgo, nowMs, officeNow, rand, randInt, reduceMotion, replay, short, tint, wrapAngle } from '../core/env.js';
-import { ACT, ANIM_AT, bubbleText, verb } from '../ui/event-text.js';
+import { ACT, ANIM_AT, bubbleText, ompBubbleView, verb } from '../ui/event-text.js';
 import { TYPE_ICON, icon } from '../ui/icons.js';
 import { scene } from '../scene/renderer.js';
 import { canvasTex } from '../scene/blocks.js';
@@ -157,13 +157,17 @@ export function observeActor(w, s) {
   w.setDimmed(s.lifecycle === 'ended');
   w.want = null; w.restAt = Infinity;
   const fresh = s.lifecycle !== 'ended' && s.persistedOnly !== true && s.connection === 'connected' && s.eventGap !== true;
+  const bubble = ompBubbleView(s, { fallbackText: unknownLabel(s) });
   let anim = 'idle';
-  if (fresh && s.activity === 'active') anim = ({ read: 'read', edit: 'type', cmd: 'console', web: 'globe', other: 'think' })[s.toolCategories?.[0]] || 'think';
-  else if (fresh && s.activity === 'waiting') anim = s.waitReasons?.includes('approval') ? 'hand' : 'idle';
+  if (fresh && s.activity === 'active') {
+    anim = ({ read: 'read', edit: 'type', cmd: 'console', test: 'think', web: 'globe', processing: 'think' })[bubble.summaryKind] || 'think';
+  } else if (fresh && s.activity === 'waiting') {
+    anim = s.waitReasons?.includes('approval') ? 'hand' : 'idle';
+  }
   const waiting = fresh && s.activity === 'waiting';
   w.anim = anim;
   w.tagEl.classList.toggle('tag--wait', waiting);
-  w.say(waiting ? 'wait' : 'other', unknownLabel(s), waiting ? 'wait' : '');
+  w.say(bubble.type, bubble.text, bubble.kind);
 }
 // Recorded actions animate without dispatching live chat, notifications, controls or completion effects.
 export function observeReplayEvent(s, e, quiet) {

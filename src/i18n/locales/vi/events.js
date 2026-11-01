@@ -62,4 +62,18 @@ export default {
     testok: ['Xanh hết! ✅', 'Test qua rồi 🎉', 'Không lỗi nào, ngon!'],
     testfail: ['Đỏ rồi, xem lại chút…', 'Hỏng một test, sửa tiếp', 'Ơ, sao lại đỏ 🤔'],
   },
+  ompBubble: {
+    read: 'Đang đọc file',
+    readSubject: 'Đang đọc {subject}',
+    edit: 'Đang sửa code',
+    editSubject: 'Đang sửa {subject}',
+    cmd: 'Đang chạy lệnh',
+    test: 'Đang chạy test',
+    testSubject: 'Đang test {subject}',
+    web: 'Đang tra cứu web',
+    processing: 'Đang xử lý yêu cầu',
+    waitingApproval: 'Đang chờ phê duyệt',
+    waitingInput: 'Đang chờ nhập',
+    idle: 'Sẵn sàng nhận yêu cầu',
+  },
 };

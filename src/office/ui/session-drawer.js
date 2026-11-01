@@ -6,6 +6,7 @@ import { TYPE_ICON, icon } from './icons.js';
 import { BASE_ZOOM } from '../scene/renderer.js';
 import { AGENT_NAME, agentOf, canSession, colorOf, dn, sessions, unknownLabel, workers } from '../people/workers.js';
 import { appendOmpActions } from './omp-history.js';
+import { appendOmpControlComposer } from './omp-controls.js';
 import { cap, feedRow, fmtTok, fmtUsd, openFromRow, queueUi, toast } from './activity.js';
 import { goView, setView } from './camera-bar.js';
 import { closeMac, doAction, loadMac, macSnap } from './mac-drawer.js';
@@ -91,11 +92,19 @@ function renderActions() {
   const box = $('ds-actions'); box.replaceChildren(); drawnSig = actionsSig(s);
   if (replay.on) { box.append(el('p', 'dr-note', tr('drawer.readOnly'))); return; }
   if (agentOf(s) !== 'claude') {
-    box.append(el('p', 'dr-note', tr(agentOf(s) === 'omp' && s.control?.owner === 'managed' ? 'drawer.managedLauncherNote' : agentOf(s) === 'omp' ? 'drawer.readOnly' : 'drawer.unsupportedAgent')));
+    const noteKey = agentOf(s) === 'omp' && s.control?.owner === 'managed'
+      ? (s.control?.state === 'ready' && (s.control?.canPrompt || s.control?.canSteer || s.control?.canFollowUp || s.control?.canAbort)
+        ? 'drawer.managedActiveNote'
+        : 'drawer.managedLauncherNote')
+      : agentOf(s) === 'omp' ? 'drawer.readOnly' : 'drawer.unsupportedAgent';
+    box.append(el('p', 'dr-note', tr(noteKey)));
     if (agentOf(s) === 'omp' && s.persistedOnly === true) {   // a pinned history file: say so, and offer the way back out
       box.append(el('p', 'dr-note', tr(s.incomplete ? 'drawer.persistedIncomplete' : 'drawer.persistedNote')));
     }
-    if (agentOf(s) === 'omp' && state.isLocal) appendOmpActions(box, s);
+    if (agentOf(s) === 'omp') {
+      if (typeof appendOmpControlComposer === 'function') appendOmpControlComposer(box, s, renderActions);
+      if (state.isLocal) appendOmpActions(box, s);
+    }
     const breakdown = typeof renderSessionProviderBreakdown === 'function' ? renderSessionProviderBreakdown(s, { fmtTok, fmtUsd }) : null;
     if (breakdown) box.append(breakdown);
     return;

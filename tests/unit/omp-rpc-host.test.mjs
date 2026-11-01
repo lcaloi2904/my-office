@@ -112,3 +112,37 @@ test('exclusive Resume rejects a stock ready frame even when base RPC protocol i
     await assert.rejects(rpc.request('get_state'), { code: 'RPC_UNAVAILABLE' });
   } finally { await rpc.close(); }
 });
+
+test('Phase 04 allowControl=true enables prompt, steer, follow_up, abort, remove_queued_message and event forwarding', async () => {
+  const events = [];
+  const rpc = host('ok', { allowControl: true, onEvent: (ev) => events.push(ev) });
+  try {
+    await rpc.start();
+    await rpc.request('new_session');
+    await rpc.request('prompt', { message: 'Hello OMP' }, { requestId: 'cmd-prompt-1', killOnTimeout: false });
+    let st = await rpc.request('get_state');
+    assert.equal(st.isStreaming, true);
+    assert.equal(events.some((e) => e.type === 'agent_start'), true);
+
+    await rpc.request('steer', { message: 'Steer msg' }, { requestId: 'cmd-steer-1', killOnTimeout: false });
+    await rpc.request('follow_up', { message: 'Follow msg' }, { requestId: 'cmd-follow-1', killOnTimeout: false });
+    st = await rpc.request('get_state');
+    assert.deepEqual(st.queuedMessages.steering, ['Steer msg']);
+    assert.deepEqual(st.queuedMessages.followUp, ['Follow msg']);
+
+    const rm = await rpc.request('remove_queued_message', { message: 'Follow msg', queue: 'followUp' }, { requestId: 'cmd-rm-1', killOnTimeout: false });
+    assert.deepEqual(rm, { removed: true });
+
+    await rpc.request('abort', undefined, { requestId: 'cmd-abort-1', killOnTimeout: false });
+    st = await rpc.request('get_state');
+    assert.equal(st.isStreaming, false);
+    assert.equal(st.isSettled, true);
+    assert.equal(events.some((e) => e.type === 'prompt_result' && e.status === 'aborted'), true);
+
+    // Rejects invalid payloads even when allowControl=true
+    await assert.rejects(rpc.request('prompt', { message: '' }), { code: 'RPC_INVALID' });
+    await assert.rejects(rpc.request('remove_queued_message', { message: 'x', queue: 'bad' }), { code: 'RPC_INVALID' });
+  } finally {
+    await rpc.close();
+  }
+});

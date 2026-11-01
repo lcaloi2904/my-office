@@ -9,7 +9,7 @@ import { HOME_DIR } from '../../playwright.config';
 type Session = Record<string, unknown> & { id: string };
 type Office = { pauseDemo: () => void; upsert: (s: Session) => void; select: (id: string) => void; speed: (n: number) => void;
   emit: (m: Record<string, unknown>, quiet?: boolean) => void; sessions: Map<string, Session>;
-  workers: Map<string, { cfg: Record<string, unknown>; id: string; anim: string; phase: string; station: string; update: (dt: number, t: number) => void; parent?: { id: string }; tagEl: HTMLElement }>;
+  workers: Map<string, { cfg: Record<string, unknown>; id: string; anim: string; phase: string; station: string; update: (dt: number, t: number) => void; parent?: { id: string }; tagEl: HTMLElement; bubbleEl: HTMLElement; bubbleObj: { visible: boolean }; sayKey?: string }>;
   subs: Map<string, { id: string; anim: string; parent: { id: string } }>; limitOut: (minutes: number) => void };
 // In-process debug hook installed by this application's ?debug entry point.
 declare global { interface Window { __office: Office } }

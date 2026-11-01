@@ -3,7 +3,7 @@ import { state } from '../core/state.js';
 import { $, LAYOUT, PLANS, STATIC } from '../core/env.js';
 import { bubbleText } from './event-text.js';
 import { labels } from '../scene/renderer.js';
-import { subs, workers } from '../people/workers.js';
+import { agentOf, observeActor, subs, workers } from '../people/workers.js';
 import { isNightHour, night, setNight } from '../world/room-update.js';
 import { queueUi, renderFeed, toast } from './activity.js';
 import { renderChat, renderSessionHead, tab } from './session-drawer.js';
@@ -59,7 +59,15 @@ export function togglePlan(open = popPlan.hidden) { popPlan.hidden = !open; btnP
 function setStreamer(v) {
   state.streamer = v; document.body.classList.toggle('is-stream', v); state.boardDirty = true; for (const n of stickyNotes) if (n) n.key = '';
   try { localStorage.setItem('office-stream', v ? 'on' : 'off'); } catch { /* storage blocked */ }
-  for (const w of [...workers.values(), ...subs.values()]) if (w.lastSay) { w.sayKey = ''; w.say(w.lastSay.type, w.lastSay.e ? bubbleText(w.lastSay.e) : w.lastSay.text, w.lastSay.kind); }
+  for (const w of [...workers.values(), ...subs.values()]) {
+    if (w.observation && agentOf(w.observation) === 'omp') {
+      w.sayKey = '';
+      observeActor(w, w.observation);
+    } else if (w.lastSay) {
+      w.sayKey = '';
+      w.say(w.lastSay.type, w.lastSay.e ? bubbleText(w.lastSay.e) : w.lastSay.text, w.lastSay.kind);
+    }
+  }
   queueUi(); renderFeed(); if (state.selectedId) { renderSessionHead(); if (tab === 'chat') renderChat(false); }
 }
 function setToggle(k, v) {

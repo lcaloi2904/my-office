@@ -1,6 +1,6 @@
 // How events read on screen: actions per event type, verbs, bubble text, streamer mode.
 import { state } from '../core/state.js';
-import { PRO } from '../core/env.js';
+import { PRO, replay } from '../core/env.js';
 import { cap } from './activity.js';
 import { t as tr } from '../../i18n/index.js';
 
@@ -107,6 +107,74 @@ export function bubbleText(e) {
   }
 }
 
+const OMP_SAFE_SUBJECT = /^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$/;
+const OMP_SECRET_SUBJECT = /(?:^|[._-])(?:env|secret|token|key|cred|passwd|password|auth|private|id_rsa|id_ed25519)(?:$|[._-])/i;
+const OMP_BUBBLE_ICON = {
+  read: 'read',
+  edit: 'edit',
+  cmd: 'bash',
+  test: 'test',
+  web: 'web',
+  processing: 'other',
+  waiting: 'wait',
+  idle: 'idle',
+  unknown: 'other',
+};
+const OMP_CATEGORY_MAP = { read: 'read', edit: 'edit', cmd: 'cmd', test: 'test', web: 'web', other: 'processing' };
+const ompDetailAllowed = () => {
+  if (state.ompActivityDetail !== undefined) return state.ompActivityDetail === true;
+  try { return localStorage.getItem('office-omp-detail') !== 'off'; } catch { return true; }
+};
+
+export function ompBubbleView(s, { fallbackText = '' } = {}) {
+  if (!s || typeof s !== 'object') {
+    return { type: 'other', text: fallbackText, kind: '', summaryKind: 'unknown' };
+  }
+  const fresh = s.lifecycle !== 'ended' && s.persistedOnly !== true && s.connection === 'connected' && s.eventGap !== true;
+  if (!fresh) {
+    return { type: 'other', text: fallbackText, kind: '', summaryKind: 'unknown' };
+  }
+  const waiting = s.activity === 'waiting';
+  if (waiting) {
+    const waitKey = s.waitReasons?.includes('input') ? 'waitingInput' : 'waitingApproval';
+    return {
+      type: 'wait',
+      text: tr(`events.ompBubble.${waitKey}`),
+      kind: 'wait',
+      summaryKind: 'waiting',
+    };
+  }
+  if (s.activity === 'idle') {
+    return {
+      type: 'idle',
+      text: tr('events.ompBubble.idle'),
+      kind: 'rest',
+      summaryKind: 'idle',
+    };
+  }
+  if (s.activity === 'active') {
+    const sum = s.activitySummary && typeof s.activitySummary === 'object' ? s.activitySummary : null;
+    const rawKind = sum && typeof sum.kind === 'string' && Object.hasOwn(OMP_BUBBLE_ICON, sum.kind) &&
+      sum.kind !== 'idle' && sum.kind !== 'unknown'
+      ? sum.kind
+      : (OMP_CATEGORY_MAP[s.toolCategories?.[0]] || 'processing');
+    const canDetail = !state.streamer && !replay.on && state.isLocal !== false && ompDetailAllowed() &&
+      (sum?.source === 'managedRpc' || sum?.source === 'externalController') &&
+      (rawKind === 'read' || rawKind === 'edit' || rawKind === 'test') &&
+      typeof sum?.safeSubject === 'string' && OMP_SAFE_SUBJECT.test(sum.safeSubject) &&
+      !OMP_SECRET_SUBJECT.test(sum.safeSubject);
+    const text = canDetail
+      ? tr(`events.ompBubble.${rawKind}Subject`, { subject: sum.safeSubject })
+      : tr(`events.ompBubble.${rawKind}`);
+    return {
+      type: OMP_BUBBLE_ICON[rawKind] || 'other',
+      text,
+      kind: '',
+      summaryKind: rawKind,
+    };
+  }
+  return { type: 'other', text: fallbackText, kind: '', summaryKind: 'unknown' };
+}
 export function setup() {
   // On the company floor the director brings each new task to the desk (no trip to the board), and a boss briefs its
   // subagents at the meeting-room screen.

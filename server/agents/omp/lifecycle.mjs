@@ -3,7 +3,7 @@
 // Liveness uses the time this server received an event, never the producer's wall clock.
 import { ompSessionIdentity } from '../schema.mjs';
 import { provisionalUsage } from './usage.mjs';
-
+import { deriveLiveActivitySummary } from './activity-summary.mjs';
 const MAX_SESSIONS = 128, MAX_TOOLS = 96, MAX_REORDER = 16, MAX_RETIRED = 16;
 const STALE_MS = 30_000, DISCONNECTED_MS = 90_000, RETAIN_MS = 15 * 60_000;
 const DIAGNOSTIC_LIMIT = 32;
@@ -17,17 +17,21 @@ export function createOmpLifecycle({ now = Date.now, onChange = () => {}, staleM
   const issue = (code) => { if (diagnostics.size < DIAGNOSTIC_LIMIT) diagnostics.add(code); };
   const runtimeKey = (e) => e.runtimeInstanceId + ':' + e.generation;
   const running = (s) => [...s.tools.values()].filter((t) => t.phase === 'running');
-  const snapshot = (s) => ({
-    sourceNamespace: s.sourceId, sourceSessionId: s.sessionId, runtimeInstanceId: s.runtimeInstanceId,
-    generation: s.generation, lifecycle: s.ended ? 'ended' : 'open',
-    activity: s.activity, connection: s.connection, lastTurnOutcome: s.lastTurnOutcome,
-    pendingTools: running(s).length, toolCategories: [...new Set(running(s).map((t) => t.category))].sort(),
-    waitReasons: [...new Set(s.waiting.values())].sort(), pendingMessages: s.pendingMessages,
-    pendingJobs: s.pendingJobs, observedAt: s.observedAt,
-    model: s.model, provider: s.provider, metrics: s.metrics, counts: { ...s.counts }, taskStart: s.taskStart, persistedOnly: false, gap: s.gap,
-  });
+  const snapshot = (s) => {
+    const base = {
+      sourceNamespace: s.sourceId, sourceSessionId: s.sessionId, runtimeInstanceId: s.runtimeInstanceId,
+      generation: s.generation, sequence: s.sequence, lifecycle: s.ended ? 'ended' : 'open',
+      activity: s.activity, connection: s.connection, lastTurnOutcome: s.lastTurnOutcome,
+      pendingTools: running(s).length, toolCategories: [...new Set(running(s).map((t) => t.category))].sort(),
+      waitReasons: [...new Set(s.waiting.values())].sort(), pendingMessages: s.pendingMessages,
+      pendingJobs: s.pendingJobs, observedAt: s.observedAt,
+      model: s.model, provider: s.provider, metrics: s.metrics, counts: { ...s.counts }, taskStart: s.taskStart, persistedOnly: false, gap: s.gap,
+      summarySource: 'observerCategory',
+    };
+    return { ...base, activitySummary: deriveLiveActivitySummary(base, { allowSubject: false, now: s.observedAt }) };
+  };
   // A heartbeat that changes nothing visible must not wake every client.
-  const signature = (s) => { const { observedAt, ...rest } = snapshot(s); void observedAt; return JSON.stringify(rest); };
+  const signature = (s) => { const { observedAt, sequence, activitySummary, ...rest } = snapshot(s); void observedAt; void sequence; return JSON.stringify({ ...rest, summary: activitySummary ? [activitySummary.kind, activitySummary.safeSubject || ''] : null }); };
   const changed = (id, s) => {
     const sig = s ? signature(s) : null;
     if (s && s.sig === sig) return;
