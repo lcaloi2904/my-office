@@ -12,7 +12,7 @@ export default {
   coffee: { namePro: 'Phòng ăn', name: 'Góc cà phê', hint: 'Pha một ly (sẽ có người ra lấy), xem ai đang nghỉ' },
   meeting: { name: 'Phòng họp', hint: 'Trợ lý (subagent) đang họp' },
   printer: { name: 'Máy in', hint: 'In một trang (sẽ có người ra lấy), xem các lượt vừa xong việc' },
-  arcade: { name: 'Máy arcade', hint: 'Bỏ một đồng xu', soon: 'Minigame đang được làm, sắp chơi được.' },
+  arcade: { name: 'Máy arcade', hint: 'Bỏ một đồng xu', soon: 'Trò chơi nhỏ đang được làm, sắp chơi được.' },
   aquarium: { name: 'Bể cá', hint: 'Cho cá ăn' },
   cat: { name: 'Mèo văn phòng', hint: 'Vuốt mèo (nó thích nằm lên bàn phím)' },
   vac: { name: 'Robot hút bụi', hint: 'Bấm cho nó xoay một vòng' },
@@ -46,7 +46,7 @@ export default {
   desk: {
     name: 'Bàn {n}',
     hint: '{name} · {status} · bấm để mở',
-    empty: 'Bàn trống: session mới mở sẽ ngồi đây',
+    empty: 'Bàn trống: phiên mới mở sẽ ngồi đây',
   },
   bin: {
     name: 'Thùng rác ngữ cảnh',

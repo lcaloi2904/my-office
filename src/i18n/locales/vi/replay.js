@@ -2,7 +2,7 @@ export default {
   demoNothing: 'Bản demo chưa có gì để xem lại. Mở bản thật để xem lại các phiên của bạn.',
   loadFailed: 'Không tải được dữ liệu xem lại.',
   nothingYesterday: 'Hôm qua chưa có gì được ghi lại.',
-  nothingHere: 'Khoảng này chưa có gì được ghi lại. Office chỉ ghi khi đang chạy.',
+  nothingHere: 'Khoảng này chưa có gì được ghi lại. Văn phòng chỉ ghi khi đang chạy.',
   chip: 'XEM LẠI · {time} · ×{speed}',
   tagLive: 'trực tiếp',
   tagReplay: 'xem lại',

@@ -57,7 +57,7 @@ export default {
     here: ['Có!', 'Có ạ!', 'Em đây!'],
     count: 'Đủ {n}/{total} người ✅ Thoát nạn hết {time}',
     sign: 'ĐIỂM TẬP KẾT',
-    signSub: 'Assembly point',
+    signSub: 'Khu vực sơ tán',
     liftSign: 'PCCC',
     guard: {
       light: 'Giờ anh đốt khay để tập nha, mọi người đứng xa ra',

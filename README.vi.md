@@ -10,7 +10,9 @@ Mở: http://localhost:4310 · Xem thử không cần Claude Code: http://localh
 
 **Có câu hỏi hay ý tưởng?** Hỏi ở [Discussions → Q&A](https://github.com/khanh020905/my-office/discussions/categories/q-a), góp ý ở [Ideas](https://github.com/khanh020905/my-office/discussions/categories/ideas), hoặc khoe văn phòng của bạn ở [Show and tell](https://github.com/khanh020905/my-office/discussions/categories/show-and-tell).
 
-Chạy được trên macOS, Linux và Windows (bảng máy đọc từng hệ điều hành theo cách riêng; mở cửa sổ IDE và thoát app chỉ có trên macOS). Giao diện mặc định là tiếng Anh; đổi sang tiếng Việt trong **Cài đặt → Ngôn ngữ** (hoặc đặt `OFFICE_LANG=vi`).
+Chạy được trên macOS, Linux và Windows (bảng máy đọc từng hệ điều hành theo cách riêng; mở cửa sổ IDE và thoát app chỉ có trên macOS). Launcher Windows `start-office.ps1` đặt `OFFICE_LANG=vi` nếu biến này chưa được đặt; ngôn ngữ đã lưu trong Cài đặt vẫn được ưu tiên. Chạy trực tiếp bằng Node vẫn mặc định tiếng Anh. Đổi ngôn ngữ trong **Cài đặt → Hiển thị → Ngôn ngữ**; lựa chọn đã lưu được ưu tiên hơn `OFFICE_LANG`.
+
+Giao diện tiếng Việt dịch các nhãn, nút, hướng dẫn và thông báo của văn phòng; giữ nguyên tên sản phẩm, tên riêng và thuật ngữ kỹ thuật cần độ chính xác như API, token, provider, model, runtime, subagent, worktree, commit, push và deploy. Mã nguồn, lệnh, định danh, đường dẫn, URL, log/stack trace và thông báo lỗi gốc không thuộc phạm vi dịch UI. Nhãn tài khoản và nhãn hạn mức do OMP cung cấp cũng giữ nguyên để đối chiếu với nguồn.
 
 > My Office là dự án cộng đồng, không do Anthropic làm, bảo trợ hay liên kết.
 

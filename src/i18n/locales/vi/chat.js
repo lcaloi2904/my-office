@@ -102,7 +102,7 @@ export default {
   memberOut: 'Vắng mặt',
   memberStaff: 'Nhân viên toà nhà',
   memberYou: 'Trưởng nhóm',
-  giveWork: 'App ↗',
+  giveWork: 'Ứng dụng ↗',
   to: {
     cacheWarm: 'còn ấm ~{n} phút · nhắn tiếp rẻ',
     cacheCold: 'đã nguội · nhắn tiếp sẽ đọc lại ~{tokens} token',
@@ -205,7 +205,7 @@ export default {
   work: {
     hello: ['Em vào ca rồi nha mọi người ☀️', 'Chào cả nhà, hôm nay em lo {project} 💪', 'Có mặt! Hôm nay em làm {project} ạ', 'Hello mọi người 👋'],
     ack: ['Dạ em làm liền ạ 🫡', 'Ok sếp, em nhận', 'Dạ sếp, để em', 'Nhận ạ 👌', 'Rõ ạ!'],
-    done: ['Xong rồi sếp ơi ✅', 'Em làm xong rồi ạ, sếp xem giúp em nha', 'Xong task “{task}” rồi nha 🎉', 'Done ✅ {task}'],
+    done: ['Xong rồi sếp ơi ✅', 'Em làm xong rồi ạ, sếp xem giúp em nha', 'Xong việc “{task}” rồi nha 🎉', 'Xong ✅ {task}'],
     wait: ['@Sếp ơi duyệt giúp em lệnh này với 🙏', 'Sếp ơi em cần sếp bấm Cho phép ạ', 'Chờ sếp duyệt nè 👀'],
     ask: ['Sếp ơi em có câu hỏi, sếp chọn giúp em với 🙋', 'Em hỏi xíu nha sếp, sếp xem thẻ câu hỏi giúp em'],
     fail: ['Ơ lỗi rồi 😵', 'Mạng chập chờn quá, ai bị giống em không 😩', 'Gọi model lỗi rồi, em thử lại nha'],
@@ -256,7 +256,7 @@ export default {
     comAsk: ['Cho em theo với 🙋', 'Đợi em xíu, em xuống liền', 'Gọi giùm em đĩa cơm cá kho nha 😋', 'Em ăn cơm hộp rồi, mọi người đi vui nha'],
     officialAsk: ['Chúc mừng nha 🎉', 'Khao trà sữa đi 🧋😆', 'Qua thử việc rồi, lương lên chưa 😆', 'Chính thức là người nhà rồi nha 🥳', 'Tối nay đi ăn mừng thôi 🍻'],
     farewellAsk: ['Nhớ ghé chơi nha 🥲', 'Chúc em thành công 💪', 'Đi đâu cũng nhớ team nha', 'Có job ngon nhớ rủ anh em 😆', 'Huhu sao đi sớm vậy 😭'],
-    backAsk: ['Welcome back 🎉', 'Biết ngay mà, ở đâu cũng không bằng ở đây 😆', 'Về là phải khao trà sữa nha 🧋', 'Bàn em vẫn để nguyên đó 😆'],
+    backAsk: ['Mừng quay lại nha 🎉', 'Biết ngay mà, ở đâu cũng không bằng ở đây 😆', 'Về là phải khao trà sữa nha 🧋', 'Bàn em vẫn để nguyên đó 😆'],
     microAsk: ['Công ty mua thêm cái lò nữa đi sếp 🙏', 'Thứ Hai ai cũng mang cơm nhà 😆', 'Hâm 1 phút thôi nha mọi người 😅', 'Em xí lượt sau nha 🙋'],
     smellAsk: ['Cá kho mẹ em làm đó, thơm mà 🤤', 'Mở cửa sổ ra giùm cái 😷', 'Thơm vậy mà chê 😆', 'Nhớ lau lò nha bạn ơi 🙏', 'Em xin lỗi, mai em mang thịt kho 😅'],
     popAsk: ['Em 🙋 quên mở nắp 😅', 'Đã nói rồi, mở nắp ra hẵng quay 😂', 'Lau giùm cái lò nha 🙏'],

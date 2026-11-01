@@ -124,7 +124,7 @@ export default {
     sessions: 'Phiên',
     activity: 'Hoạt động',
     approve: 'Duyệt',
-    chat: 'Chat',
+    chat: 'Trò chuyện',
     close: 'Đóng',
     approveEmpty: 'Không có gì chờ duyệt',
     approveEmptySub: 'Khi một phiên cần bạn cho phép, thẻ duyệt hiện ở đây và nổi ngay trên thanh dưới cùng.',

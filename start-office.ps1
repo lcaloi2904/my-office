@@ -12,6 +12,8 @@ Set-Location -LiteralPath $PSScriptRoot
 $env:OFFICE_PORT = '4310'
 $env:OFFICE_DIST_DIR = '.next-win-p3'
 $env:NEXT_TELEMETRY_DISABLED = '1'
+# Tiếng Việt khi chưa có lựa chọn đã lưu; vẫn tôn trọng OFFICE_LANG được đặt sẵn.
+if (-not $env:OFFICE_LANG) { $env:OFFICE_LANG = 'vi' }
 $url = "http://127.0.0.1:$($env:OFFICE_PORT)"
 
 $rebuild = $false

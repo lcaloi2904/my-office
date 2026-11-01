@@ -5,11 +5,11 @@ export default {
   cooler: 'CPU {mac}',
   plaque: {
     director: 'GIÁM ĐỐC',
-    directorSub: 'Director',
+    directorSub: '',
     meeting: 'PHÒNG HỌP',
-    meetingSub: 'Meeting',
+    meetingSub: '',
     library: 'THƯ VIỆN',
-    librarySub: 'Library',
+    librarySub: '',
   },
   nameplate: 'GIÁM ĐỐC',
   slideSub: 'Tiến độ tuần này',
@@ -31,7 +31,7 @@ export default {
     pulse: 'Nhịp làm việc 30 phút',
   },
   // thang bộ cạnh thang máy (world/entrance.js): biển thoát hiểm trên cửa, số tầng sơn trên chiếu nghỉ, biển cạnh cửa
-  stairs: { exit: 'LỐI THOÁT HIỂM', exitSub: 'EXIT', floor: 'TẦNG', plate: 'THANG BỘ', plateSub: 'Tầng {n}' },
+  stairs: { exit: 'LỐI THOÁT HIỂM', exitSub: 'THANG BỘ', floor: 'TẦNG', plate: 'THANG BỘ', plateSub: 'Tầng {n}' },
   dept: {
     free: 'PHÒNG BAN {n}',
     freeSub: 'chờ dự án tiếp theo',
@@ -191,7 +191,7 @@ export default {
     },
     chat: {
       invite: 'Tối nay làm vài lon không mọi người? 🍻',
-      yes: ['Đi luôn!', 'Có em 🙋', 'Cho em 1 slot', 'Ok, quán Ba Khía nha'],
+      yes: ['Đi luôn!', 'Có em 🙋', 'Cho em một chỗ', 'Ok, quán Ba Khía nha'],
       cheers: 'Một hai ba dô 🍻',
       noDrive: 'Đã uống rượu bia thì không lái xe nha 🚕',
       grab: 'Em gọi Grab rồi',

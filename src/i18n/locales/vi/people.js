@@ -18,7 +18,7 @@ export default {
   lunch: 'Đi ăn trưa 🍱',
   brewing: 'Pha một ly cà phê ☕',
   afternoonCoffee: 'Cà phê chiều ☕',
-  shred: { go: 'Context đầy rồi, đem giấy đi huỷ 🗂️', done: 'Huỷ xong, bàn gọn rồi ✨' },
+  shred: { go: 'Ngữ cảnh đầy rồi, đem giấy đi huỷ 🗂️', done: 'Huỷ xong, bàn gọn rồi ✨' },
   foos: {
     invite: 'Làm ván bi lắc không? ⚽',
     join: 'Chơi luôn!',
@@ -35,7 +35,7 @@ export default {
     goal: ['Vàooo! ⚽', 'Gooool!', 'Đẹp chưa!', 'Ăn mừng cái đã 🙌'],
     conceded: ['Ơ kìa!', 'Thủ môn ngủ à 😩', 'Không tính, lag!'],
     ko: ['K.O.! 💥', 'Nằm xuống!', 'Combo đẹp!'],
-    overtake: ['Vượt nè! 🏎️', 'Bye bye!', 'Nhường đường!'],
+    overtake: ['Vượt nè! 🏎️', 'Tạm biệt nha!', 'Nhường đường!'],
     crash: ['Áaa đâm rồi!', 'Ai để cái cây ở đó 😤', 'Trượt tay!'],
     close: ['Căng quá!', 'Sát nút luôn!'],
     win: ['Thắng rồi nha 😎', 'Quá dễ!', 'Gọi tui là vua game'],
@@ -63,7 +63,7 @@ export default {
     invite: ['Hát một bài cho đỡ buồn ngủ 🎤', 'Vào hát karaoke cái đã!', 'Hôm nay giọng tốt, hát thôi 🎶'],
     join: ['Cho hát cùng với! 🎤', 'Song ca không?', 'Tui bè cho nha 🎶'],
     score: 'Được {n} điểm nè 🎤',
-    cheer: ['👏👏 Hay quá!', 'Hát nữa đi!', 'Ca sĩ đây rồi 👏', 'Encore! 🎶'],
+    cheer: ['👏👏 Hay quá!', 'Hát nữa đi!', 'Ca sĩ đây rồi 👏', 'Thêm bài nữa! 🎶'],
     called: 'Có việc rồi, hát tiếp sau nha!',
     chatGo: ['Vào hát karaoke chút nha mọi người 🎤', 'Ai vào hát với em không? 🎤🎶', 'Phòng karaoke trống nè, em vào hát một bài'],
     chatScore: 'Vừa hát “{song}” được {n} điểm 🎤 Ai hát hơn không?',
@@ -119,14 +119,14 @@ export default {
     // the lunch from the 7-Eleven (Ho Chi Minh City)
     rider7: ['Cơm 7-Eleven tới rồi, em xuống lấy nha 🍱', 'Shipper giao cơm 7-Eleven tới, để em xuống 🛵'],
     lunch7: ['Cơm 7-Eleven về rồi mọi người ơi! 🍱', 'Cơm hộp 7-Eleven đây, ăn thôi! 🍱'],
-    lunch7Toast: 'Cơm trưa 7-Eleven đã tới, ra pantry ăn thôi 🍱',
+    lunch7Toast: 'Cơm trưa 7-Eleven đã tới, ra phòng ăn thôi 🍱',
     // on the way down, by what they will bring back (go), and coming out with it (got)
     morning: { go: ['Ghé {shop} làm ly phin đã ☕', 'Phải có ly {shop} mới tỉnh ☕'], got: ['Phin sữa đá đây, lên làm thôi ☕', 'Có cà phê rồi, chiến thôi ☕'] },
     coffee: { go: ['Ra {shop} làm ly cho tỉnh ☕', 'Đi {shop} chút, ai uống gì không ☕'], got: ['Freeze trà xanh mát lạnh 🍵', 'Có ly {shop} rồi, về thôi ☕'] },
     upgrade: { go: ['Claude Code lên bản {version} rồi, ra {shop} lên đời 📱', 'Đi lên đời thôi 📱'], got: ['Lên đời xong, về làm tiếp 📱', 'Mua thêm sợi cáp sạc luôn 🔌'] },
     treat: { go: ['Đi mua kem Mixue khao cả phòng đây 🍦', 'Ra Mixue mua kem cho cả nhà nè 🍦'], got: ['Kem về rồi, ra lấy nha mọi người 🍦', 'Kem Mixue đây, ăn nhanh kẻo chảy 🍦'] },
     tea: { go: ['Ra {shop} làm ly trà sữa đây 🧋', 'Đi {shop} chút, ai uống gì không 🧋'], got: ['Trà sữa đây, làm tiếp thôi 🧋', 'Có ly {shop} rồi, về thôi 🧋'] },
-    checkin: { go: ['Ra {shop} check-in chút 📸', 'Đi {shop} sống ảo đây 📸'], got: ['Chụp xong rồi, đẹp lắm 📸', 'Xếp hàng mệt nghỉ, mà đáng 🧋'] },
+    checkin: { go: ['Ra {shop} chụp ảnh chút 📸', 'Đi {shop} sống ảo đây 📸'], got: ['Chụp xong rồi, đẹp lắm 📸', 'Xếp hàng mệt nghỉ, mà đáng 🧋'] },
     headache: { go: ['Nhức đầu quá, ra {shop} mua thuốc 😵', 'Đi {shop} mua vỉ thuốc đau đầu 💊'], got: ['Mua thuốc rồi, uống xong làm tiếp 💊', 'Dược sĩ dặn nghỉ ngơi xíu 😅'] },
     cong: { go: ['Ra Cộng làm ly cốt dừa đây 🥥', 'Đi Cộng chút, ai uống gì không ☕'], got: ['Cốt dừa cà phê đây, mát lạnh 🥥', 'Có ly Cộng rồi, về làm tiếp ☕'] },
     congWeekend: { go: ['Cuối tuần phải có ly Cộng mới làm nổi ☕', 'Ra Cộng mua ly cốt dừa đã 🥥'], got: ['Cốt dừa cà phê, cuối tuần vậy là đủ 🥥', 'Có ly Cộng rồi, làm tiếp thôi ☕'] },
@@ -189,7 +189,7 @@ export default {
   busy: ['Đang làm dở, lát nhé 🙏', 'Hửm? Mình đang tập trung chút', 'Sắp xong rồi, đợi tí 👀'],
   looks: { toy: 'A · Chibi đồ chơi', pixar: 'B · Chibi Pixar' },
   tea: {
-    toast: '🧋 16:00 thứ Sáu: trà chiều ở pantry, có trà sữa với bánh tráng trộn!',
+    toast: '🧋 16:00 thứ Sáu: trà chiều ở phòng ăn, có trà sữa với bánh tráng trộn!',
     coming: ['Trà chiều thứ Sáu nào! 🧋', 'Có trà sữa kìa, ra liền!', 'Bánh tráng trộn! Đợi mình với!'],
     chat: ['Bánh tráng trộn cay quá mà ngon!', 'Cuối tuần đi đâu không mọi người?', 'Trân châu đường đen đỉnh thật.', 'Ai gọi trà sữa thế, cảm ơn nha!', 'Tuần này deploy mệt ghê.', 'Thứ Sáu rồi, nhẹ cả người!'],
     bye: ['Về làm nốt rồi nghỉ thôi!', 'Cảm ơn bữa trà nha! 🧋'],
@@ -205,7 +205,7 @@ export default {
     shipper: 'Shipper Shopee',
     cleanHi: ['Cô lau nhà chút nhé, đi cẩn thận kẻo trơn!', 'Lau nhà đây, mấy đứa tránh chỗ ướt nha.'],
     cleanBin: ['Đổ rác cái đã.', 'Thùng rác đầy rồi, cô đổ nhé.'],
-    cleanLeave: ['Thùng rác pantry để bạn trực nhật đổ nha, cô lau sàn thôi.', 'Rác hôm nay của bạn trực nhật nha, cô chỉ lau nhà.'],
+    cleanLeave: ['Thùng rác phòng ăn để bạn trực nhật đổ nha, cô lau sàn thôi.', 'Rác hôm nay của bạn trực nhật nha, cô chỉ lau nhà.'],
     cleanBye: ['Xong rồi, cô về nhé!', 'Sạch bong rồi, mai gặp nha!'],
     slippery: ['Ối, sàn ướt, đi vòng thôi.', 'Trơn đấy, vòng bên kia.'],
     shipperHi: ['Shopee giao hàng ạ!', 'Giao hàng Shopee ạ, để ở quầy nhé!'],
@@ -234,7 +234,7 @@ export default {
     andMore: 'và {n} người nữa',
     everyone: 'Cả nhà mình',
     bdayOpen: 'Sinh nhật tháng {m} đây cả nhà ơi! 🎂',
-    sing: ['🎵 Happy birthday to you…', '🎵 Mừng ngày sinh nhật của bạn…', '🎵 Happy birthday… 🎂', 'Chúc mừng sinh nhật! 🎉'],
+    sing: ['🎵 Chúc mừng sinh nhật bạn nha…', '🎵 Mừng ngày sinh nhật của bạn…', '🎵 Mừng ngày đó ta sinh ra đời… 🎂', 'Chúc mừng sinh nhật! 🎉'],
     candles: ['Thổi nến nào! 🕯️', 'Ước một điều đi rồi thổi nến nhé!'],
     slices: ['Mời cả nhà ăn bánh nhé 🍰', 'Mỗi người một miếng nha!'],
     bdayToast: 'Sinh nhật tháng {m}: HR mang bánh kem tới phòng họp 🎂',
@@ -338,10 +338,10 @@ export default {
   pickle: {
     say: {
       go: ['Đi pick thôi anh em 🏓', 'Ra sân thôi, CI xanh rồi 🏓'],
-      ready: ['Đội visor vô, khởi động xíu 🧢', 'Sân đẹp quá, chơi thôi!'],
+      ready: ['Đội mũ thể thao vô, khởi động xíu 🧢', 'Sân đẹp quá, chơi thôi!'],
       film: ['Để em quay lại nha 📱', 'Cười lên, em quay nè 📱'],
       net: ['Vào lưới rồi 😭', 'Ôi lưới!', 'Tiếc quá, lưới!'],
-      out: ['Out!', 'Ra ngoài rồi 😅', 'Dài quá!'],
+      out: ['Ngoài biên!', 'Ra ngoài rồi 😅', 'Dài quá!'],
       winner: ['Đẹp!', 'Ăn điểm! 💪', 'Cú này hay nè 😆'],
       work: ['Có việc, em về trước nha! 🏃', 'Ơ có việc, anh em đánh tiếp nha!'],
       end: ['Hết giờ sân rồi, về thôi', 'Mỏi chân quá 😆 về thôi'],
@@ -352,7 +352,7 @@ export default {
   // cơm nhà: lunch from home warmed at the pantry's microwaves (people/comnha.js)
   // trực nhật: the pantry's daily chores (people/duty.js, world/props/duty-board.js)
   duty: {
-    chores: { cups: 'Rửa ly', trash: 'Đổ rác', plants: 'Tưới cây', table: 'Lau bàn pantry' },
+    chores: { cups: 'Rửa ly', trash: 'Đổ rác', plants: 'Tưới cây', table: 'Lau bàn ăn' },
     board: {
       title: 'TRỰC NHẬT',
       days: ['Chủ nhật', 'Thứ Hai', 'Thứ Ba', 'Thứ Tư', 'Thứ Năm', 'Thứ Sáu', 'Thứ Bảy'],
@@ -372,7 +372,7 @@ export default {
       trashDone: ['Đổ rác xong rồi 👍', 'Thay túi rác mới rồi nha 👍'],
       plantsGo: ['Tưới cây buổi sáng nè 🌱', 'Cây khát nước rồi, em tưới nha 🌱'],
       plantsDone: ['Cây tươi rói rồi 🌿', 'Tưới xong rồi 🌿'],
-      tableGo: ['Lau bàn pantry thôi 🧻', 'Em lau bàn ăn nha 🧻'],
+      tableGo: ['Lau bàn phòng ăn thôi 🧻', 'Em lau bàn ăn nha 🧻'],
       tableDone: ['Bàn sạch rồi nha ✨', 'Lau xong 4 bàn rồi ✨'],
       owe: ['Hôm qua em quên, làm liền đây 🙏', 'Nợ hôm qua, em làm ngay 🙏'],
       called: ['Có việc rồi, lát em làm tiếp!', 'Ơ có việc, để đó em quay lại làm!'],
@@ -381,7 +381,7 @@ export default {
   },
   micro: {
     say: {
-      go: ['Đi hâm cơm cái 🍱', 'Ra pantry hâm cơm nè 🍱', 'Cơm nhà mang theo, hâm cái là ăn 🍱'],
+      go: ['Đi hâm cơm cái 🍱', 'Ra phòng ăn hâm cơm nè 🍱', 'Cơm nhà mang theo, hâm cái là ăn 🍱'],
       start: ['2 phút thôi nha', 'Hâm 2 phút là ngon', 'Quay 2 phút rưỡi cho nóng'],
       beep: ['Tít tít tít, xong rồi!', 'Xong rồi, nóng hổi 🔥'],
       next: ['Tới em!', 'Lượt em nè!'],
@@ -400,14 +400,14 @@ export default {
     empty: 'BÀN TRỐNG',
     open: 'Hôm nay mình chia tay {name} nha cả nhà 🥲 ký thiệp rồi ăn bánh nè',
     pack: ['Dọn đồ thôi… 🥲', 'Hôm nay ngày cuối rồi 🥲', 'Cái cây này em mang về nha'],
-    wish: ['Chúc em thành công', 'Nhớ ghé chơi nha', 'Đi đâu cũng nhớ team nha', 'Giữ liên lạc nha 🥲', 'Có job ngon nhớ rủ anh em', 'Thượng lộ bình an', 'Mãi đỉnh nha', 'Nhớ em lắm đó'],
+    wish: ['Chúc em thành công', 'Nhớ ghé chơi nha', 'Đi đâu cũng nhớ anh em nha', 'Giữ liên lạc nha 🥲', 'Có việc ngon nhớ rủ anh em', 'Thượng lộ bình an', 'Mãi đỉnh nha', 'Nhớ em lắm đó'],
     photo: ['Một, hai, ba… cười nào! 📸', 'Nhìn vô đây cả nhà, 1 2 3 cười! 📸'],
     badgeBack: ['Em gửi lại chị thẻ nhân viên nha 🥲', 'Thẻ nhân viên em để lại đây ạ'],
     badgeGot: ['Chị nhận rồi. Giữ liên lạc nha em!', 'Ok em, có gì nhắn chị nha'],
     thanks: ['Cảm ơn mọi người nhiều lắm, em sẽ nhớ cả nhà 🥲', 'Cảm ơn cả nhà đã chỉ em bao nhiêu thứ 🙏'],
     bye: ['Em về nha mọi người 👋', 'Tạm biệt cả nhà 🥲'],
     toast: 'Tiệc chia tay {name} ở phòng họp 🥲',
-    tease: ['Ủa quay lại hả 😆', 'Ơ, về rồi hả 😆', 'Nhớ team quá nên về đúng không 🤣'],
+    tease: ['Ủa quay lại hả 😆', 'Ơ, về rồi hả 😆', 'Nhớ mọi người quá nên về đúng không 🤣'],
     backSay: ['Em về lại công ty cũ nè 😆', 'Lại gặp nhau rồi 😆'],
   },
   // interns made permanent at HR's desk (people/interns.js)
