@@ -73,8 +73,23 @@ git push origin main
 ---
 
 ## 4. Quy tắc riêng của Chủ dự án (Custom Rules)
+### Security - Sensitive Files
 
-*(Bạn có thể viết thêm bất kỳ quy tắc làm việc, ngôn ngữ giao tiếp, quy ước code hoặc yêu cầu riêng nào vào danh sách dưới đây. Mọi Agent sẽ đọc và tuân thủ):*
+- **TUYỆT ĐỐI KHÔNG** được đọc, mở, view, hoặc truy cập các file sau:
+  - `env/*.env`
+  - `.env*`
+  - Bất kỳ file nào chứa credentials, API keys, passwords
+- Nếu cần biết tên biến môi trường, hãy **hỏi user** thay vì tự đọc file.
 
-- Luôn giao tiếp, giải thích và viết tài liệu/báo cáo bằng **tiếng Việt**.
-- Không tự ý `git reset --hard`, xóa nhánh, hoặc xóa dữ liệu trong `data/` và `~/.omp/` khi chưa hỏi ý kiến.
+### Git Ignore Compliance
+
+- **BẮT BUỘC** tuân thủ `.gitignore` của repository.
+- Không tự ý stage, force-add, commit, hoặc push bất kỳ file/folder nào đã được khai báo trong `.gitignore`.
+- Nếu file/folder bị ignore, mặc định bỏ qua trong quy trình commit và không cần hỏi lại user.
+- Chỉ được thêm file bị ignore vào git khi user yêu cầu trực tiếp và rõ ràng.
+
+### Dọn dẹp file tạm
+
+- **BẮT BUỘC** trước khi báo hoàn tất, xoá mọi file/thư mục tạm do agent tạo trong task, kể cả ngoài repo (như `%TEMP%`): ảnh debug/screenshot, log chẩn đoán, harness, script và dữ liệu thử dùng một lần. Theo dõi đúng đường dẫn đã tạo để dọn sạch, tránh tích tụ rác.
+- Chỉ xoá artefact của chính task; giữ nguyên file có sẵn, dữ liệu người dùng, source/test/tài liệu bàn giao và môi trường PostgreSQL test/volume được yêu cầu giữ lại. Không quét xoá thư mục tạm dùng chung. Chỉ giữ artefact tạm khi user yêu cầu rõ ràng; nếu không xoá được, báo đường dẫn và lý do.
+- **Backup và artefact cần giữ phải nằm trong project**, dưới `backups/<release-hoặc-mục-đích>-<timestamp>/`; giữ dump cùng manifest/checksum và bảo đảm cả thư mục bị Git ignore. Không lưu chúng ở `%LOCALAPPDATA%`, `%TEMP%` hoặc thư mục ngoài project trừ khi user chỉ định rõ vị trí khác. File thử dùng một lần vẫn phải dọn theo quy tắc trên.
