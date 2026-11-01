@@ -223,7 +223,7 @@ export function demoOmpUsageFixture(now = Date.now()) {
       {
         accountKey: 'omp-acct:demo-codex-1',
         providerId: 'openai-codex',
-        label: 'de* · or*1* · pro',
+        label: 'developer@example.test · Personal · pro',
         availability: 'ready',
         observedAt: now - 30_000,
         lastSuccessAt: now - 30_000,
@@ -236,7 +236,7 @@ export function demoOmpUsageFixture(now = Date.now()) {
       {
         accountKey: 'omp-acct:demo-codex-2',
         providerId: 'openai-codex',
-        label: 'de* · or*2* · team',
+        label: 'developer@example.test · Workspace Two · team',
         availability: 'stale',
         observedAt: now - 300_000,
         lastSuccessAt: now - 300_000,
@@ -248,7 +248,7 @@ export function demoOmpUsageFixture(now = Date.now()) {
       {
         accountKey: 'omp-acct:demo-agy-1',
         providerId: 'google-antigravity',
-        label: 'ag*1*',
+        label: 'gemini.one@example.test',
         availability: 'ready',
         observedAt: now - 20_000,
         lastSuccessAt: now - 20_000,
@@ -261,7 +261,7 @@ export function demoOmpUsageFixture(now = Date.now()) {
       {
         accountKey: 'omp-acct:demo-agy-2',
         providerId: 'google-antigravity',
-        label: 'ag*2*',
+        label: 'gemini.two@example.test',
         availability: 'unsupported',
         observedAt: now - 20_000,
         lastSuccessAt: now - 20_000,
@@ -284,7 +284,8 @@ export function startDemo() {
     demoLoop(s, p, i < 4);
   });
   if (new URLSearchParams(location.search).has('agents')) for (const s of mixedAgentFixtures()) upsertSession(s, false);
-  if (new URLSearchParams(location.search).has('ompUsage')) { state.ompUsage = demoOmpUsageFixture(); renderLimits(); }
+  state.ompUsage = new URLSearchParams(location.search).has('ompUsage') ? demoOmpUsageFixture() : { enabled: false };
+  renderLimits();
   // the first project was continued from a long session: it opens with Claude's own summary
   const t0 = Date.now() - 50 * 60e3;
   demoLog.set('demo-0', [

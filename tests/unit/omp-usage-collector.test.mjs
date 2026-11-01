@@ -162,6 +162,19 @@ test('S4 & S8: single-flight coalescing, cache TTL, 429 rate-limit backoff, stal
   assert.equal(r1.accounts.length, 2);
   assert.equal(r2.accounts.length, 2);
   assert.equal(r3.accounts.length, 2);
+  assert.deepEqual(r1.accounts.map((a) => a.label), ['user1@example.test', 'user2@example.test']);
+  assert.equal(r1.profile, 'work');
+  const remoteSnap = collector.snapshot({ local: false });
+  assert.deepEqual(remoteSnap.accounts.map((a) => a.label), ['Codex #1', 'Antigravity #1']);
+  assert.equal(remoteSnap.profile, 'configured');
+  for (const identity of ['user1@example.test', 'user2@example.test', 'acct-1', 'acct-2', '"work"']) {
+    assert.equal(JSON.stringify(remoteSnap).includes(identity), false, `remote collector snapshot must not expose ${identity}`);
+  }
+  assert.deepEqual(
+    remoteSnap.accounts.map((a) => a.accountKey),
+    r1.accounts.map((a) => a.accountKey),
+    'remote aliases preserve opaque account keys'
+  );
 
   // 2. Within cacheTtlMs, unforced refresh uses cached snapshot without spawning
   currentNow += 30_000;

@@ -1,7 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  buildPrivacyMaskMap,
   createAccountKeyer,
   normalizeOmpProfile,
   normalizeOmpUsagePayload,
@@ -24,7 +23,7 @@ test('S2: normalizeOmpProfile enforces OMP profile syntax and rejects traversal 
   }
 });
 
-test('S3: multi-account Codex and Antigravity produce distinct keyed accountKeys, masked labels, and profile isolation', () => {
+test('S3: multi-account Codex and Antigravity produce distinct keyed accountKeys, full local labels, and profile isolation', () => {
   const keyer = createAccountKeyer({ secret: 'synthetic-test-hmac-secret-32-bytes' });
   const rawPayload = {
     generatedAt: NOW,
@@ -156,26 +155,26 @@ test('S3: multi-account Codex and Antigravity produce distinct keyed accountKeys
     assert.notEqual(keysDefault[i], keysWork[i], 'same identity in different profile must have different accountKey');
   }
 
-  // Verify raw emails, raw orgIds, raw projectIds, and raw secrets never leak into normalized output
+  // Local output exposes only allowlisted display labels, not metadata objects or credentials.
   const serialized = JSON.stringify(defaultResult);
-  for (const forbidden of [
-    'dev.owner@example.test',
+  for (const forbidden of ['sk-live-1234567890', 'secretToken', 'invalid_grant', '"metadata"', '"raw"']) {
+    assert.equal(serialized.includes(forbidden), false, `must not leak ${forbidden}`);
+  }
+  for (const account of defaultResult.accounts) {
+    assert.deepEqual(Object.keys(account).sort(), [
+      'accountKey', 'availability', 'label', 'lastSuccessAt', 'observedAt',
+      'providerId', 'source', 'windows', ...(account.noteCode ? ['noteCode'] : []),
+    ].sort(), 'identity must not be added as a separate public field');
+  }
+  assert.deepEqual(defaultResult.accounts.map((a) => a.label), [
+    'dev.owner@example.test · org-personal · pro',
+    'dev.owner@example.test · EnterpriseTeam · team',
     'agy.one@example.test',
     'agy.two@example.test',
     'agy.revoked@example.test',
-    'acct-codex-personal',
-    'acct-codex-team',
-    'org-personal',
-    'org-enterprise',
-    'EnterpriseTeam',
-    'gcp-proj-alpha',
-    'sk-live-1234567890',
-    'invalid_grant',
-  ]) {
-    assert.equal(serialized.includes(forbidden), false, `must not leak ${forbidden}`);
-  }
+  ]);
 
-  // Same-email Codex accounts must still have distinct masked labels via their masked org qualifier
+  // Same-email Codex accounts retain their distinct full organization qualifiers.
   const codexAccounts = defaultResult.accounts.filter((a) => a.providerId === 'openai-codex');
   assert.equal(codexAccounts.length, 2);
   assert.notEqual(codexAccounts[0].label, codexAccounts[1].label);
@@ -202,16 +201,25 @@ test('S3: multi-account Codex and Antigravity produce distinct keyed accountKeys
   assert.equal(agyAuthError.noteCode, 'oauth-disabled');
   assert.deepEqual(agyAuthError.windows, []);
 
-  // Remote projection masks labels further to generic aliases
-  const remoteSnap = projectOmpUsageSnapshot(
-    { version: 1, enabled: true, state: 'ready', profile: 'work', accounts: defaultResult.accounts, collector: {} },
-    { local: false }
-  );
+  // Only local projection retains full labels; remote output contains no identity strings.
+  const localSnap = { version: 1, enabled: true, state: 'ready', profile: 'work', accounts: defaultResult.accounts, collector: {} };
+  assert.equal(projectOmpUsageSnapshot(localSnap, { local: true }), localSnap);
+  const remoteSnap = projectOmpUsageSnapshot(localSnap, { local: false });
   assert.equal(remoteSnap.profile, 'configured');
   assert.deepEqual(
     remoteSnap.accounts.map((a) => a.label),
     ['Codex #1', 'Codex #2', 'Antigravity #1', 'Antigravity #2', 'Antigravity #3']
   );
+  const remoteSerialized = JSON.stringify(remoteSnap);
+  for (const forbidden of [
+    'dev.owner@example.test', 'agy.one@example.test', 'agy.two@example.test', 'agy.revoked@example.test',
+    'acct-codex-personal', 'acct-codex-team', 'org-personal', 'org-enterprise', 'EnterpriseTeam',
+    'gcp-proj-alpha', 'gcp-proj-beta', 'gcp-proj-gamma', '"work"', '"pro"', '"team"',
+  ]) {
+    assert.equal(remoteSerialized.includes(forbidden), false, `remote must not reveal ${forbidden}`);
+  }
+  assert.deepEqual(remoteSnap.accounts.map((a) => a.accountKey), keysDefault, 'projection preserves opaque keys');
+  assert.equal(localSnap.accounts[0].label, 'dev.owner@example.test · org-personal · pro', 'remote projection does not mutate local labels');
 });
 
 test('S7: normalizeUsageWindow preserves units, handles remaining-only/unknown counters without faking 0, and validates resetsAt', () => {
@@ -270,9 +278,131 @@ test('S7: normalizeUsageWindow preserves units, handles remaining-only/unknown c
   assert.equal(anonRes.accounts[0].noteCode, 'no-limits-reported');
 });
 
-test('buildPrivacyMaskMap distinguishes colliding anchors without leaking full local-parts', () => {
-  const masks = buildPrivacyMaskMap(['alice.smith@example.com', 'alice.jones@example.com', 'bob@example.com']);
-  assert.equal(masks.get('bob@example.com'), 'bo*');
-  assert.notEqual(masks.get('alice.smith@example.com'), masks.get('alice.jones@example.com'));
-  assert.equal(masks.get('alice.smith@example.com').includes('alice'), false);
+test('full labels disambiguate same-email organizations, account IDs, and workspaces without changing HMAC identity', () => {
+  const identities = [
+    { email: 'owner@example.test', orgName: 'Shared organization', orgId: 'org-one', accountId: 'acct-one', planType: 'team' },
+    { email: 'owner@example.test', orgName: 'Shared organization', orgId: 'org-two', accountId: 'acct-two', planType: 'team' },
+    { email: 'owner@example.test', orgName: 'Shared organization', orgId: 'org-two', accountId: 'acct-three', planType: 'team' },
+    { email: 'workspace@example.test', projectId: 'project-one' },
+    { email: 'workspace@example.test', projectId: 'project-two' },
+  ];
+  const keyer = createAccountKeyer({ secret: 'synthetic-stable-label-test' });
+  const result = normalizeOmpUsagePayload({
+    generatedAt: NOW,
+    reports: identities.map((metadata) => ({ provider: 'openai-codex', limits: [], metadata })),
+  }, { nowMs: NOW, keyer });
+  assert.deepEqual(result.accounts.map((a) => a.label), [
+    'owner@example.test · Shared organization · org-one · team',
+    'owner@example.test · Shared organization · org-two · acct-two · team',
+    'owner@example.test · Shared organization · org-two · acct-three · team',
+    'workspace@example.test · project-one',
+    'workspace@example.test · project-two',
+  ]);
+  assert.equal(new Set(result.accounts.map((a) => a.accountKey)).size, identities.length);
+  result.accounts.forEach((account, i) => {
+    assert.equal(account.accountKey, keyer('default', 'openai-codex', identities[i]));
+  });
+  const remote = projectOmpUsageSnapshot({ profile: 'default', accounts: result.accounts }, { local: false });
+  for (const identity of identities) {
+    for (const value of Object.values(identity)) {
+      assert.equal(JSON.stringify(remote).includes(value), false);
+    }
+  }
+});
+
+test('organization-only and account-only labels are visible, with generic indexed fallbacks for missing identity', () => {
+  const result = normalizeOmpUsagePayload({
+    generatedAt: NOW,
+    reports: [
+      { provider: 'openai-codex', limits: [], metadata: { orgId: 'org-only', orgName: 'Organization only', planType: 'team' } },
+      { provider: 'openai-codex', limits: [], metadata: { orgName: 'Name-only organization' } },
+      { provider: 'openai-codex', limits: [], metadata: { orgId: 'org-id-only' } },
+      { provider: 'openai-codex', limits: [], metadata: { accountId: 'acct-only' } },
+      { provider: 'openai-codex', limits: [], metadata: { email: {}, orgName: [], planType: 'pro' } },
+      { provider: 'google-antigravity', limits: [], metadata: { enterpriseUrl: 'https://enterprise.example.test' } },
+    ],
+    accountsWithoutUsage: [{ provider: 'google-antigravity', type: 'oauth', orgId: 'org-unreported', orgName: 'Unreported organization' }],
+    disabledCredentials: [{ provider: 'google-antigravity', type: 'oauth', orgId: 'org-disabled', orgName: 'Disabled organization' }],
+  }, { nowMs: NOW });
+  assert.deepEqual(result.accounts.map((a) => a.label), [
+    'Organization only · team', 'Name-only organization', 'org-id-only', 'acct-only',
+    'Codex #5 · pro', 'https://enterprise.example.test', 'Unreported organization', 'Disabled organization',
+  ]);
+  assert.equal(new Set(result.accounts.map((a) => a.accountKey)).size, result.accounts.length);
+  const remote = projectOmpUsageSnapshot({ profile: 'work', accounts: result.accounts }, { local: false });
+  for (const label of [
+    'Organization only', 'Name-only organization', 'org-id-only', 'acct-only',
+    'https://enterprise.example.test', 'Unreported organization', 'Disabled organization',
+  ]) {
+    assert.equal(JSON.stringify(remote).includes(label), false, `remote must not reveal ${label}`);
+  }
+});
+
+test('assembled full local labels retain long email and organization while individual fields remain bounded', () => {
+  const email = 'first.middle.last.account.owner.with.long.name@subdomain.example.test';
+  const orgName = 'Long organization name with several distinct workspace qualifiers';
+  const oversizedEmail = `${'a.'.repeat(70)}@example.test`;
+  const oversizedOrg = 'Long organization '.repeat(10);
+  const oversizedPlan = 'team '.repeat(12);
+  const result = normalizeOmpUsagePayload({
+    reports: [
+      { provider: 'openai-codex', limits: [], metadata: { email, orgName, planType: 'business' } },
+      { provider: 'openai-codex', limits: [], metadata: { email: oversizedEmail, orgName: oversizedOrg, planType: oversizedPlan } },
+    ],
+  }, { nowMs: NOW });
+  assert.equal(result.accounts[0].label, `${email} · ${orgName} · business`);
+  assert.ok(result.accounts[0].label.length > 72, 'the complete assembled label must not be truncated');
+  assert.equal(result.accounts[1].label, `${oversizedEmail.slice(0, 128)} · ${oversizedOrg.trim().slice(0, 80)} · ${oversizedPlan.trim().slice(0, 40)}`);
+});
+
+test('full local labels still redact secrets and sanitize controls without publishing raw metadata or credential fields', () => {
+  const secret = 'sk-live-1234567890abcdefghijklmnop';
+  const result = normalizeOmpUsagePayload({
+    reports: [{
+      provider: 'openai-codex',
+      limits: [],
+      metadata: {
+        email: 'OWNER@example.test',
+        orgName: `Workspace\nBearer ${secret}`,
+        planType: `team token=${secret}`,
+        accessToken: 'unpublished-access-token',
+        refreshToken: 'unpublished-refresh-token',
+        credentials: { password: 'unpublished-password' },
+        displayName: 'unapproved-display-name',
+      },
+      raw: { apiKey: 'unpublished-api-key' },
+    }],
+  }, { nowMs: NOW });
+  assert.equal(result.accounts[0].label, 'owner@example.test · Workspace Bearer ••• · team token=•••');
+  const serialized = JSON.stringify(result);
+  for (const forbidden of [
+    secret, 'unpublished-access-token', 'unpublished-refresh-token', 'unpublished-password',
+    'unpublished-api-key', 'unapproved-display-name', '"metadata"', '"credentials"', '"raw"',
+  ]) {
+    assert.equal(serialized.includes(forbidden), false, `must not reveal ${forbidden}`);
+  }
+});
+
+test('same-email accounts with conflicting CLI account, organization, or project IDs are not dropped as duplicates', () => {
+  const identity = { email: 'shared@example.test', orgId: 'org-shared', accountId: 'acct-ready', projectId: 'project-ready' };
+  const result = normalizeOmpUsagePayload({
+    generatedAt: NOW,
+    reports: [{ provider: 'openai-codex', limits: [], metadata: identity }],
+    accountsWithoutUsage: [
+      { provider: 'openai-codex', type: 'oauth', ...identity },
+      { provider: 'openai-codex', type: 'oauth', ...identity, accountId: 'acct-unreported' },
+      { provider: 'openai-codex', type: 'oauth', ...identity, projectId: 'project-other' },
+      { provider: 'openai-codex', type: 'oauth', ...identity, orgId: 'org-other' },
+    ],
+    disabledCredentials: [{ provider: 'openai-codex', type: 'oauth', ...identity, accountId: 'acct-disabled' }],
+  }, { nowMs: NOW });
+  assert.equal(result.accounts.length, 5, 'only the exact matching account row is deduplicated');
+  assert.equal(new Set(result.accounts.map((a) => a.accountKey)).size, 5);
+  assert.equal(new Set(result.accounts.map((a) => a.label)).size, 5);
+  assert.equal(result.accounts.filter((a) => a.availability === 'unavailable').length, 3);
+  assert.equal(result.accounts.filter((a) => a.availability === 'auth-error').length, 1);
+  const remote = projectOmpUsageSnapshot({ profile: 'default', accounts: result.accounts }, { local: false });
+  for (const value of [...Object.values(identity), 'acct-unreported', 'project-other', 'org-other', 'acct-disabled']) {
+    assert.equal(JSON.stringify(remote).includes(value), false);
+  }
 });

@@ -25,7 +25,7 @@ function makeSyntheticOmpUsage(now = Date.now()) {
       {
         accountKey: 'omp-acct:codex-ws1',
         providerId: 'openai-codex',
-        label: 'de* · or*1* · pro',
+        label: 'developer@example.test · Personal · pro',
         availability: 'ready',
         observedAt: now - 25_000,
         lastSuccessAt: now - 25_000,
@@ -38,7 +38,7 @@ function makeSyntheticOmpUsage(now = Date.now()) {
       {
         accountKey: 'omp-acct:codex-ws2',
         providerId: 'openai-codex',
-        label: 'de* · or*2* · team',
+        label: 'developer@example.test · Workspace Two · team',
         availability: 'stale',
         observedAt: now - 240_000,
         lastSuccessAt: now - 240_000,
@@ -50,7 +50,7 @@ function makeSyntheticOmpUsage(now = Date.now()) {
       {
         accountKey: 'omp-acct:agy-ready',
         providerId: 'google-antigravity',
-        label: 'ag*1*',
+        label: 'gemini.one@example.test',
         availability: 'ready',
         observedAt: now - 15_000,
         lastSuccessAt: now - 15_000,
@@ -63,7 +63,7 @@ function makeSyntheticOmpUsage(now = Date.now()) {
       {
         accountKey: 'omp-acct:agy-unsupported',
         providerId: 'google-antigravity',
-        label: 'ag*2*',
+        label: 'gemini.two@example.test',
         availability: 'unsupported',
         observedAt: now - 15_000,
         lastSuccessAt: now - 15_000,
@@ -74,7 +74,7 @@ function makeSyntheticOmpUsage(now = Date.now()) {
       {
         accountKey: 'omp-acct:agy-auth-err',
         providerId: 'google-antigravity',
-        label: 'ag*3*',
+        label: 'gemini.revoked@example.test',
         availability: 'auth-error',
         observedAt: now - 60_000,
         lastSuccessAt: null,
@@ -87,6 +87,22 @@ function makeSyntheticOmpUsage(now = Date.now()) {
     issues: [],
   };
 }
+
+test('OMP quota is visible by default and remembers collapse independently of Claude controls', async ({ page }) => {
+  await openDemo(page);
+  const dashboard = page.locator('#omp-usage-dashboard');
+  await expect(dashboard).toBeVisible();
+  await expect(page.locator('#pop-plan')).toBeHidden();
+  await page.locator('#omp-usage-collapse').click();
+  await expect(dashboard).toBeHidden();
+  await page.reload();
+  await page.waitForFunction(() => !!window.__office?.pauseDemo);
+  await page.evaluate(() => window.__office.pauseDemo());
+  await expect(dashboard).toBeHidden();
+  await expect(page.locator('#btn-omp-usage')).toHaveAttribute('aria-expanded', 'false');
+  await page.locator('#btn-omp-usage').click();
+  await expect(dashboard).toBeVisible();
+});
 
 test('U1 & U2: multi-account Codex and Antigravity quota, unknown/expired windows, and unattributed session tokens coexist with Claude limits', async ({ page }) => {
   const errors: string[] = [];
@@ -166,7 +182,7 @@ test('U1 & U2: multi-account Codex and Antigravity quota, unknown/expired window
     { ompUsage, ompSession, now }
   );
 
-  // Open Plan popover and verify both Claude limits and OMP Usage are rendered cleanly
+  // Claude controls remain in their own popover; opening it does not hide the OMP dashboard.
   await page.locator('#btn-plan').click();
   await expect(page.locator('#pop-plan')).toBeVisible();
   await expect(page.locator('#plan-rows')).toContainText('Claude Main');
@@ -174,37 +190,32 @@ test('U1 & U2: multi-account Codex and Antigravity quota, unknown/expired window
 
   const ompSec = page.locator('#omp-usage-sec');
   await expect(ompSec).toBeVisible();
-  await expect(ompSec).toContainText('OMP Usage');
-  await expect(ompSec).toContainText('Codex (openai-codex)');
-  await expect(ompSec).toContainText('Antigravity (google-antigravity)');
 
   // Two same-email Codex accounts remain distinct with their respective availability badges
   const codexWs1 = ompSec.locator('.omp-acct[data-account-key="omp-acct:codex-ws1"]');
   const codexWs2 = ompSec.locator('.omp-acct[data-account-key="omp-acct:codex-ws2"]');
-  await expect(codexWs1).toContainText('de* · or*1* · pro');
-  await expect(codexWs1.locator('.omp-badge')).toHaveText('fresh');
-  await expect(codexWs1).toContainText('35% used');
-  await expect(codexWs1).toContainText('82% used');
+  await expect(codexWs1).toContainText('developer@example.test · Personal · pro');
+  await expect(codexWs1).toHaveAttribute('data-availability', 'ready');
+  await expect(codexWs1.locator('.omp-win-row[data-window-id="openai-codex:primary"] [role="progressbar"]')).toHaveAttribute('aria-valuenow', '35');
+  await expect(codexWs1.locator('.omp-win-row[data-window-id="openai-codex:secondary"] [role="progressbar"]')).toHaveAttribute('aria-valuenow', '82');
 
-  await expect(codexWs2).toContainText('de* · or*2* · team');
-  await expect(codexWs2.locator('.omp-badge')).toHaveText('stale');
-  await expect(codexWs2).toContainText('reset window passed');
+  await expect(codexWs2).toContainText('developer@example.test · Workspace Two · team');
+  await expect(codexWs2).toHaveAttribute('data-availability', 'stale');
 
-  // Antigravity remaining-unit window and unknown-unit window (never fake 0%)
+  // Both providers use the same primary "used" percentage, even when the source reports "remaining".
   const agyReady = ompSec.locator('.omp-acct[data-account-key="omp-acct:agy-ready"]');
-  await expect(agyReady).toContainText('40% left (60% used)');
-  await expect(agyReady.locator('.omp-win-row[data-window-id="google-antigravity:google:default:credits"] .omp-win-val')).toHaveText('N/A');
+  await expect(agyReady.locator('.omp-win-row[data-window-id="google-antigravity:google:default:gemini-5h"] .omp-win-val')).toContainText('60%');
+  await expect(agyReady.locator('.omp-win-row[data-window-id="google-antigravity:google:default:credits"] .omp-win-val')).toContainText('–');
 
   // Unsupported and auth-error accounts show explicit messages, no 0% or NaN
   const agyUnsupported = ompSec.locator('.omp-acct[data-account-key="omp-acct:agy-unsupported"]');
-  await expect(agyUnsupported).toContainText('N/A · no quota windows reported');
+  await expect(agyUnsupported.locator('[role="progressbar"]')).toHaveCount(0);
   const agyAuthErr = ompSec.locator('.omp-acct[data-account-key="omp-acct:agy-auth-err"]');
-  await expect(agyAuthErr.locator('.omp-badge')).toHaveText('auth error');
-  await expect(agyAuthErr).toContainText('OAuth grant expired or disabled in OMP');
+  await expect(agyAuthErr).toHaveAttribute('data-availability', 'auth-error');
+  await expect(agyAuthErr.locator('.omp-acct-note')).toBeVisible();
 
   // Session tokens & cost rollup is separate from account quota and explicitly marked Account unattributed
   const codexTokens = ompSec.locator('.omp-tokens[data-provider="openai-codex"]');
-  await expect(codexTokens).toContainText('Session tokens & cost');
   await expect(codexTokens).toContainText('Account unattributed');
   await expect(codexTokens).toContainText('gpt-5.2');
   await expect(codexTokens).toContainText('$0.75');
@@ -221,7 +232,6 @@ test('U1 & U2: multi-account Codex and Antigravity quota, unknown/expired window
   await page.evaluate((id) => window.__office.select(id), ompSession.id);
   await expect(page.locator('#dr-session')).toBeVisible();
   await expect(page.locator('#ds-dir .session-provider')).toHaveText('openai-codex');
-  await expect(page.locator('#ds-actions .ds-omp-metrics')).toContainText('Usage by provider & model');
   await expect(page.locator('#ds-actions .ds-omp-metrics')).toContainText('Account unattributed');
   await expect(page.locator('#ds-actions .ds-omp-metrics')).toContainText('openai-codex / gpt-5.2');
   await expect(page.locator('#ds-actions .ds-omp-metrics')).toContainText('google-antigravity / gemini-4-argon');
@@ -241,17 +251,16 @@ test.describe('U3: mobile & remote viewer privacy and Vietnamese i18n', () => {
       window.__office.emit({ k: 'ompUsage', ompUsage });
     }, remoteUsage);
 
-    await page.locator('#btn-plan').click();
     const ompSec = page.locator('#omp-usage-sec');
     await expect(ompSec).toBeVisible();
     await expect(ompSec).toContainText('Codex #1');
     await expect(ompSec).toContainText('Codex #2');
     await expect(ompSec).toContainText('Antigravity #1');
-    // Remote projection must not contain the local masked email/org anchors or refresh button
-    await expect(ompSec).not.toContainText('de*');
-    await expect(ompSec).not.toContainText('or*1*');
+    // Remote projection never exposes the full local email or organization, nor account controls.
+    await expect(ompSec).not.toContainText('@example.test');
+    await expect(ompSec).not.toContainText('Workspace Two');
     await expect(ompSec.locator('.omp-refresh-btn')).toHaveCount(0);
-    await expect(ompSec).toContainText('N/A · không có cửa sổ hạn mức');
+    await expect(ompSec.locator('.omp-acct[data-availability="unsupported"] [role="progressbar"]')).toHaveCount(0);
 
     const width = await page.evaluate(() => ({ document: document.documentElement.scrollWidth, viewport: innerWidth }));
     expect(width.document).toBeLessThanOrEqual(width.viewport);

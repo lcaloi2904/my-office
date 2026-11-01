@@ -1,5 +1,5 @@
-// Typed runtime normalization + privacy-safe account/window records for OMP multi-account usage.
-// Read-only projection of `omp usage --json --no-extensions`. Never reads auth DB or exposes tokens/raw identity.
+// Typed runtime normalization + local account labels for OMP multi-account usage.
+// Read-only projection of `omp usage --json --no-extensions`. Never reads auth DB or exposes credentials.
 import crypto from 'node:crypto';
 import { redact } from '../../redact.mjs';
 
@@ -69,74 +69,6 @@ export function createAccountKeyer({ secret = crypto.randomBytes(32) } = {}) {
   };
 }
 
-/**
- * Minimal-reveal redaction map (mirrors OMP `buildRedactionMap`) so multiple accounts
- * with similar emails/IDs receive distinct, short privacy-safe masks (`al*`, `du*9*`).
- */
-export function buildPrivacyMaskMap(values) {
-  const unique = [...new Set([...values].filter((v) => typeof v === 'string' && v.length > 0))];
-  const map = new Map();
-  const byAnchor = new Map();
-
-  for (const value of unique) {
-    // Already masked by `omp usage --redact` (e.g. "al*" or "du*9*") and contains no '@'
-    if (!value.includes('@') && /^[a-zA-Z0-9._-]{1,4}\*(?:[a-zA-Z0-9._-]{1,3}\*)?$/.test(value)) {
-      map.set(value, value);
-      continue;
-    }
-    const base = value.includes('@') ? value.split('@')[0] || value : value;
-    const anchor = base.slice(0, 2).toLowerCase();
-    const list = byAnchor.get(anchor) || [];
-    list.push({ raw: value, base: base.toLowerCase() });
-    byAnchor.set(anchor, list);
-  }
-
-  for (const [anchor, peers] of byAnchor) {
-    if (peers.length === 1) {
-      map.set(peers[0].raw, `${anchor}*`);
-      continue;
-    }
-    for (const item of peers) {
-      const others = peers.filter((p) => p.raw !== item.raw).map((p) => p.base);
-      const infix = findDistinguishingInfix(item.base, others);
-      map.set(item.raw, infix ? `${anchor}*${infix}*` : `${anchor}*`);
-    }
-  }
-
-  // Disambiguate any residual mask collisions deterministically
-  const byMask = new Map();
-  for (const value of unique) {
-    const m = map.get(value);
-    const list = byMask.get(m) || [];
-    list.push(value);
-    byMask.set(m, list);
-  }
-  for (const [mask, collided] of byMask) {
-    if (collided.length < 2) continue;
-    collided.forEach((val, idx) => {
-      map.set(val, `${mask}${idx + 1}`);
-    });
-  }
-  return map;
-}
-
-function findDistinguishingInfix(value, peers) {
-  const start = Math.min(2, value.length);
-  const center = value.length / 2;
-  for (let len = 1; len <= Math.min(2, value.length - start); len++) {
-    let best = null;
-    for (let pos = start; pos + len <= value.length; pos++) {
-      const sub = value.slice(pos, pos + len);
-      if (!/^[a-z0-9._-]$/i.test(sub[0])) continue;
-      if (peers.some((p) => p.includes(sub))) continue;
-      const dist = Math.abs(pos + len / 2 - center);
-      if (!best || dist < best.dist) best = { sub, dist };
-    }
-    if (best) return best.sub;
-  }
-  return null;
-}
-
 function extractReportIdentity(report) {
   const meta = report?.metadata && typeof report.metadata === 'object' && !Array.isArray(report.metadata) ? report.metadata : {};
   const limits = Array.isArray(report?.limits) ? report.limits : [];
@@ -172,6 +104,10 @@ function extractAccountRowIdentity(row) {
 
 function identityMatches(a, b) {
   if (!a.hasIdentity || !b.hasIdentity) return false;
+  // A shared email does not identify the same account when CLI workspace/account IDs disagree.
+  for (const field of ['accountId', 'projectId', 'enterpriseUrl']) {
+    if (a[field] && b[field] && a[field].toLowerCase() !== b[field].toLowerCase()) return false;
+  }
   if (a.orgId || b.orgId) {
     if (a.orgId.toLowerCase() !== b.orgId.toLowerCase()) return false;
     if (!a.email && !a.accountId && !a.projectId) return true;
@@ -320,31 +256,36 @@ function deduplicateReportLimits(limits) {
   return out;
 }
 
-function buildMaskedAccountLabel(providerId, identity, maskMap, peerIdentities, fallbackIndex) {
-  const mask = (v) => (v ? maskMap.get(v) || `${v.slice(0, 2).toLowerCase()}*` : '');
-  const baseRaw = identity.email || identity.accountId || identity.projectId || identity.enterpriseUrl;
+function buildAccountLabel(providerId, identity, peerIdentities, fallbackIndex) {
+  const base = identity.email || identity.accountId || identity.projectId || identity.enterpriseUrl || identity.orgName || identity.orgId;
   const providerPrefix = providerId === 'openai-codex' ? 'Codex' : 'Antigravity';
-  if (!baseRaw) return `${providerPrefix} #${fallbackIndex + 1}`;
+  const parts = [base || `${providerPrefix} #${fallbackIndex + 1}`];
+  const organization = identity.orgName || identity.orgId;
+  if (organization && organization !== base) parts.push(organization);
 
-  const parts = [mask(baseRaw)];
-  const sameBasePeers = peerIdentities.filter(
-    (p) => p !== identity && (p.email || p.accountId || p.projectId) === baseRaw
-  );
-  const qualifierRaw = identity.orgName || identity.orgId || (sameBasePeers.length > 0 ? identity.accountId || identity.projectId : '');
-  if (qualifierRaw && qualifierRaw !== baseRaw) {
-    parts.push(mask(qualifierRaw));
-  } else if (sameBasePeers.length > 0) {
-    parts.push(`#${fallbackIndex + 1}`);
+  if (base) {
+    let peers = peerIdentities.filter(
+      (p) => p !== identity &&
+        (p.email || p.accountId || p.projectId || p.enterpriseUrl || p.orgName || p.orgId) === base &&
+        (p.orgName || p.orgId) === organization
+    );
+    // Display the distinguishing workspace/account ID only when email + organization collide.
+    for (const field of ['orgId', 'accountId', 'projectId', 'enterpriseUrl']) {
+      const value = identity[field];
+      if (!value || parts.includes(value) || !peers.some((p) => p[field] !== value)) continue;
+      parts.push(value);
+      peers = peers.filter((p) => p[field] === value);
+    }
+    if (peers.length > 0) parts.push(`#${fallbackIndex + 1}`);
   }
-  if (identity.planType) {
-    parts.push(identity.planType);
-  }
-  return parts.join(' · ').slice(0, 72);
+  if (identity.planType) parts.push(identity.planType);
+  // Each allowlisted field is bounded at extraction; do not truncate the assembled email/org label.
+  return parts.join(' · ');
 }
 
 /**
  * Normalize raw JSON output from `omp usage --json --no-extensions` into
- * privacy-safe `OmpAccountUsage[]` records for `openai-codex` and `google-antigravity`.
+ * allowlisted `OmpAccountUsage[]` records with full local labels for supported providers.
  */
 export function normalizeOmpUsagePayload(rawPayload, {
   profileNamespace = 'default',
@@ -432,16 +373,6 @@ export function normalizeOmpUsagePayload(rawPayload, {
     });
   }
 
-  // Collect all identity tokens for minimal-reveal privacy masking
-  const allIdentityStrings = [];
-  for (const e of entries) {
-    const id = e.identity;
-    for (const v of [id.email, id.accountId, id.orgId, id.orgName, id.projectId, id.enterpriseUrl]) {
-      if (v) allIdentityStrings.push(v);
-    }
-  }
-  const maskMap = buildPrivacyMaskMap(allIdentityStrings);
-
   const byProviderIndex = new Map();
   const byProviderPeers = new Map();
   for (const e of entries) {
@@ -458,7 +389,7 @@ export function normalizeOmpUsagePayload(rawPayload, {
       ...e.identity,
       anonymousSlot: e.identity.hasIdentity ? '' : String(idx),
     });
-    const label = buildMaskedAccountLabel(e.providerId, e.identity, maskMap, peers, idx);
+    const label = buildAccountLabel(e.providerId, e.identity, peers, idx);
     return {
       accountKey,
       providerId: e.providerId,
@@ -477,7 +408,7 @@ export function normalizeOmpUsagePayload(rawPayload, {
 
 /**
  * Project an OMP account usage snapshot for local vs remote/mobile clients.
- * Remote clients receive generic provider/index aliases so even masked email/org anchors stay local-only.
+ * Remote clients receive generic provider/index aliases; full account identity stays local-only.
  */
 export function projectOmpUsageSnapshot(snapshot, { local = true } = {}) {
   if (!snapshot || typeof snapshot !== 'object') {

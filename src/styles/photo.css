@@ -1,6 +1,6 @@
 /* Photo mode: the office alone over the whole window, with one bar to frame and take the picture */
 body.is-photo #app { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); grid-template-areas: "stage"; }
-body.is-photo .topbar, body.is-photo .side, body.is-photo .drawer { display: none !important; }
+body.is-photo .topbar-shell, body.is-photo .side, body.is-photo .drawer { display: none !important; }
 body.is-photo .stage-wrap > :not(#stage):not(#photo-bar):not(.clip-cover) { display: none !important; }
 /* people's names only: no bubbles, chips, warnings or the cat's meow */
 body.is-photo .labels > :not(.tag), body.is-photo .labels > .tag--lost, body.is-photo .labels > .cat-say, body.is-photo .labels > .tag--me { display: none !important; }

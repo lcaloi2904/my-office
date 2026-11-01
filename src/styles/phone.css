@@ -6,10 +6,10 @@
 @media (max-height: 520px) { .is-phone { --ph-top: 44px; --ph-tabs: calc(48px + env(safe-area-inset-bottom, 0px)); } }
 /* the page never scrolls as a whole: only what is inside a sheet does (a focused field would otherwise pull it aside) */
 .is-phone body { position: fixed; inset: 0; overflow: hidden; overscroll-behavior: none; -webkit-tap-highlight-color: transparent; }
-.is-phone #app { height: calc(100% - var(--ph-tabs)); padding-top: env(safe-area-inset-top, 0px); grid-template-columns: minmax(0, 1fr); grid-template-rows: var(--ph-top) minmax(0, 1fr); grid-template-areas: "top" "stage"; }
+.is-phone #app { height: calc(100% - var(--ph-tabs)); padding-top: env(safe-area-inset-top, 0px); grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); grid-template-areas: "top" "stage"; }
 
 /* the top bar: the mark, the plan and the Mac at a glance, settings; the rest lives in the tab bar */
-.is-phone .topbar { padding: 0 10px; gap: 8px; }
+.is-phone .topbar { min-height: var(--ph-top); padding: 0 10px; gap: 8px; }
 .is-phone .tb-brand { gap: 6px; font-size: 1rem; }
 .is-phone .tb-brand > span:not(.logo):not(.demo-chip), .is-phone .demo-more, .is-phone .replay-chip { display: none; }
 .is-phone .tb-brand .demo-chip { padding: 3px 7px; font-size: .62rem; }

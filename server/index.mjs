@@ -2664,7 +2664,7 @@ const server = http.createServer((req, res) => {
   const snapNow = (local) => {
     const lanOn = lanIsOn();
     const omp = ompFilesOn() ? { on: true, local, conversation: !!ompAdapter.catalog({ limit: 1 }).conversation } : null;   // (whether the history picker is offered; the list itself is this computer only)
-    const ompUsage = OMP_USAGE_ON ? ompUsageCollector.snapshot({ local }) : null;
+    const ompUsage = ompUsageCollector.snapshot({ local });
     return { k: 'snap', lang: prefs.lang(), omp, ompUsage, sessions: local ? agents.list() : agents.list().filter((s) => s.agentKind !== 'omp'), perms: [...pending.values()].map(permPub), feed, stats, local, todos, limits: limitsOut(), limitsNote: noteText(), trophies: trophies.pub(),
       lan: local && lanOn ? lanUrl() : null, lanBase: local && lanOn ? lanUrl(false) : null, pin: local ? currentPin() : null,
       ts: local && lanOn ? tsUrl() : null, tsHere: !!tsUrl(), phoneApprove: !!prefs.get('phoneApprove'), phoneTasks: !!prefs.get('phoneTasks'), lanFixed: local && lanFixed, build: BUILD, lift: liftService.pub() };

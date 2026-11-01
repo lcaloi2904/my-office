@@ -17,6 +17,7 @@ import { TOKEN } from '../net/live.js';
 import { onQualityChange, quality, setQuality } from '../scene/quality.js';
 import { drawPortraits } from './portraits.js';
 import { DEFAULT_LANG, t as tr, lang } from '../../i18n/index.js';
+import { isPhone, showTab as showPhoneTab } from './phone.js';
 
 export let popLook;
 let btnLook;
@@ -103,6 +104,21 @@ export function setup() {
   btnPlan.addEventListener('click', (e) => { e.stopPropagation(); togglePlan(); });
   // (a click on something the card just replaced (a step of adding an account) isn't a click outside it)
   document.addEventListener('click', (e) => { if (!popPlan.hidden && e.target.isConnected && !e.target.closest('#pop-plan, #btn-plan')) togglePlan(false); });
+  const usageDashboard = $('omp-usage-dashboard'), usageButton = $('btn-omp-usage');
+  const showUsage = (open, focus = false) => {
+    usageDashboard.hidden = !open;
+    usageButton.setAttribute('aria-expanded', String(open));
+    try { localStorage.setItem('office-omp-usage', open ? 'open' : 'closed'); } catch { /* storage blocked */ }
+    if (focus) usageButton.focus();
+  };
+  try { showUsage(localStorage.getItem('office-omp-usage') !== 'closed'); } catch { /* default open */ }
+  usageButton.addEventListener('click', () => {
+    const covered = isPhone() && !!document.querySelector('.ph-open, .ph-approve, .drawer:not([hidden]), #pop-plan:not([hidden]), #pop-look:not([hidden]), #zchat:not([hidden])');
+    const open = usageDashboard.hidden || covered;
+    if (isPhone() && open) showPhoneTab('office');
+    showUsage(open);
+  });
+  $('omp-usage-collapse').addEventListener('click', () => showUsage(false, true));
   popLook.addEventListener('click', (e) => {
     const tb = e.target.closest('[data-st-tab]'); if (tb) { showTab(tb.dataset.stTab); return; }
     if (e.target.closest('#st-close')) { togglePop(false); btnLook.focus(); return; }
