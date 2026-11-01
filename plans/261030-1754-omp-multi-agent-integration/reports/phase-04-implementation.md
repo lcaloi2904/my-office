@@ -104,3 +104,10 @@ Người dùng giao quyền quyết ("bạn tự quyết đi", 01/11/2026). Quy�
 2. **G4 giữ OPEN.** Không đóng gate khi plan review, interactive, subagent, `ask`, S7 và ACL Windows chưa có bằng chứng. Các mục này không chặn bắt đầu Phase 5 (UI chỉ đọc dữ liệu đã có); chúng được kiểm khi có điều kiện chạy thật (TUI tương tác, host khác).
 3. **Giữ bản cài là bản sao**, không thêm script/symlink (KISS; symlink Windows cần quyền). Quy tắc: sửa `integrations/omp/office-observer.js` thì copy lại (README đã ghi).
 4. **Phase 5: session đã kết thúc hiện mờ trong thời gian retention (15 phút) rồi biến mất**, không ẩn ngay để người dùng còn thấy kết quả cuối.
+
+## Local validation bổ sung — 01/11/2026
+
+[Report riêng](./phase-04-local-validation.md) ghi actual OMP **18.14.2** với scripted loopback model: TUI/read/message/shutdown đã quan sát; native manual plan-review requested/resolved chuyển waiting/input → idle; ask tool và child identity/completion chạy thật. Ask exact waiting và live child reporting được xác nhận là unsupported. Plan execution continuation/cancellation chưa verified, không coi callback pair là toàn flow PASS.
+
+**S7 Windows token ACL: FAIL**, không còn chỉ NOT RUN: inherited Users/Authenticated Users ở ingress token và additional principals ở observer settings. Chỉ inspection, chưa đổi ACL/config/token. Cross-host vẫn NOT RUN, **G4 vẫn OPEN**; không Phase 06/rollout.
+

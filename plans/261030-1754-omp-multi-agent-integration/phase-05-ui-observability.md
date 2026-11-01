@@ -69,13 +69,23 @@ E2E/build theo E1, gồm `agents.spec.ts` và existing smoke; full existing E2E 
 
 ## Todo
 
-- [ ] Provider/project/actor identity và labels.
-- [ ] Subagent drawer/tree và bounded 3D mapping.
-- [ ] Conversation/privacy/nullable metrics.
-- [ ] Stable timeline/replay/parallel-tool semantics.
-- [ ] Mixed-agent controls + Low Quality/List/mobile E2E.
-- [ ] G5 evidence, không tự bắt đầu rollout.
+- [x] Provider/project/actor identity và labels.
+- [x] Subagent drawer/tree và bounded 3D mapping.
+- [x] Conversation/privacy/nullable metrics.
+- [x] Stable timeline/replay/parallel-tool semantics.
+- [x] Mixed-agent controls + Low Quality/List/mobile E2E.
+- [x] G5 evidence, không tự bắt đầu rollout.
 
 ## Risks / Stop conditions / Rollback
 
 Chưa có reliable child identity hoặc timestamp thì hiển thị degraded; không fabricated relationships/durations. Nếu cần redesign React/Three startup để đạt perf, ghi proposal riêng thay vì refactor ngoài scope. Rollback provider UI bằng patch scoped; không làm replay cũ không đọc được, không xóa lưu trữ người dùng.
+
+## Execution evidence — 01/11/2026
+
+Implementation và checklist Phase 05 đã hoàn tất trong scope Windows/synthetic được cho phép, theo quyết định cuối Phase 04 cho phép tiếp tục khi G4 vẫn OPEN. Chi tiết implementation, V1–V8, review fixes, commands và giới hạn: [Phase 05 report](./reports/phase-05-implementation.md).
+
+- Cuối cùng: 245/245 unit, 12/12 agents E2E, 3/3 files E2E, 1/1 hybrid E2E, 7/7 selected Claude smoke; lint/typecheck/isolated production build PASS.
+- Browser surface đã thao tác trực tiếp ở desktop/mobile; nested tree, overflow, HUD, keyboard và responsive geometry được kiểm thêm bằng E2E. Không có FPS/zero-WebGL/cross-platform claim.
+- Persisted children là historical evidence; live child/advisor chưa hỗ trợ và tombstone không chứng minh outcome. Metadata/conversation opt-in và OMP read-only guards giữ nguyên.
+- **G4 vẫn OPEN**; báo cáo không tự đóng G5 trên mọi installed runtime/host. Không Phase 06/G6, benchmark, model-backed OMP hoặc rollout; không commit/push.
+

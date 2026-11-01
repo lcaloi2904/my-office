@@ -1,6 +1,20 @@
 # Validation matrix — planned scenarios và execution evidence
 
-## Current execution delta — Phase 02 RAIL-01 repair, 31/10/2026
+## Current execution delta — Phase 05, 01/11/2026
+
+Phase 05 implementation/UI đã kiểm chứng trên Windows Chromium với nguồn synthetic cô lập: 245/245 unit, lint/typecheck/build PASS; agents 12/12, files 3/3, hybrid 1/1 và selected Claude smoke 7/7 PASS. V1–V8 evidence, privacy/replay/child support limits và manual desktop/mobile proof ở [Phase 05 report](./reports/phase-05-implementation.md). Không có cross-platform/FPS/zero-WebGL claim.
+
+Quyết định cuối Phase 04 cho phép Phase 05 chạy trong khi **G4 vẫn OPEN**. Những phần installed runtime, cross-host/S7 và ACL Windows chưa có evidence vẫn chưa được đóng; Phase 06/G6/full rollout suite/benchmarks chưa chạy. Permission YAML và NOT RUN statements của snapshot cũ bên dưới là lịch sử, không phải quyền hoặc kết quả mới.
+
+### G4 local execution delta — 01/11/2026
+
+[Local validation](./reports/phase-04-local-validation.md): actual installed OMP18.14.2/TUI với scripted loopback model đã phát read/message/shutdown, manual plan-review request/resolution (waiting/input → idle), built-in ask và task child callbacks. R10 vẫn PARTIAL: cancellation/automatic plan proposal/complete execution continuation chưa verified; exact ask waiting và live child reporting là unsupported đã quan sát. **S7 Windows token ACL FAIL**, không phải NOT RUN nữa; chưa sửa/rotate. Cross-host vẫn NOT RUN, G4 OPEN. Không Phase06/rollout.
+
+### Authorized ACL/token remediation — 01/11/2026
+
+[Remediation report](./reports/phase-04-token-remediation.md): local finding G4-ACL-01 đã sửa trong filesystem/token boundary đã thử; private directories/files chỉ trusted SIDs, old401/new200, foreign-source422, unrelated ACLs unchanged. Source guards tạo private DACL tại birth và fail closed cho unsafe/malformed storage. Full unit268/268, focused70/70, lint/typecheck, hybrid browser1/1 PASS. Fresh explicit OMP package load có correlated acceptance; idle-exit45s timeout vẫn là failed check, EOF cleanup exit0. Existing loaded factories chưa hot-reload; không dừng user agents. **G4 tổng vẫn OPEN**, cross-host/runtime limits không được đóng.
+
+## Historical execution delta — Phase 02 RAIL-01 repair, 31/10/2026
 
 RAIL-01 đã sửa trong scope extension được người dùng phê duyệt. Lint/typecheck/rebuild PASS; 48/48 unit và 6/6 agent E2E PASS. Agent suite giữ viewport 1440×900, 90s/test, không retry. Selected Claude regression 1440×900 có 3 PASS / 1 timeout ở 180s/trace-on và 2 PASS / 2 timeout ở mặc định 90s/trace-off; **G2 chưa nghiệm thu toàn bộ**, không ghi mọi scenario dưới đây thành PASS.
 

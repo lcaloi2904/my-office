@@ -38,20 +38,23 @@ background service: launchd, a systemd user service, or a script in the Windows 
 `OFFICE_OMP=files` plus `OFFICE_OMP_CONFIG=<absolute path to a JSON file>` lets the office list saved OMP session files. Without both,
 nothing is read: no home or profile discovery, no OMP process, no SDK. `OFFICE_OMP=hybrid` is the same plus the live observer ingress (below).
 
-The config is `{ "version": 1, "sources": [{ "id", "root", "pathStyle": "win32"|"posix", "conversation": false, "projectMappings": [{ "from", "projectId", "worktreeId" }] }], "limits": {…} }`.
+The config is `{ "version": 1, "sources": [{ "id", "root", "pathStyle": "win32"|"posix", "conversation": false, "projectMappings": [{ "from", "projectId", "worktreeId", "localRoot"? }] }], "limits": {…} }`.
 Each `root` is an absolute folder with no symlink or junction in its path; files are opened read-only and only inside it. `limits` can
 only lower the defaults in `server/agents/omp/paths.mjs`. `conversation` is off unless set to `true` for that source.
+`localRoot`, when explicitly configured, is a native absolute Git worktree root approved for local identity verification. Only verified Git common-directory/worktree identities can group that mapping with Claude or another approved source. Without it, project/worktree hashes remain source-scoped; names, producer cwd values and equal basenames never authorize cross-source grouping. No CI or network operation is needed for this verification.
 
 - Saved sessions are *history*, never presumed running. `GET /api/omp/catalog` (this computer only) pages through them with
   metadata only; pinning one (`POST /api/omp/pin { id, on }`, public ids only, this computer only) makes it a persisted-only actor
   with a "History · not live" label. At most 8 pins; they are kept in `data/omp-pins.json`. A pinned session is
   shown to this computer's own pages only: it is not streamed to phone or tunnel pages, left out of their snapshots and
   `/api/live` polls, and never written to the replay log (`broadcast(msg, true)` marks such messages local-only).
-- Pinned files are polled one at a time with an incremental reader (`omp/reader.mjs`); a rewritten file is rebuilt, never double-counted.
-- A pin's conversation is read on demand by `/api/log` (this computer only) and only for sources with `conversation: true`.
-- Nested child transcripts are counted as historical candidates only; subagent, advisor and tombstone semantics are not interpreted.
-- Controls (open, close, account, remote, tasks) stay Claude-only. Tests: `tests/unit/omp-*.test.mjs`; browser smoke:
-  `playwright test -c playwright.omp.config.ts` (synthetic folders from `tests/e2e/omp-fixture.mjs`).
+- Pinned files are polled one at a time with an incremental reader (`omp/reader.mjs`); a rewritten file is rebuilt, never double-counted. Retained entry bodies and a non-aging membership filter share the index byte limit. A possible duplicate outside the retained tail is conservatively omitted with `possible-duplicate-entry-id` and `incomplete`; filter false positives may omit new entries, so incomplete ledgers never claim complete usage.
+- A pin's conversation is read on demand by `/api/log` (this computer only), only for sources with `conversation: true`. Hybrid file+runtime rows retain this permission; controls remain unavailable.
+- `/api/log?id=<root>&agent=<raw-child-id>&before=<opaque-cursor>` returns `{items, nextCursor, incomplete}`. Root and verified task-child views page backwards in batches of at most 120 from a bounded 4,096-item snapshot. Cursors are root/child/snapshot scoped; invalid or changed snapshots return an explicitly incomplete empty page. Claude retains its legacy array reader internally and exposes byte/item truncation through this page API.
+- Verified `session_init.task` artifacts beneath a pinned root expose at most 128 task children, with namespaced `agentKey`, true `parentAgentKey` and `rootSessionKey`. Prefix reads and discovery are bounded; incomplete/ambiguous trees are labelled, never silently promoted. All such children are historical, not running. A tombstone is marker evidence with outcome unknown, not proof that the latest generation aborted. Nested task trees are bounded; advisor execution, live children and parked/revived runtime states are not inferred.
+- Conversation rendering uses inert DOM/escaped Markdown for user/assistant text and compaction/reset/branch summaries. Tool invocations/results/errors expose canonical category/phase metadata, not arguments, output or reasoning. Metadata snapshots, tooltips and replay contain no transcript text.
+- Controls (open, close, account, remote, tasks) stay Claude-only. Tests: `tests/unit/omp-*.test.mjs`; isolated browser modes:
+  `playwright test -c playwright.omp.config.ts` (files) and `playwright test -c playwright.hybrid.config.ts` (synthetic ingress plus files).
 
 ### Optional: OMP live observer (`hybrid`, off by default)
 
@@ -60,7 +63,7 @@ README; the office never installs it into OMP). The ingress is telemetry only:
 
 - It answers 404 unless hybrid is on. Otherwise a request must come from this computer's loopback, not through the
   tunnel, with no `Origin` header, and carry `Authorization: Bearer <token>`. Tokens are per configured source
-  (`data/omp-ingest.json`, created on first start) and a token can only report sessions of its own source `id`. Bodies are
+  (`~/.omp/office-private/ingest.json`; explicit absolute override `OFFICE_OMP_INGEST_FILE`) and a token can only report sessions of its own source `id`. Both receiver and observer settings use private storage with Windows DACL-at-creation or Unix ownership/mode checks; unsafe paths fail closed. The old repository token location is not a fallback. Bodies are
   capped (64 KiB, 32 events, 5 s) and rate limited per source before they are parsed; unknown fields are dropped.
   Nothing it returns is a command or a path (`server/agents/omp/bridge.mjs`).
 - Events go through `omp/lifecycle.mjs`: runtime instance + generation + sequence (a retry is idempotent, a late event of an
@@ -70,7 +73,17 @@ README; the office never installs it into OMP). The ingress is telemetry only:
   replace the runtime's provisional usage instead of adding to it. Live rows are sent to this computer's pages only, like
   pinned history.
 - Delivery is not guaranteed and not durable: an acknowledgement means "applied in memory". Tests: `omp-lifecycle`,
-  `omp-bridge`, `omp-live-merge`, `omp-observer`. The observer has only been run against a fake `pi`.
+  `omp-bridge`, `omp-live-merge`, `omp-observer`. Installed 18.14.1 print/RPC evidence remains in the [Phase 04 report](../plans/261030-1754-omp-multi-agent-integration/reports/phase-04-implementation.md). [18.14.2 local validation](../plans/261030-1754-omp-multi-agent-integration/reports/phase-04-local-validation.md) adds actual TUI callbacks and manual plan-review waiting with a scripted loopback model; exact ask waiting and live child reporting remain unsupported. [Authorized token remediation](../plans/261030-1754-omp-multi-agent-integration/reports/phase-04-token-remediation.md) repaired the inspected Windows storage ACL and rotated the token; already-loaded observer factories need a fresh load to use it. G4 remains open, with cross-host and other runtime verification outstanding.
+
+### Mixed-agent UI and replay
+
+- Scene teams use opaque `projectKey`, never the display basename. Without a verified key, legacy local Claude rows group by the full existing directory; other providers remain session-scoped. Tagged directory/session fallbacks cannot collide. Cross-source grouping still requires an explicitly verified mapping.
+- Actor appearance uses stable session identity, not the display name. Child actors use namespaced keys while raw child IDs remain available for scoped conversation lookup. The scene renders at most 64 session/child actors combined, including outgoing actors, and 32 children per root. Overflow keeps every model row available in the rail, List Mode and drawer. Deep 3D lines may connect to the root; the drawer retains the true tree and explains the flattening.
+- OMP has a local text badge. Connected, persisted-only, stale/disconnected, ended and unknown/gap evidence are distinct; approval waiting differs from ready-for-user. Ended runtime actors dim during the existing 15-minute retention. Historical/parked children do not inflate the running-child counter. Unknown context/cost renders as `–`; known estimates include scope/provenance and never enter Claude quota or daily totals.
+- New timelines key roots by `sessionKey`, with collision-proof child keys; old replay files retain their name fallback without migration. Per-call completion evidence settles only its own parallel tool. Rest snapshots cannot close pending correlated tools. Unknown, stale, gap and historical intervals do not count as exact work/user-turn time.
+- Replay clones recorded observations and disconnects live transport. It releases approval presence once, suppresses live handlers, controls and transcript reads, and does not change live desk preferences. Recorded actor poses and child actions remain visible; seeking cancels superseded travel callbacks while preserving station/location consistency.
+- `?demo&agents` adds synthetic mixed-agent/overflow fixtures without changing the default Claude-only demo. Low Quality and List Mode retain the existing startup/render architecture: List Mode is not a zero-WebGL startup guarantee. No FPS/resource improvement is claimed without a separate benchmark.
+
 
 Runtime state lives in `data/` (git-ignored): the access token, phone PIN, replay logs (7 days), totals, caches.
 
