@@ -54,7 +54,7 @@ Server độc lập cấp quyền theo `sourceNamespace + sourceSessionId + runt
 | 01 | [Contracts, baseline, compatibility](./phase-01-start.md) | Exact OMP dialect/OS/session identity, threat model, approval boundary | **G1 COMPLETE (review; không cấp quyền control)** | — |
 | 02 | [Session visibility & lifecycle UX](./phase-02-session-visibility.md) | Ẩn/hiện, Undo, refresh bằng chứng, bỏ ghim, lưu sở thích | **G2 PASS** | G1 |
 | 03 | [Native Windows RPC launch/resume](./phase-03-native-rpc-launch-resume.md) | Tạo mới, resume exact session, ownership & cleanup | **G3 PASS (Phase 04 vẫn đóng)** | G1,G2 |
-| 04 | [Managed interactive control & Live Agent Activity Bubbles](./phase-04-managed-interactive-control.md) | Chat và mô tả công việc realtime trên các ô nổi 3D | G4 | G3 |
+| 04 | [Managed interactive control & Live Agent Activity Bubbles](./phase-04-managed-interactive-control.md) | Chat và mô tả công việc realtime trên các ô nổi 3D | **G4 PASS (Phase 05–07 vẫn đóng)** | G3 |
 | 05 | [External TUI opt-in controller](./phase-05-external-tui-control-bridge.md) | Bridge đã cấp quyền tới phiên bên ngoài, không phá observer | G5 | G1,G4 |
 | 06 | [Approval & advanced actions](./phase-06-approvals-and-advanced-actions.md) | Allow-once/deny, ask, plan review với fail-closed gates | G6 | G4,G5 |
 | 07 | [Security/perf/regression & rollout](./phase-07-hardening-regression-rollout.md) | Native Windows smoke, regressions, benchmark bubble/3D, docs/rollback | G7 | G2–G6 |
@@ -102,11 +102,11 @@ Tận dụng `observeActor()`, `Worker.say()`, CSS2D declutter đã có; **80 k�
 ## Acceptance criteria tổng
 
 - [x] Không mất lịch sử/context khi hide/unpin; hidden không tái xuất hiện sai sau SSE/server restart — G2, bằng chứng trong validation matrix.
-- [ ] Native new/resume dùng đúng project/profile/session, không duplicate process hoặc attached nhầm phiên.
-- [ ] Managed RPC gửi prompt/steer/followUp/abort tin cậy; accepted != settled, stale/unknown không giả thành done.
+- [x] Native new/resume dùng đúng project/profile/session, không duplicate process hoặc attached nhầm phiên.
+- [x] Managed RPC gửi prompt/steer/followUp/abort tin cậy; accepted != settled, stale/unknown không giả thành done.
 - [ ] External TUI chỉ điều khiển khi extension riêng được bật và handshake, không ảnh hưởng observer-only.
 - [ ] Approval/plan review/ask chỉ mở khi API hỗ trợ xác minh; quyền local-only, fail-closed.
-- [ ] Hai Live Agent Activity Bubbles hiển thị đúng tóm tắt công việc độc lập từng OMP agent, không dính việc cũ sau khi idle/disconnect, ≤80 ký tự, bảo toàn FPS và quyền riêng tư.
+- [x] Hai Live Agent Activity Bubbles hiển thị đúng tóm tắt công việc độc lập từng OMP agent, không dính việc cũ sau khi idle/disconnect, ≤80 ký tự, bảo toàn FPS và quyền riêng tư.
 - [ ] Claude Code, OMP quota/replay, List Mode/Low Quality và privacy không regress.
 - [ ] Unit, HTTP-negative, browser E2E, isolated native Windows smoke, performance trước/sau, docs và rollback có evidence.
 
@@ -118,6 +118,6 @@ Default decisions: Managed RPC cho new/resume; external TUI phải opt-in; ẩn 
 
 ## Handoff
 
-**G3 OPEN; dừng trước Phase04.** Test failures đã sửa; unit/E2E/native no-turn và giới hạn kiểm chứng được ghi trong [biên bản G3](./reports/g3-launcher-acceptance.md) và [validation matrix](./validation-matrix.md). Không giảm tiêu chí Resume để đóng gate: cần cơ chế loại trừ writer được chứng minh qua race check/open/first-write, không chỉ probe lease hoặc reservation nội bộ. Không triển khai Phase04, không bật launcher production, không commit/push hoặc thay `.next` đang chạy trong lượt nghiệm thu này.
+**G4 PASS (Phase 04 đã hoàn tất và kiểm chứng; Phase 05–07 vẫn đóng).** Kết quả unit, HTTP negative, browser E2E cho managed RPC control (`OFFICE_OMP_CONTROL` OFF mặc định) và Live Agent Activity Bubbles được ghi trong [validation matrix](./validation-matrix.md). Giữ `OFFICE_OMP_LAUNCH` và `OFFICE_OMP_CONTROL` OFF theo mặc định trên production; chưa mở external TUI bridge (Phase 05) hay approvals (Phase 06).
 
 <!-- slug: omp-session-management-interactive-control -->

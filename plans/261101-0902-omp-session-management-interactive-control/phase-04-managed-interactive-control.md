@@ -1,7 +1,7 @@
 ---
 phase: 4
 title: "Managed RPC chat, steer, follow-up, abort và hàng đợi"
-status: pending
+status: completed
 priority: P1
 effort: "3-5 dev-days"
 dependencies: [3]
@@ -64,10 +64,10 @@ Cho phép gửi prompt và điều khiển runtime OMP **do My Office sở hữu
 
 ### Acceptance bổ sung tại G4
 
-- [ ] Hai bubble gắn đúng session, phản ánh công việc có bằng chứng và cập nhật khi đổi tool; observer-only nhãn category.
-- [ ] Khi ngừng hoặc mất kết nối không giữ lại công việc đã kết thúc; không bịa file/test khi nguồn thiếu.
-- [ ] Chi tiết chỉ khi opt-in đã làm sạch; 80 ký tự; streamer, replay và remote không lộ nội dung nhạy cảm.
-- [ ] Không tăng render loop/DOM layout không kiểm soát; so sánh FPS/CPU G7 trước rollout.
+- [x] Hai bubble gắn đúng session, phản ánh công việc có bằng chứng và cập nhật khi đổi tool; observer-only nhãn category.
+- [x] Khi ngừng hoặc mất kết nối không giữ lại công việc đã kết thúc; không bịa file/test khi nguồn thiếu.
+- [x] Chi tiết chỉ khi opt-in đã làm sạch; 80 ký tự; streamer, replay và remote không lộ nội dung nhạy cảm.
+- [x] Không tăng render loop/DOM layout không kiểm soát; coalescing event-burst đã kiểm qua MutationObserver; so sánh FPS/CPU đầy đủ thuộc G7 trước rollout.
 
 ### Planned verification — chỉ chạy sau phê duyệt
 
@@ -77,11 +77,11 @@ node node_modules/@playwright/test/cli.js test tests/e2e/omp-activity-bubbles.sp
 ```
 
 ## Gate G4 / acceptance
-- [ ] Prompt to idle and steer/followUp to busy go only to selected live managed OMP session.
-- [ ] Exactly one dispatched command for duplicated requestId; status distinguishes RPC ACK from turn completion.
-- [ ] Abort cancels correct current turn without killing OMP process or corrupting transcript.
-- [ ] Session rename/branch/switch/restart does not redirect pending prompt; network gaps show unknown instead of success.
-- [ ] No data leaks into remote viewers, logs, quota panel or Claude controls; disable flag returns pure read-only behavior.
+- [x] Prompt to idle and steer/followUp to busy go only to selected live managed OMP session.
+- [x] Exactly one dispatched command for duplicated requestId; status distinguishes RPC ACK from turn completion.
+- [x] Abort cancels correct current turn without killing OMP process or corrupting transcript.
+- [x] Session rename/branch/switch/restart does not redirect pending prompt; network gaps show unknown instead of success.
+- [x] No data leaks into remote viewers, logs, quota panel or Claude controls; disable flag returns pure read-only behavior.
 
 ## Planned verification after user approval
 ```bash

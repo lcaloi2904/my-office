@@ -21,6 +21,8 @@ Quan sát OMP **mặc định tắt (`off`)**, **chỉ-đọc (`read-only`)** v�
 | `OFFICE_OMP_PROFILE` | *(theo `OMP_PROFILE` / `default`)* | Tên profile OMP hợp lệ (`--profile <name>`) dùng để đọc quota OMP. |
 | `OFFICE_OMP_LAUNCH` | `0` | Chỉ giá trị `1` bật launcher native Windows; không cấp quyền qua cờ quota hoặc observer. |
 | `OFFICE_OMP_LAUNCH_CONFIG` | *(trống)* | Đường dẫn tuyệt đối tới allowlist launcher riêng; schema do `validateOmpLaunchConfig` trong `server/agents/omp/launch-resolver.mjs` sở hữu. |
+| `OFFICE_OMP_CONTROL` | `0` | Mặc định **tắt** (`0`). Chỉ khi cả `OFFICE_OMP_LAUNCH=1` và `OFFICE_OMP_CONTROL=1` trên Windows cục bộ mới mở `POST /api/omp/control/command` (`prompt`, `steer`, `followUp`, `abort`, `queueRemove`) cho các phiên managed RPC không ở chế độ `officeReadOnly`. |
+| `OFFICE_OMP_ACTIVITY_DETAIL` | `0` | Mặc định **tắt** (`0`). Khi đặt `1` (cùng tùy chọn cục bộ trên trình duyệt), cho phép Live Agent Activity Bubbles của phiên managed RPC hiển thị tên file ngắn (`safeSubject` basename đã lọc, ≤32 ký tự). Chế độ Streamer, xem lại (replay) hoặc người xem từ xa luôn ẩn chi tiết này. |
 
 Trình tự kích hoạt khuyến nghị:
 1. Giữ `OFFICE_OMP=off` cho tới khi chuẩn bị xong file cấu hình `omp-config.json`.

@@ -89,7 +89,20 @@ Giới hạn: 3 unit SKIP có sẵn không bị tính PASS; không paid model/ac
 
 [Biên bản G3](./reports/g3-launcher-acceptance.md) sở hữu kết quả các lượt kiểm chứng và commands. Bản cài gốc `18.15.0` được giữ nguyên; exact Resume độc quyền được chứng minh trên bản build cô lập `backups/omp-g3-native-20261101/omp-office-g3.exe` (`SHA-256: e753e08f423b9a27d6bed448376b615bd83c24ed9af342730076969907caf0f5`).
 
-Khi allowlist bật `resumeProtocol: 1` và `ownerDir` nguồn đã duyệt, child native lấy đồng thời khóa miền gốc (`ownerDir + sessionId`) và khóa đường dẫn canonical trước khi đọc history, giữ nguyên từng byte transcript (kể cả khi có assistant message), phát `ready.officeOwnershipProtocol=1` và `get_state.officeOwnership` rồi mới được nhận làm managed owner. Stock binary hoặc cấu hình không khai báo `resumeProtocol: 1` vẫn từ chối `LAUNCH_OWNER_UNVERIFIED` fail-closed. Phase 04 vẫn đóng cho tới khi có phê duyệt riêng.
+Khi allowlist bật `resumeProtocol: 1` và `ownerDir` nguồn đã duyệt, child native lấy đồng thời khóa miền gốc (`ownerDir + sessionId`) và khóa đường dẫn canonical trước khi đọc history, giữ nguyên từng byte transcript (kể cả khi có assistant message), phát `ready.officeOwnershipProtocol=1` và `get_state.officeOwnership` rồi mới được nhận làm managed owner. Stock binary hoặc cấu hình không khai báo `resumeProtocol: 1` vẫn từ chối `LAUNCH_OWNER_UNVERIFIED` fail-closed.
+
+## G4 — PASS (2026-11-02, Phase 05–07 vẫn đóng)
+
+| Kiểm tra | Kết quả |
+|---|---|
+| `node --test --test-concurrency=1 tests/unit/*.test.mjs` | **484 tổng: 481 PASS, 3 SKIP, 0 FAIL** (gồm `omp-command-schema`, `omp-control-manager`, `omp-activity-summary`, `omp-rpc-host`, `omp-lifecycle`, `omp-projection`, `agent-compat`, `i18n`) |
+| `node node_modules/eslint/bin/eslint.js .` và `node node_modules/typescript/bin/tsc --noEmit` | **PASS (exit 0)** |
+| `playwright.omp.config.ts` (gồm `omp-files`, `omp-visibility`, `omp-launch-resume` OFF, `omp-controls`, `omp-activity-bubbles`) | **11/11 PASS**, retries 0 |
+| `playwright.hybrid.config.ts` (`omp-hybrid.spec.ts`) | **1/1 PASS** |
+| `tests/e2e/agents.spec.ts --workers=1` | **13/13 PASS** |
+| `playwright.launch.config.ts` (`omp-office-g3.exe`, `omp/18.15.0`) | **1/1 PASS** |
+| `tests/e2e/office.spec.ts --grep @smoke --workers=1` | **5/5 PASS** |
+| **G4 tổng** | **PASS**; `OFFICE_OMP_CONTROL` và `OFFICE_OMP_ACTIVITY_DETAIL` OFF theo mặc định; không lộ prompt vào `actions.log`/SSE/replay; 2 bubble OMP độc lập, ≤80 ký tự, xóa việc cũ khi tool_end/idle/disconnected và ẩn safeSubject trong Streamer Mode/remote/replay |
 
 ## Proposed new tests (create during approved phase)
 - `tests/unit/omp-visibility.test.mjs`
