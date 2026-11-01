@@ -1,7 +1,7 @@
 // Workers: one character per session or subagent, what they do and where they walk.
 import * as THREE from 'three';
 import { CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
-import { makeChibi, chibiPose, applyChibiPose, wearOuter, wearHat } from './chibi-rig.js';
+import { makeChibi, chibiPose, applyChibiPose, wearOuter, wearHat, wearLanyard, disposeChibi } from './chibi-rig.js';
 import { state } from '../core/state.js';
 import { PRO, SEASON, V2, el, fmtAgo, nowMs, officeNow, rand, randInt, reduceMotion, replay, short, tint, wrapAngle } from '../core/env.js';
 import { ACT, ANIM_AT, bubbleText, verb } from '../ui/event-text.js';
@@ -9,7 +9,7 @@ import { TYPE_ICON, icon } from '../ui/icons.js';
 import { scene } from '../scene/renderer.js';
 import { canvasTex } from '../scene/blocks.js';
 import { inside } from '../world/layout.js';
-import { lift, liftArrive } from '../world/entrance.js';
+import { lift, liftArrive, liftDown } from '../world/entrance.js';
 import { BAGS, COATS, chairs, deskKit } from '../world/desks.js';
 import { CLAUDE_MARK } from '../world/pro/pieces.js';
 import { DESK_SPOTS, DOOR_IN, DOOR_OUT, NODES, STATIONS, allocate, faceTo, nearestNode, route } from './navigation.js';
@@ -29,6 +29,8 @@ export const streetHooks = {};
 // the attendance terminal by the lift (people/hr.js): in(w, then) on the way in from the lift, out(w, then) on the way out,
 // newcomer(w) for a session's first walk in; each calls then() when done (straight away when there is nothing to do)
 export const clockHooks = {};
+// set by people/comnha.js: home(w, d, minute) says whether w brought lunch from home today ({ due, join }), else null
+export const lunchHooks = {};
 const viaClock = (kind, w, then) => (clockHooks[kind] ? clockHooks[kind](w, then) : then());
 export function hash(s) { let h = 2166136261; for (const ch of String(s)) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619); } return h >>> 0; }
 export const actorIdentity = (s) => s?.sessionKey || s?.id || s?.name || '';
@@ -261,11 +263,20 @@ export function freeActor(w) {
   w.onArrive = null; w.after = null; w.want = null; w.chore = null; w.path.length = 0;
   w.remove();
 }
+/* Each one walking out is a whole character in memory. When they come faster than they go (a slow machine draws 5
+   frames a second, a burst of subagents finishes at once, the lift stays open while others arrive), the ones who
+   started leaving first just go, so the crowd stays small. */
+const LEAVING_MAX = 8;
+export function trimLeaving() {
+  for (const w of leaving) { if (leaving.size <= LEAVING_MAX) return; w.leaving = true; w.remove(); leavingIds.delete(w.id); }   // (its id free again: a session that left may come back)
+}
 export function dropSub(agentId, report = true) {
   const w = subs.get(agentId); if (!w) return;
-  subs.delete(agentId); leaving.add(w);
+  subs.delete(agentId); leaving.add(w); trimLeaving();
   const boss = w.parent;
-  if (agentOf(sessions.get(boss?.id)) !== 'claude' || !report || reduceMotion || !boss || workers.get(boss.id) !== boss || boss.leaving || replay.on) { w.remove(); leaving.delete(w); return; }
+  if (!leaving.has(w)) return;
+  if (agentOf(sessions.get(boss?.id)) !== 'claude' || replay.on) { w.remove(); leaving.delete(w); return; }
+  if (!report || reduceMotion || document.hidden || !boss || workers.get(boss.id) !== boss || boss.leaving) { w.leave(); return; }
   const desc = w.desc || '';
   w.want = null; w.hush();
   w.goTo(nearBoss(boss, w), () => {
@@ -349,6 +360,14 @@ export function setup() {
       if (!this.teamEl) { this.teamEl = el('span', 'tag-team'); this.tagEl.append(this.teamEl); }
       this.teamEl.hidden = !n; this.teamEl.textContent = n ? tr('people.team', { n }) : '';
     }
+    // stuck in a loop (server/loops.mjs): a red "kẹt" on the name tag, and said out loud once when it starts
+    setStuck(st) {
+      const on = !!st; if (this.stuck === on) return;
+      const was = this.stuck; this.stuck = on;
+      if (!this.stuckEl) { this.stuckEl = el('span', 'tag-stuck', tr('people.stuck')); this.tagEl.append(this.stuckEl); }
+      this.stuckEl.hidden = !on; this.tagEl.classList.toggle('tag--stuck', on);
+      if (on && was === false) this.say('fail', tr('people.stuckSay'), 'fail');
+    }
     rebuild() {
       const dimmed = this.dimmed;
       this.setDimmed(false);
@@ -356,13 +375,17 @@ export function setup() {
       if (SEASON === 'noel') wearHat(P);
       root.position.copy(this.root.position); root.rotation.copy(this.root.rotation);
       root.add(this.tagObj, this.bubbleObj);
-      const parent = this.root.parent; if (parent) parent.remove(this.root);
+      const parent = this.root.parent, was = this.P; if (parent) parent.remove(this.root);
       this.root = root; this.P = P;
+      disposeChibi(was);   // (its name tag and bubble moved over above; its geometries go back to the GPU)
       root.traverse((o) => { o.userData.worker = this; });
       if (parent) parent.add(root);
       if (this.dressed) wearOuter(P, true, this.cfg);
       this.setDimmed(dimmed);
+      if (this.lanyard) wearLanyard(P, true, this.lanyard);
     }
+    // a card on a lanyard round the neck (o: { color, tex }; null: none)
+    wearCard(o) { this.lanyard = o || null; wearLanyard(this.P, !!o, o || {}); }
     // coat and backpack on (arriving, going home) or off (at the desk)
     dress(on) { this.dressed = on; wearOuter(this.P, on, this.cfg); }
     // at the desk on arrival: hang the coat on the chair, put the bag down
@@ -428,7 +451,7 @@ export function setup() {
         return;
       }
       if (this.inStall || this.wcBusy) { this.wcTick(); return; }
-      if (this.carry && this.anim !== 'coffee' && this.phase !== 'walk') this.carry = null;   // (the drink finished, or work)
+      if (this.carry && !this.keepBox && this.anim !== 'coffee' && this.phase !== 'walk') this.carry = null;   // (the drink finished, or work; a box carried back in (people/farewell.js) is put down at the desk)
       if (this.queued && this.want) leaveCoffee(this);
       const s = sessions.get(this.id);
       if (this.anim === 'sleep' && !this.sub && (this.want || (s && (s.status !== 'rest' || s.bg?.length)))) { this.anim = 'wake'; this.wakeUntil = state.sim + (reduceMotion ? 0.3 : 1.6); this.hush(); return; }
@@ -456,6 +479,8 @@ export function setup() {
       if (state.sim < (this.lifeAt || 0)) return false;
       this.lifeAt = state.sim + 4;
       const d = officeNow(), m = d.getHours() * 60 + d.getMinutes(), day = d.toDateString(), off = hash(this.id) % 18;
+      const home = this.lunchDay !== day && lunchHooks.home?.(this, d, m);   // lunch from home: warmed at the microwave (people/comnha.js)
+      if (home) return home.due && home.join();
       const order = state.lunchOrder;   // the team's lunch on its way (outings.js): wait for it, up to 12:15
       if (m >= 690 + off && m < 780 && this.lunchDay !== day && !(order?.day === day && !order.here && m < 735)) {
         this.lunchDay = day; this.meal = true;
@@ -569,6 +594,7 @@ export function setup() {
       if (PRO && !this.sub && !this.want && state.sim - (this.wcAt ?? -1e9) > 900 && Math.random() < 0.4 && this.visitWc()) return;
       const nap = () => {
         this.station = 'desk'; this.restAt = Infinity;
+        if (this.mealBox) hideMeal(this);   // (lunch eaten at the desk: the box put away)
         const bg = sessions.get(this.id)?.bg;
         if (bg?.length) { this.anim = 'think'; this.say('bash', tr('people.bgWait', { desc: bg[0].desc })); return; }
         this.anim = 'sleep'; this.hush();
@@ -580,17 +606,17 @@ export function setup() {
       this.leaving = true; this.hush(); this.want = null; this.after = null; this.chore = null;
       const gone = () => { this.remove(); onGone && onGone(); };
       if (this.outing) this.outing.drop(this);
-      if (this.liftHold || this.away || this.street || this.offstage) { this.liftHold = false; gone(); return; }   // still in the lift that brought them, gone home, or out (they don't come back)
+      if (this.liftHold || this.away || this.street || this.offstage || this.stairs) { this.liftHold = false; gone(); return; }   // still in the lift that brought them (or on the stairs), gone home, or out (they don't come back)
+      if (document.hidden) { gone(); return; }   // (nobody watching: a tab in the background draws nothing, so nobody would get out until it is shown)
       this.walkOut(gone);
     }
     // packing up at the desk (coat on, bag on the back), then out: the lift (press the button, wait, step in, ride
-    // down) or the door
+    // down; the stairs while it is serviced) or the door
     walkOut(gone) {
       const down = () => streetHooks.home?.(this, gone) || gone();   // (and with the city outside, out into the street)
       const out = () => viaClock('out', this, () => this.goTo(DOOR_IN, () => {
         if (!lift) { this.goTo(DOOR_OUT, down); return; }
-        this.anim = 'idle'; this.faceTarget = DOOR_IN.face;   // press the button, wait for the car
-        this.liftWait = () => this.goTo(DOOR_OUT, () => { this.faceTarget = Math.PI / 2; this.liftRide = down; });
+        liftDown(this, down);
       }));
       const d = deskKit.indexOf(this);
       if (d < 0) { out(); return; }
@@ -628,12 +654,13 @@ export function setup() {
     remove() {
       this.setDimmed(false);
       { const k = deskKit.indexOf(this); if (k >= 0) deskKit[k] = null; }
-      this.liftHold = false; this.liftWait = this.liftRide = null;
+      this.liftHold = false; this.liftWait = this.liftRide = null; this.stairs = null;
       if (this.queued) leaveCoffee(this);
       if (this.mealBox) hideMeal(this);
       if (this.spot && this.spot.by === this) this.spot.by = null;
-      scene.remove(this.root);
+      scene.remove(this.root); leaving.delete(this);
       this.root.traverse((o) => { if (o.element) o.element.remove(); });
+      disposeChibi(this.P);   // (gone for good: nothing shows this rig again)
     }
     update(dt, t) {
       if (this.after && state.sim >= this.afterAt) { const f = this.after; this.after = null; f(); }
@@ -641,7 +668,7 @@ export function setup() {
       this.held = false;
       if (this.phase === 'walk' && !this.liftHold) {
         const tgt = this.path[0];
-        const dx = tgt.x - this.pos.x, dz = tgt.y - this.pos.y, d = Math.hypot(dx, dz), step = (this.hurry ? 4.2 : 2.7) * dt;
+        const dx = tgt.x - this.pos.x, dz = tgt.y - this.pos.y, d = Math.hypot(dx, dz), step = (this.hurry ? 4.2 : this.puffUntil > state.sim ? 1.7 : 2.7) * dt;   // (slower, out of breath: up the stairs, world/entrance.js)
         // out on the street (outings.js): a crossing waits at the kerb for the green man, and is walked at road level
         if (tgt.gate) { if (tgt.gate()) tgt.gate = null; else this.held = true; }
         if (tgt.y0 != null && !this.held) this.ground = tgt.y0;
@@ -671,7 +698,7 @@ export function setup() {
         { sit, scale: this.scale, look: idleish ? this.lookY : 0, wave: !walking && this.waveUntil > t, blink: this.blinkAt < 0.12, carry: this.carry, doze: this.doze });
       const y = applyChibiPose(this.P, pose, dt) * this.scale;
       this.root.position.set(this.pos.x + this.stompShift, y + this.gy(), this.pos.y);
-      const hid = (!!this.inStall && !walking) || !!this.away || !!this.offstage;   // behind a shut stall door, gone home, inside a shop or the lift
+      const hid = (!!this.inStall && !walking) || !!this.away || !!this.offstage || !!this.stairs;   // behind a shut stall door, gone home, inside a shop, the lift or the stairs
       if (this.root.visible === hid) { this.root.visible = !hid; this.root.matrixWorldAutoUpdate = !hid; if (hid) { this.tagObj.visible = false; this.bubbleObj.visible = false; } }   // (out of sight: no matrices to keep up)
       this.face += wrapAngle(this.faceTarget - this.face) * Math.min(1, dt * 10);
       this.root.rotation.y = this.face; this.root.rotation.z = pose.tilt;

@@ -30,6 +30,8 @@ export function setup() {
       print: (t) => { for (let i = 0; i < 6; i++) noise(t + i * 0.09, 0.06, 0.03, 900); },
       ding: (t) => { tone(1318.5, t, 0.55, 'sine', 0.08); tone(1046.5, t + 0.26, 0.8, 'sine', 0.08); },
       deploy: (t) => { tone(220, t, 1.1, 'sawtooth', 0.05, 880); noise(t, 1.1, 0.04, 400); },
+      // the fire alarm: an electric bell's hammer on its gong, about twenty strikes a second, for a second and a half
+      alarm: (t) => { for (let i = 0; i < 30; i++) { tone(2380, t + i * 0.05, 0.045, 'square', 0.03); tone(3150, t + i * 0.05, 0.035, 'triangle', 0.02); } },
       siren: (t) => { for (let i = 0; i < 3; i++) { tone(620, t + i * 0.6, 0.3, 'square', 0.05, 880); tone(880, t + i * 0.6 + 0.3, 0.3, 'square', 0.05, 620); } },
       meow: (t) => { tone(740, t, 0.35, 'sine', 0.1, 520); tone(1480, t, 0.3, 'sine', 0.025, 1040); },
       pop: (t) => tone(520, t, 0.08, 'sine', 0.08, 900),
@@ -38,8 +40,12 @@ export function setup() {
       brew: (t) => { noise(t, 1.4, 0.035, 2600); tone(110, t, 1.2, 'sine', 0.04, 90); },
       rustle: (t) => { noise(t, 0.12, 0.04, 3200); noise(t + 0.1, 0.16, 0.03, 3800); },
       click: (t) => tone(1800, t, 0.03, 'square', 0.04),
+      pock: (t) => { tone(1250, t, 0.045, 'triangle', 0.07, 760); noise(t, 0.02, 0.02, 2600); },   // a paddle on a pickleball
+      shutter: (t) => { noise(t, 0.04, 0.05, 2200); noise(t + 0.09, 0.05, 0.04, 1600); tone(2400, t, 0.03, 'square', 0.015); },   // a camera's click (the photo booth)
       coin: (t) => { tone(988, t, 0.09, 'square', 0.05); tone(1319, t + 0.08, 0.3, 'square', 0.05); },
       beep: (t) => { tone(1046, t, 0.09, 'square', 0.04); tone(1318, t + 0.12, 0.09, 'square', 0.04); },
+      // a microwave done: "tít tít tít", three short high beeps
+      micro: (t) => { for (let i = 0; i < 3; i++) tone(2093, t + i * 0.32, 0.14, 'square', 0.035); },
       buzz: (t) => tone(120, t, 0.5, 'sawtooth', 0.03, 110),
       thunder: (t) => { noise(t, 2.2, 0.09, 60); tone(48, t, 1.8, 'sine', 0.12, 30); },
       bell: (t) => { tone(2093, t, 1.1, 'sine', 0.09); tone(2637, t, 0.7, 'sine', 0.04); tone(4186, t, 0.25, 'sine', 0.02); },
@@ -55,7 +61,7 @@ export function setup() {
         line([...one.slice(0, 11), ['D', 1], ['C', 2]], line(one, t) + e);
       },
     };
-    const GAP = { mixue: 8, bell: 0.6, water: 1.5, clap: 1.5, ding: 1, key: 0.18, perm: 1, turn: 1.5, print: 1, deploy: 3, siren: 4, meow: 0.8, pop: 0.15, bloop: 0.5, brew: 1.5, rustle: 0.25, click: 0.08, coin: 0.4, beep: 0.5, buzz: 0.6, thud: 2, thunder: 5 };
+    const GAP = { pock: 0.25, shutter: 0.4, mixue: 8, bell: 0.6, water: 1.5, clap: 1.5, ding: 1, key: 0.18, perm: 1, turn: 1.5, print: 1, deploy: 3, siren: 4, alarm: 1.5, meow: 0.8, pop: 0.15, bloop: 0.5, brew: 1.5, rustle: 0.25, click: 0.08, coin: 0.4, beep: 0.5, micro: 1.2, buzz: 0.6, thud: 2, thunder: 5 };
     return {
       get on() { return on; },
       set(v) { on = v; try { localStorage.setItem('office-sound', v ? 'on' : 'off'); } catch { /* storage blocked */ } if (v) unlock(); },

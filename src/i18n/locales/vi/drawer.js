@@ -42,6 +42,7 @@ export default {
   resetSummary: 'Đặt lại hội thoại',
   branchSummary: 'Tóm tắt nhánh',
   tokens: '{used} / {max} token · {model}',
+  cache: { warm: 'Bộ nhớ đệm còn ấm ~{n} phút', cold: 'Bộ nhớ đệm đã nguội · nhắn tiếp sẽ đọc lại ~{tokens} token', coldNoSize: 'Bộ nhớ đệm đã nguội', guessed: '(ước tính)', title: 'Bộ nhớ đệm còn ấm thì nhắn tiếp phiên này rẻ. Nguội rồi thì lần nhắn sau phải đọc lại cả cuộc trò chuyện.' },
   priceNote: 'Giá API niêm yết tương đương (theo bảng giá của azorkai/claude-code-office). Với gói Pro/Max đây không phải số tiền bạn trả.',
   tabSubs: 'Trợ lý',
   tabSubsN: 'Trợ lý ({n})',

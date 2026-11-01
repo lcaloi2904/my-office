@@ -312,6 +312,12 @@ export function makeChibi(cfg = {}, scale = 1) {
     add(capG, sph(R * 0.08, 10, 8), cm, 0, HR * 1.08 * D.sy * 0.86, 0);
   }
 
+  // a white sun visor for the pickleball court (people/pickle.js): the band round the head, the brim over the eyes
+  { const vz = new THREE.Group(); vz.position.set(0, R * 0.06, -R * 0.03); vz.rotation.x = -0.12; vz.visible = false; head.add(vz); P.visor = vz;
+    const vm = plainMat('#F6F6F2', { roughness: 0.7 });
+    add(vz, new THREE.CylinderGeometry(HR * 1.05, HR * 1.06, R * 0.2, 30, 1, true), vm, 0, R * 0.08, 0, D.sx, 1, D.sz);
+    add(vz, new THREE.CylinderGeometry(HR * 0.7, HR * 0.7, R * 0.05, 30, 1, false, -Math.PI / 2, Math.PI), plainMat('#2B3A55', { roughness: 0.7 }), 0, R * 0.0, HR * 0.78).rotation.x = 0.28; }
+
   /* props */
   const book = new THREE.Group(); book.position.set(0, D.shY - 0.2, 0.27); book.rotation.x = -1.0; spine.add(book);
   const coverM = plainMat('#C8553D'), pageM = plainMat('#FBF8F0');
@@ -396,6 +402,27 @@ export function makeChibi(cfg = {}, scale = 1) {
     add(g, new THREE.CapsuleGeometry(0.022, 0.03, 4, 8), plainMat('#B8702E', { roughness: 0.6 }), 0.008, 0.07, 0).rotation.z = 0.3;
     add(g, new THREE.CylinderGeometry(0.006, 0.006, 0.03, 5), plainMat('#F4EEE2'), -0.006, 0.112, 0).rotation.z = 0.3;
   }
+  {   // a pickleball paddle (people/pickle.js), held up in front: the grip, the face edged in black
+    const g = hold('paddle'), face = plainMat(['#F2C230', '#2E86DE', '#D8323C', '#7A4FD8'][seed % 4], { roughness: 0.45 }), edge = plainMat('#1E2125', { roughness: 0.5 });
+    add(g, new THREE.CylinderGeometry(0.014, 0.016, 0.1, 8), edge, 0, 0.03, 0);
+    add(g, new THREE.BoxGeometry(0.15, 0.19, 0.012), face, 0, 0.17, 0);
+    for (const x of [-0.077, 0.077]) add(g, new THREE.BoxGeometry(0.008, 0.19, 0.016), edge, x, 0.17, 0);
+    add(g, new THREE.BoxGeometry(0.16, 0.008, 0.016), edge, 0, 0.266, 0);
+    g.traverse((o) => { o.castShadow = false; });
+  }
+  {   // an e-scooter's battery pack (people/evswap.js): a dark grey case, a handle on top, a green stripe
+    const g = hold('pack');
+    add(g, new THREE.BoxGeometry(0.15, 0.17, 0.09), plainMat('#2B2F36', { roughness: 0.5 }), 0, -0.08, 0);
+    add(g, new THREE.BoxGeometry(0.152, 0.02, 0.092), plainMat('#00A651', { roughness: 0.5 }), 0, -0.04, 0);
+    add(g, new THREE.TorusGeometry(0.035, 0.008, 5, 10, Math.PI), plainMat('#1C1E22'), 0, 0.005, 0);
+    g.traverse((o) => { o.castShadow = false; });
+  }
+  {   // a phone held up to film (people/pickle.js): the screen lit
+    const g = hold('phone');
+    add(g, new THREE.BoxGeometry(0.065, 0.12, 0.009), plainMat('#1E2125', { roughness: 0.4 }), 0, 0.06, 0);
+    add(g, new THREE.PlaneGeometry(0.056, 0.106), new THREE.MeshBasicMaterial({ color: '#9ED8FF' }), 0, 0.06, -0.005).rotation.y = Math.PI;
+    g.traverse((o) => { o.castShadow = false; });
+  }
   {   // a commit on its way to the lobby's post box (life/post.js): a white envelope, a red and blue airmail edge
     const g = hold('letter');
     add(g, new THREE.BoxGeometry(0.12, 0.08, 0.006), plainMat('#FBFAF5', { roughness: 0.8 }), 0, 0.03, 0);
@@ -411,6 +438,29 @@ export function makeChibi(cfg = {}, scale = 1) {
     add(g, new THREE.SphereGeometry(0.01, 8, 6), plainMat('#D8322F', { roughness: 0.4 }), 0.004, 0.05, 0.004);
     g.traverse((o) => { o.castShadow = false; });
   }
+  {   // lunch from home, warmed at the pantry's microwave (people/comnha.js): a clipped box, its lid the colour of the
+      // owner's (P.homeLid, set as it is picked up), a wisp of steam from under the lid
+    const g = hold('homebox');
+    add(g, new THREE.BoxGeometry(0.15, 0.05, 0.105), plainMat('#EEF1F2', { roughness: 0.4 }), 0, 0.02, 0);
+    add(g, new THREE.BoxGeometry(0.13, 0.03, 0.085), plainMat('#F4EFE2', { roughness: 0.8 }), 0, 0.025, 0);
+    P.homeLid = add(g, new THREE.BoxGeometry(0.156, 0.014, 0.11), plainMat('#2F7FD0', { roughness: 0.45 }), 0, 0.052, 0);
+    const st = new THREE.Sprite(new THREE.SpriteMaterial({ map: steamTex(), transparent: true, depthWrite: false, opacity: 0.4 }));
+    st.position.y = 0.11; st.scale.setScalar(0.09); g.add(st); P.steamOf = { noodle: P.steam, homebox: st };
+  }
+  {   // a phone, looked at while waiting (the 'phone' pose): black, its screen lit
+    const g = hold('phone');
+    add(g, new THREE.BoxGeometry(0.05, 0.1, 0.009), plainMat('#1C1F25', { roughness: 0.35 }), 0, 0.04, 0);
+    add(g, new THREE.PlaneGeometry(0.043, 0.088), new THREE.MeshBasicMaterial({ color: '#BFD9F2' }), 0, 0.04, -0.005).rotation.y = Math.PI;
+    g.traverse((o) => { o.castShadow = false; });
+  }
+  // the insulated lunch bag from home, hanging from the left hand (people/comnha.js): quilted fabric in a colour of its
+  // own, a silver zip round the top, the strap
+  const lunch = new THREE.Group(); lunch.position.set(0, -0.02, 0); P.armL.hand.add(lunch);
+  { const c = ['#2D4A73', '#C2577A', '#3E8E7E', '#7A6FD0', '#B5651D', '#5A5F6A'][[...String(cfg.name || '')].reduce((a, ch) => a + ch.charCodeAt(0), 0) % 6], m = plainMat(c, { roughness: 0.9 });
+    add(lunch, new THREE.BoxGeometry(0.21, 0.16, 0.13), m, 0, -0.15, 0);
+    add(lunch, new THREE.BoxGeometry(0.214, 0.01, 0.134), plainMat('#C9CED6', { roughness: 0.35, metalness: 0.4 }), 0, -0.072, 0);
+    add(lunch, new THREE.TorusGeometry(0.045, 0.009, 6, 12, Math.PI), m, 0, -0.068, 0); }
+  lunch.visible = false; P.lunchbag = lunch;
   // the team's lunch from the GrabFood rider: a white carrier bag, the boxes' lids showing, hanging from the left hand
   const bag = new THREE.Group(); bag.position.set(0, -0.02, 0); P.armL.hand.add(bag);
   const bagM = plainMat('#F4F3EE', { roughness: 0.75 });
@@ -430,9 +480,29 @@ export function makeChibi(cfg = {}, scale = 1) {
   groc.visible = false; P.grocery = groc; P.groceryBand = grocBand;
   const drop = new THREE.Mesh(sph(0.05, 12, 10), new THREE.MeshBasicMaterial({ color: '#7EC8F0', transparent: true, opacity: 0.85 }));
   drop.scale.set(0.8, 1.3, 0.8); drop.position.set(R * 1.0, D.hipY + D.headY + R * 0.5, 0.2); drop.visible = false; root.add(drop); P.drop = drop;
-  mergeRig(root, new Set([sh, drop, P.mouthSmile, P.mouthO, band, grocBand]));
+  mergeRig(root, new Set([sh, drop, P.mouthSmile, P.mouthO, band, grocBand, P.homeLid]));
   standIns(root, P);
+  P.own = owned(root);
   return { root, P };
+}
+
+/* A rig's geometries stay on the GPU until disposed: three.js keeps the buffers of every geometry it has drawn, and
+   the arrays behind them, for as long as the page lives. A character is about 4 MB of vertices, and every subagent
+   that came and went left its whole body behind (an office left open grew by 7 to 20 MB a minute). */
+// the geometries a rig made for itself: not a sprite's (three.js shares one for every sprite)
+function owned(root, into = new Set()) {
+  root.traverse((o) => { if (o.geometry && !o.isSprite) into.add(o.geometry); });
+  return into;
+}
+/** Gives back the geometries of a rig gone for good (a person who left, a rig a change of look replaced, a portrait
+ *  drawn once). Its materials are left to the garbage collector: three.js keeps nothing of a material but its compiled
+ *  shader, one per kind, which the next person (or the look switched back) uses again instead of compiling it anew.
+ *  Whatever other modules hung on the rig (a cup, a parcel, the director's paper) is theirs and stays. Safe twice. */
+export function disposeChibi(P) {
+  if (!P?.own) return;
+  for (const g of P.own) g.dispose();
+  P.own = null;
+  standInSets.delete(P.standIns);   // (a portrait's rig still has a parent, and with shadows off nothing prunes the list)
 }
 
 /* The sun's shadow of a character comes from a handful of low-poly stand-ins on the same joints (head, body, arms,
@@ -450,7 +520,7 @@ function standIns(root, P) {
   part(P.spine, cyl(D.torso[5][0], D.torso[1][0], H + 0.06), 0, H / 2 - 0.03, 0, 0.82);
   for (const L of [P.legL, P.legR]) { part(L.hip, cyl(D.legR, D.legR, D.thigh), 0, -D.thigh / 2, 0); part(L.knee, cyl(D.legR, D.legR * 1.1, D.shin + 0.05), 0, -D.shin / 2 - 0.02, 0.02); }
   for (const A of [P.armL, P.armR]) { part(A.sh, cyl(D.armR, D.armR, D.upper), 0, -D.upper / 2, 0); part(A.el, cyl(D.armR, D.handR, D.fore + D.handR), 0, -D.fore / 2 - 0.02, 0); }
-  standInSets.add([root, meshes]);
+  standInSets.add((P.standIns = [root, meshes]));
 }
 /** Once, with the renderer: the stand-ins show for the shadow pass only (and a rig thrown away is forgotten). */
 export function shadowStandIns(renderer) {
@@ -551,9 +621,30 @@ export function wearOuter(P, on, o = {}) {
   }
   for (const m of out) m.traverse?.((x) => { if (x.isMesh) x.castShadow = false; });   // (the stand-ins cast the shadow)
   P.outer = out;
+  if (P.own) for (const m of out) owned(m, P.own);
 }
 
 // A Santa hat for the Christmas weeks: a soft red cone that flops to one side, a white fur band and a pom-pom.
+// A lanyard round the neck with a card on it: the company's (people/farewell.js: handed back to HR on the last day) or
+// an intern's. Built on first use, then shown, hidden or recoloured. o: { color (the strap), tex (the card's face) }
+export function wearLanyard(P, on, o = {}) {
+  if (!on) { if (P.lanyard) P.lanyard.visible = false; return; }
+  if (!P.lanyard) {
+    const D = P.D, H = D.torso[D.torso.length - 1][1], zc = D.torso[3][0] * 0.82 + 0.024, g = new THREE.Group();
+    const strap = plainMat('#2F6FB5', { roughness: 0.8 });
+    const rod = (a, b) => { const d = new THREE.Vector3().subVectors(b, a), m = new THREE.Mesh(new THREE.CylinderGeometry(0.009, 0.009, d.length(), 5), strap); m.position.copy(a).addScaledVector(d, 0.5); m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), d.normalize()); g.add(m); };
+    const top = H * 0.97, cy = H * 0.48;
+    for (const sx of [-1, 1]) rod(new THREE.Vector3(sx * 0.075, top, zc * 0.3), new THREE.Vector3(sx * 0.012, cy + 0.06, zc));
+    const card = new THREE.Mesh(new THREE.BoxGeometry(0.085, 0.11, 0.006), plainMat('#FFFFFF', { roughness: 0.5 })); card.position.set(0, cy, zc + 0.003); g.add(card);
+    const face = new THREE.Mesh(new THREE.PlaneGeometry(0.079, 0.103), new THREE.MeshBasicMaterial({ color: '#FFFFFF' })); face.position.set(0, cy, zc + 0.0065); g.add(face);
+    g.traverse((x) => { x.castShadow = false; });
+    P.spine.add(g); P.lanyard = g; P.lanyardStrap = strap; P.lanyardFace = face;
+    if (P.own) owned(g, P.own);
+  }
+  P.lanyard.visible = true; P.lanyardStrap.color.set(o.color || '#2F6FB5');
+  if (o.tex && P.lanyardFace.material.map !== o.tex) { P.lanyardFace.material.map = o.tex; P.lanyardFace.material.needsUpdate = true; }
+}
+
 export function wearHat(P) {
   if (P.hat) return;
   const R = P.D.R, red = plainMat('#C8283A', { roughness: 0.85 }), fur = plainMat('#F7F4EE', { roughness: 1 });
@@ -565,6 +656,7 @@ export function wearHat(P) {
   const pom = new THREE.Mesh(new THREE.SphereGeometry(R * 0.15, 14, 10), fur); pom.position.y = R * 0.62; tip.add(pom);
   const band = new THREE.Mesh(new THREE.TorusGeometry(R * 0.86, R * 0.12, 10, 32), fur); band.rotation.x = Math.PI / 2; band.castShadow = true; g.add(band);
   P.hat = g;
+  if (P.own) owned(g, P.own);
 }
 
 // Two-bone IK in the sagittal plane: rotations [shoulderX, shoulderZ, elbowX] that put the hand on a point
@@ -677,6 +769,17 @@ export function chibiPose(P, anim, ph, o = {}) {
       p.armL = [0, -2.5 * k - 0.2, -0.25]; p.armR = [0, 2.5 * k + 0.2, -0.25];
       break;
     }
+    case 'shake': {   // a handshake (people/interns.js): the right hand out at the waist, pumped up and down
+      p.armR = reach(1, 0.07, shoulderY() - 0.36 + Math.sin(ph * 13) * 0.025, 0.36);
+      p.armL = [0.04, -0.08, -0.15]; p.head = [0.05, 0, 0]; p.lean = 0.03;
+      break;
+    }
+    case 'phone': {   // waiting in a line (the microwave, people/comnha.js): head down over the phone in the right hand
+      p.held = 'phone'; p.head = [0.42, o.look ? o.look * 0.3 : 0, 0]; p.lean = 0.04;
+      p.armR = reach(1, 0.04, shoulderY() - 0.3, 0.25 + Math.sin(ph * 3) * 0.006);
+      p.armL = reach(-1, -0.02, shoulderY() - 0.34, 0.22);
+      break;
+    }
     case 'tidy': {
       const s = Math.sin(ph * 5) * 0.06;
       p.lean = 0.12; p.head = [0.18, 0, 0];
@@ -719,6 +822,31 @@ export function chibiPose(P, anim, ph, o = {}) {
       p.armL = reach(-1, -0.03, shoulderY() - 0.24, 0.26); p.armR = reach(1, 0.03, shoulderY() - 0.22, 0.26);
       break;
     }
+    case 'paddle': {   // pickleball (people/pickle.js): the ready position, knees bent, the paddle up in front; P.swing (the
+      // court's, world/backdrops/street-pickle.js: about 0.3 drawn back, 1.05 meeting the ball, 1.6 the follow-through)
+      // swings it, P.shuffle the feet
+      const sw = P.swing ?? 0.9, a = sw * 1.3 - 0.6, mv = P.shuffle ? Math.sin(ph * 14) : 0;
+      p.lean = 0.14; p.hipL = -0.32 + mv * 0.3; p.hipR = -0.32 - mv * 0.3; p.kneeL = p.kneeR = 0.5; p.y = -0.035 + Math.abs(mv) * 0.025;
+      p.visor = true; p.held = 'paddle'; p.head = [-0.08, 0, 0];
+      p.armR = reach(1, 0.2 - Math.max(0, a - 0.6) * 0.12, shoulderY() - Math.cos(a) * 0.3, headZ() * 0.3 + Math.sin(a) * 0.3 + 0.04);
+      p.armL = [-0.55, -0.3, -0.7];
+      break;
+    }
+    case 'photo': {   // a silly pose in the photo booth (people/photobooth.js), P.photo: 'v' a V by the face, 'heart' arms in
+      // a heart over the head, 'cheek' both hands on the cheeks (an "o"), 'jump' arms up and a hop
+      const k = P.photo || 'v';
+      if (k === 'v') { p.armR = reach(1, 0.12, headY() - R * 0.1, headZ() + R * 0.75); p.armL = [-0.2, -0.5, -0.6]; p.head = [0, 0, 0.18]; p.tilt = 0.06; }
+      else if (k === 'heart') { p.armL = [-2.75, -0.55, -1.3]; p.armR = [-2.75, 0.55, -1.3]; p.head = [-0.05, 0, 0]; }
+      else if (k === 'cheek') { p.armL = reach(-1, -R * 0.75, headY() - R * 0.2, headZ() + R * 0.55); p.armR = reach(1, R * 0.75, headY() - R * 0.2, headZ() + R * 0.55); p.mouth = 'o'; p.head = [0, 0, -0.12]; }
+      else { p.armL = [0, -2.6, -0.3]; p.armR = [0, 2.6, -0.3]; p.y += Math.abs(Math.sin(ph * 7)) * 0.18; p.mouth = 'o'; }
+      break;
+    }
+    case 'film': {   // filming the game on a phone (people/pickle.js): held up in both hands in front of the face
+      p.visor = true; p.held = 'phone'; p.head = [0.05, 0, 0]; p.lean = -0.02;
+      const y = headY() - R * 0.35, z = headZ() + R * 0.9 + 0.1;
+      p.armR = reach(1, 0.03, y, z); p.armL = reach(-1, -0.05, y, z);
+      break;
+    }
     case 'mop': {   // the evening cleaner (staff.js): both hands down the mop handle, swinging it side to side
       const sw = Math.sin(ph * 3.2) * 0.1;
       p.lean = 0.14; p.head = [0.24, 0, 0];
@@ -733,7 +861,7 @@ export function chibiPose(P, anim, ph, o = {}) {
   // left hand, that arm swinging less for the weight
   // (the stores' food is held, and eaten, the same way: P.held)
   if (P.held[o.carry]) { p.held = o.carry; if (anim === 'coffee') p.mug = false; else p.armR = reach(1, 0.1, shoulderY() - 0.32, 0.24); }
-  if (o.carry === 'bag' || o.carry === 'grocery') { p[o.carry] = true; p.armL = [anim === 'walk' ? -Math.sin(ph * 9) * 0.14 : 0.06, -0.14, -0.12]; }
+  if (o.carry === 'bag' || o.carry === 'grocery' || o.carry === 'lunchbag') { p[o.carry] = true; p.armL = [anim === 'walk' ? -Math.sin(ph * 9) * 0.14 : 0.06, -0.14, -0.12]; }
   // a parcel (staff.js puts the box on the chest): held in both hands in front
   if (o.carry === 'box') { p.armL = reach(-1, -0.19, shoulderY() - 0.4, 0.3); p.armR = reach(1, 0.19, shoulderY() - 0.4, 0.3); }
   if (o.wave) { p.armL = [-0.1, -2.5, -0.35 - Math.max(0, Math.sin(ph * 12)) * 0.6]; p.mouth = 'smile'; }
@@ -762,11 +890,13 @@ export function applyChibiPose(P, p, dt) {
   P.mug.rotation.set(-(P.armR.sh.rotation.x + P.armR.el.rotation.x + P.spine.rotation.x), 0, -P.armR.sh.rotation.z);
   for (const k in P.held) { const g = P.held[k]; g.visible = p.held === k; if (g.visible) g.rotation.copy(P.mug.rotation); }
   P.bag.rotation.set(-(P.armL.sh.rotation.x + P.armL.el.rotation.x + P.spine.rotation.x), 0, -P.armL.sh.rotation.z);   // (hangs straight down)
-  P.grocery.rotation.copy(P.bag.rotation);
+  P.grocery.rotation.copy(P.bag.rotation); P.lunchbag.rotation.copy(P.bag.rotation);
   P.mic.visible = !!p.mic; if (p.mic) P.mic.rotation.copy(P.mug.rotation);   // (upright in the hand, like the mug)
+  if (P.visor) P.visor.visible = !!p.visor;
   P.book.visible = p.book; P.pad.visible = !!p.pad; P.mug.visible = p.mug; P.drop.visible = p.drop; P.shadow.visible = p.shadow;
-  P.bag.visible = !!p.bag; P.grocery.visible = !!p.grocery;
-  if (p.held === 'noodle') { const u = (performance.now() / 1600) % 1; P.steam.position.y = 0.12 + u * 0.12; P.steam.material.opacity = 0.5 * (1 - u) * Math.min(1, u * 6); P.steam.scale.setScalar(0.08 + u * 0.1); }
+  P.bag.visible = !!p.bag; P.grocery.visible = !!p.grocery; P.lunchbag.visible = !!p.lunchbag;
+  const st = P.steamOf[p.held];   // (the noodles, a box from the microwave)
+  if (st) { const u = (performance.now() / 1600) % 1; st.position.y = 0.11 + u * 0.12; st.material.opacity = 0.5 * (1 - u) * Math.min(1, u * 6); st.scale.setScalar(0.08 + u * 0.1); }
   if (p.drop) P.drop.position.y = P.D.hipY + P.D.headY + P.D.R * 0.6 - ((performance.now() / 1000) * 1.3 % 1) * 0.3;
   return p.y;
 }

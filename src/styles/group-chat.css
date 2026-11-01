@@ -287,6 +287,14 @@ body:has(.drawer:not([hidden])) .zc-peek { display: none; }
 .zc-to-caret { font-style: normal; font-size: 11px; opacity: .7; }
 .zc-to-sub { flex: 1; min-width: 0; font-size: 12px; color: var(--zc-grey); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .zc-to-x { width: 28px; height: 28px; margin-left: auto; color: var(--zc-grey); }
+.zc-to-cache { flex: none; max-width: 46%; padding: 2px 8px; border-radius: 999px; font-size: 11.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }   /* its prompt cache (ui/cache-words.js) */
+.zc-to-cache[data-state="warm"] { background: #FFF1D6; color: #8A5A00; }
+.zc-to-cache[data-state="cold"] { background: #EEF0F3; color: var(--zc-grey); }
+@media (max-width: 640px) {   /* a phone: the cache in place of the folder (the list shows it), the name a little shorter */
+  .zc-to:has(.zc-to-cache:not([hidden])) .zc-to-sub { display: none; }
+  .zc-to:has(.zc-to-cache:not([hidden])) .zc-to-chip { max-width: 36%; }
+  .zc-to-cache { max-width: none; flex: 1; min-width: 0; }
+}
 .zc-to-pick { flex: none; display: grid; gap: 2px; max-height: 46vh; overflow-y: auto; padding: 8px; background: #fff; border-top: 1px solid var(--zc-line); box-shadow: 0 -6px 16px rgba(21, 39, 71, .08); }
 .zc-to-o { all: unset; display: flex; align-items: center; gap: 10px; padding: 7px 8px; border-radius: 8px; cursor: pointer; }
 .zc-to-o:hover { background: var(--zc-hover); }
@@ -316,6 +324,8 @@ body:has(.drawer:not([hidden])) .zc-peek { display: none; }
 .zc-work.is-work .zc-work-steps li:last-child { color: var(--zc-ink); font-weight: 500; }
 .zc-work-ask { padding: 6px 8px; border-radius: 6px; background: #FFF4D6; color: #6B4E00; font-size: 13px; }
 .zc-work-none { color: var(--zc-grey); font-size: 12px; }
+.zc-work-attach { color: var(--zc-grey); font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
+.zc-work-attach code { padding: 1px 5px; border-radius: 4px; background: #EEF1F6; color: var(--zc-ink); font: 12px/1.4 ui-monospace, Menlo, monospace; user-select: all; }
 .zc .zc-readmore { all: unset; color: var(--zc-blue); font-size: 13.5px; font-weight: 600; cursor: pointer; }
 .zc .zc-readmore:hover { text-decoration: underline; }
 
@@ -353,6 +363,27 @@ body:has(.drawer:not([hidden])) .zc-peek { display: none; }
 .zc .zc-work-btn.is-ok { background: var(--zc-blue); color: #fff; }
 .zc .zc-work-btn.is-no { background: #FDECEC; color: #C31818; }
 .zc .zc-work-btn.is-stop { background: #F1F3F6; color: var(--zc-ink); margin-left: auto; }
+/* a session stuck in a loop (ui/stuck.js): what repeats, Stop, a hint for Claude */
+.zc-loop { display: grid; gap: 6px; min-width: 220px; max-width: 360px; padding-left: 9px; border-left: 3px solid #E5484D; }
+.zc-loop:not(.is-on):not(.is-stopping) { border-left-color: #C9CED6; }
+.zc-loop-h { display: flex; align-items: center; gap: 7px; }
+.zc-loop-h b { font-size: 14.5px; font-weight: 600; color: #C31818; }
+.zc-loop:not(.is-on):not(.is-stopping) .zc-loop-h b { color: var(--zc-grey); }
+.zc-loop-ic { flex: none; font-style: normal; font-size: 14px; }
+.zc-loop-t { margin: 0; font-size: 13.5px; line-height: 1.4; overflow-wrap: anywhere; }
+.zc-loop-t code { padding: 1px 5px; border-radius: 4px; background: #F1F3F6; font: 12.5px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.zc-loop-note, .zc-loop-hint { color: var(--zc-grey); font-size: 12px; }
+.zc-loop-hint.is-got, .zc-loop-hint.is-rest { color: #1A7F37; }
+.zc-loop-hint.is-lost { color: #8A5A00; }
+.zc-loop-acts { display: flex; flex-wrap: wrap; gap: 6px; }
+.zc .zc-loop-stop.is-sure { background: #C31818; color: #fff; }
+.zc-loop-form { display: flex; gap: 6px; }
+.zc-loop-form[hidden] { display: none; }
+.zc-loop-in { flex: 1; min-width: 0; padding: 7px 10px; border: 1px solid var(--zc-line); border-radius: 8px; font: inherit; font-size: 13px; color: var(--zc-ink); background: #fff; }
+.zc-loop-in:focus { outline: 2px solid var(--zc-blue); outline-offset: -1px; }
+.zc .zc-work-btn.is-steer { background: #E5F1FF; color: var(--zc-blue); margin-left: auto; }
+.zc .zc-work-btn.is-steer + .is-stop { margin-left: 0; }
+.zc.is-steer .zc-reply-q { border-left-color: #F2A100; }
 
 /* one conversation on its own screen (over the group's messages) */
 .zc-conv { flex: 1; min-height: 0; display: flex; flex-direction: column; background: var(--zc-ground); }
@@ -383,3 +414,30 @@ body:has(.drawer:not([hidden])) .zc-peek { display: none; }
 .zc-attach-t { position: relative; width: 54px; height: 54px; border-radius: 8px; overflow: hidden; }
 .zc-attach-t img { width: 100%; height: 100%; object-fit: cover; }
 .zc .zc-attach-t button { all: unset; position: absolute; top: 2px; right: 2px; width: 18px; height: 18px; display: grid; place-items: center; border-radius: 50%; background: rgba(0, 0, 0, .55); color: #fff; font-size: 10px; cursor: pointer; }
+/* the prompt helper over the input, writing to Claude: one calm hint, its chips in a row that scrolls, ✕; under them the
+   rewrite (the one that asks Claude) in violet, so it reads as something else; once rewritten, one line with "Hoàn tác" */
+.zc-coach { flex: none; display: grid; grid-template-columns: auto 1fr auto; align-items: start; column-gap: 8px; row-gap: 5px; padding: 7px 4px 6px 12px;
+  background: #F4F7FD; border-top: 1px solid #DDE5F3; color: #33405A; font-size: 13px; line-height: 1.4; animation: zc-coach-in .18s ease-out; }
+.zc-coach-ic { font-style: normal; line-height: 1.35; }
+.zc-coach-t { min-width: 0; padding-top: 1px; }
+.zc-coach-x { width: 26px; height: 26px; margin-top: -3px; }
+.zc-coach-chips { grid-column: 2 / -1; display: flex; gap: 6px; overflow-x: auto; padding: 1px 8px 1px 1px; scrollbar-width: none; }
+.zc-coach-chips::-webkit-scrollbar { display: none; }
+.zc .zc-coach-c { all: unset; flex: none; padding: 5px 11px; border-radius: 999px; background: #fff; box-shadow: inset 0 0 0 1px #C8D7F2; color: var(--zc-blue); font-size: 13px; font-weight: 500; white-space: nowrap; cursor: pointer; }
+.zc .zc-coach-c:hover { background: #E5F1FF; }
+.zc .zc-coach-ai { all: unset; grid-column: 2 / -1; justify-self: start; padding: 3px 6px 3px 0; color: #6236C9; font-size: 12.5px; font-weight: 500; cursor: pointer; }
+.zc .zc-coach-ai:hover { text-decoration: underline; }
+.zc .zc-coach-ai:disabled { cursor: default; text-decoration: none; animation: zc-coach-wait .9s ease-in-out infinite alternate; }
+.zc-coach.is-done { grid-template-columns: auto 1fr auto auto; align-items: center; }
+.zc-coach.is-done .zc-coach-chips { grid-column: auto; padding: 0; overflow: visible; }
+.zc-coach.is-done .zc-coach-x { margin-top: 0; }
+.zc-in:read-only { color: var(--zc-grey); }
+@keyframes zc-coach-in { from { opacity: 0; transform: translateY(4px); } }
+@keyframes zc-coach-wait { to { opacity: .45; } }
+@media (prefers-reduced-motion: reduce) { .zc-coach, .zc .zc-coach-ai:disabled { animation: none; } }
+/* (a phone: a little tighter, so the hint takes less of what the keyboard leaves) */
+@media (max-width: 640px) {
+  .zc-coach { row-gap: 4px; padding: 6px 2px 5px 10px; font-size: 12.5px; line-height: 1.35; }
+  .zc .zc-coach-c { padding: 4px 10px; }
+  .zc .zc-coach-ai { padding: 2px 6px 2px 0; }
+}

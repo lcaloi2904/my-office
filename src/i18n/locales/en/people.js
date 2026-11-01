@@ -6,6 +6,8 @@ export default {
   // the small badge on a boss's name tag
   team: { one: '{n} subagent', other: '{n} subagents' },
   needsApproval: 'Needs approval',
+  stuck: 'stuck',
+  stuckSay: 'Going round in circles…',
   // a subagent arrives at its boss, then reports back
   subOnIt: 'On it: {task}',
   subThinking: 'Working out a plan',
@@ -129,7 +131,15 @@ export default {
     lunch7: ['7-Eleven lunch is here, everyone! 🍱', "Bento from 7-Eleven, let's eat! 🍱"],
     lunch7Toast: 'Lunch from 7-Eleven is here, come to the pantry 🍱',
     // on the way down, by what they will bring back (go), and coming out with it (got)
+    morning: { go: ['A phin at {shop} first ☕', 'Can’t start without {shop} ☕'], got: ['Iced milk coffee in hand, up we go ☕', 'Coffee sorted, let’s go ☕'] },
+    coffee: { go: ['Off to {shop} to wake up ☕', 'Popping to {shop}, anyone want anything? ☕'], got: ['A cold matcha freeze 🍵', 'Got my {shop}, back to it ☕'] },
+    upgrade: { go: ['Claude Code is on {version}: off to {shop} to level up 📱', 'Time to level up 📱'], got: ['Levelled up, back to work 📱', 'Got a charging cable while I was there 🔌'] },
     treat: { go: ['Off to Mixue, ice cream for everyone 🍦', 'Getting Mixue for the whole team 🍦'], got: ['Ice cream’s here, come and get it 🍦', 'Mixue for everyone, eat it before it melts 🍦'] },
+    tea: { go: ['Off to {shop} for a milk tea 🧋', 'Popping to {shop}, want anything? 🧋'], got: ['Milk tea, back to work 🧋', 'Got my {shop}, heading back 🧋'] },
+    checkin: { go: ['Off to {shop} for the photo 📸', 'Going to {shop}, picture time 📸'], got: ['Got the shot 📸', 'That queue, but worth it 🧋'] },
+    headache: { go: ['My head! Off to {shop} for painkillers 😵', 'Going to {shop} for something for the headache 💊'], got: ['Got the pills, back at it 💊', 'The pharmacist says rest a bit 😅'] },
+    cong: { go: ['Off to Cộng for a coconut coffee 🥥', 'Popping to Cộng, anyone want anything? ☕'], got: ['Coconut coffee, ice cold 🥥', 'Got my Cộng, back to it ☕'] },
+    congWeekend: { go: ['A weekend needs a Cộng coffee ☕', 'Getting a coconut coffee at Cộng first 🥥'], got: ['Coconut coffee: that’ll do for a Saturday 🥥', 'Got my Cộng, back to it ☕'] },
     go: {
       cup: ['Popping down to {shop} for a drink 🥤', 'Off to {shop} for a peach tea 🥤', 'Running to {shop}, want anything? 🛒'],
       noodle: ['Getting cup noodles at {shop} 🍜', "Hungry, I'll make a cup of noodles at {shop} 🍜"],
@@ -159,6 +169,11 @@ export default {
   },
   // woken up in first person (E next to someone asleep): stirring, what they say (or one of the poke lines), the second
   // and third time within two minutes, the fourth (they don't wake), dozing off again
+  // the stairs, while the lift is being serviced (world/entrance.js): a sigh at the sign, out of breath at the top
+  stairs: {
+    sigh: ['The lift’s being serviced? 😩', 'Serviced again 😩 stairs then', 'Sigh, the stairs it is'],
+    puff: ['Phew… {n} floors 😮‍💨', '{n} floors on foot, my legs 🥵', 'Huff… made it 😮‍💨'],
+  },
   rouse: {
     stir: ['Hm…? 😪', 'Wha… who is it? 🥱', 'Mmh… what…'],
     hi: ['Oh, boss! Just recharging 🔋', 'Hi! All done here, anything new? 😳'],
@@ -204,6 +219,7 @@ export default {
     shipper: 'Shopee courier',
     cleanHi: ['Mopping now, careful, it is slippery!', 'Floor is getting a wash, mind the wet bits.'],
     cleanBin: ['Emptying the bin first.', 'Bin is full, out it goes.'],
+    cleanLeave: ['The pantry bin is for whoever is on duty, I just do the floors.', 'Today’s rubbish is the duty rota’s, I only mop.'],
     cleanBye: ['All done, see you tomorrow!', 'Spotless. Good night!'],
     slippery: ['Oops, wet floor, going round.', 'Slippery there, the other way.'],
     shipperHi: ['Shopee delivery!', 'Shopee parcel, I will leave it at the desk!'],
@@ -276,5 +292,153 @@ export default {
     gate: ['Time to pull the gate.', 'Late now, gate across.'],
     open: ['Morning, gate open.'],
     round: ['Quick round of the block.', 'A walk round.'],
+  },
+  // payday at the ATM across the street (people/payday.js, world/backdrops/street-atm.js)
+  atm: {
+    dry: ["Huh, it's out of cash 😩", 'Out of cash! Wait for the refill'],
+    done: ['Got it 💸', 'Done, your turn'],
+    say: {
+      go: ["Salary's in, off to the ATM 💸", 'Down to the ATM for the rent money 💸'],
+      long: ['What a line, {n} people ahead 😅', 'So busy, {n} before me 😅'],
+      use: ['Beep beep… PIN in 🏧', 'Just three million, spend it wisely 🏧'],
+      got: ['Cash in hand! Back up 💸', "Three days and it'll be gone 😭"],
+      recall: ['Oh, work! Out of the line, back up 🏃', 'Work came in, cash later!'],
+    },
+    where: { going: 'Going down to the ATM', line: 'In line at the ATM ({n} ahead)', using: 'Taking money out at the ATM', back: 'Back from the ATM' },
+  },
+  // lunch at the quán cơm bình dân across the street (people/comtrua.js, world/backdrops/eat-com.js)
+  com: {
+    hello: ['What will it be? Braised pork and egg, braised fish', 'Come in, sour fish soup today'],
+    helloBd: ['How many trays? The tofu is fresh out of the pan', 'The full bún đậu?'],
+    bill: '{n} plates, {total}!',
+    say: {
+      go: ["Lunch at cô Ba's rice place 🍚", "Let's eat, I'm starving 🍚"],
+      goBd: ["Friday: bún đậu mắm tôm, let's go 🤤", 'Bún đậu mắm tôm, everyone 🤤'],
+      sit: ['Braised pork and egg with rice, please 🍚', 'Braised fish and the sour soup, please 🍲'],
+      sitBd: ['One full tray, please 🤤', 'Extra chả cốm and mắm tôm, please!'],
+      pay: ['The bill, please! 🙋', 'The whole table, please!'],
+      thanks: ['So good, see you tomorrow 😋', 'Stuffed. Nap time 😴'],
+      work: ['Work came in, going up first! 🏃', 'Oh, work: you carry on!'],
+      boss: ['Boss, come and eat with us! 🍚', 'Sit here, boss 😄'],
+    },
+    where: { going: 'Going down to the rice place', goingBd: 'Off for bún đậu mắm tôm', eating: "Having lunch at cô Ba's", eatingBd: 'Eating bún đậu mắm tôm', back: 'Lunch done, on the way back' },
+  },
+  // a battery swap for an e-scooter (people/evswap.js, world/backdrops/street-ev.js)
+  ev: {
+    say: {
+      go: ['Scooter at {pct}%, off for a swap 🔋', 'To the swap cabinet ⚡'],
+      scan: ['Beep! QR scanned, 9,000 đồng', 'Scanning the code to open it 📱'],
+      wait: ['The cabinet is checking the pack…', 'Waiting for a fresh one ⏳'],
+      full: ['100% ⚡', 'Done: a brand-new 1.5 kWh 🔋'],
+      work: ['Work came in, riding back! 🏃', 'Oh, work: back first!'],
+    },
+    where: { going: 'Going down for the scooter, off to swap its battery', ride: 'Riding the e-scooter to the swap station', swap: 'Swapping the battery at the corner cabinet', back: 'Battery swapped, on the way back' },
+  },
+  // a release: a strip at the photo booth across the street (people/photobooth.js, world/backdrops/street-photo.js)
+  photo: {
+    say: {
+      go: ['Photo booth time 📸', "A picture for the new release 🎉"],
+      frame0: ['3… 2… 1… Cat ears 🐱', 'Headbands on, smile! 📸'],
+      frame1: ['Heart sunglasses! 3… 2… 1… 😎', 'Look cool 😎'],
+      frame2: ['Party hats! 3… 2… 1… 🥳', 'Puff your cheeks 🥳'],
+      frame3: ['Last one, anything goes! 📸', 'Tongues out, everyone 😜'],
+      done: ["Printed! It's so good 😆", 'Fresh out of the printer 📸'],
+      pin: ['{tag} on the board 📌', 'One more for the release wall 📌'],
+      work: ['Work came in, heading back! 🏃', 'Oh, work: you carry on!'],
+    },
+    where: { going: 'Off to the photo booth', wait: 'Waiting for the photo booth', queue: 'In the photo booth queue (weekend crowds)', booth: 'In the photo booth ({tag})', back: 'Photos done, on the way back' },
+  },
+  // pickleball after work at the court by the park (people/pickle.js, world/backdrops/street-pickle.js)
+  pickle: {
+    say: {
+      go: ["Pickleball time 🏓", "Off to the court, CI's green 🏓"],
+      ready: ['Visor on, a quick warm-up 🧢', "Nice court, let's play!"],
+      film: ["I'll film it 📱", "Smile, I'm filming 📱"],
+      net: ['Into the net 😭', 'Oh, the net!', 'So close, net!'],
+      out: ['Out!', "That's out 😅", 'Too long!'],
+      winner: ['Nice!', 'Point! 💪', 'What a shot 😆'],
+      work: ['Work came in, heading back! 🏃', 'Oh, work: you carry on!'],
+      end: ["Court time's up, let's go", 'My legs 😆 time to go'],
+    },
+    tally: { run: '{label} running… the next point is its 🏓', count: '✓ {n}/{of} tests · {label}', pass: '✓ {n} tests over the net · {label} · point!', fail: '✗ {f} failing · into the net after {n} shots · {label}' },
+    where: { going: 'Off to the pickleball court', playing: 'Playing pickleball', filming: 'Filming at the pickleball court', back: 'Pickleball done, on the way back' },
+  },
+  // lunch from home, warmed at the pantry's microwaves (people/comnha.js)
+  // the duty rota: the pantry's daily chores (people/duty.js, world/props/duty-board.js)
+  duty: {
+    chores: { cups: 'Wash the cups', trash: 'Take out the bin', plants: 'Water the plants', table: 'Wipe the tables' },
+    board: {
+      title: 'ON DUTY',
+      days: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
+      weekend: 'Weekend',
+      holiday: 'Public holiday',
+      swap: 'Day off (swapped)',
+      makeup: 'Make-up day',
+      noDuty: 'No duty rota today',
+      nobody: 'Nobody in yet, no rota',
+      doing: 'on it…',
+      owe: 'Left from yesterday: {list}',
+    },
+    say: {
+      cupsGo: ['My turn on the cups 🧽', 'Cups are piling up, washing them now 🧽'],
+      cupsDone: ['Cups all clean ✨', 'Washed and on the rack ✨'],
+      trashGo: ['Taking the bin out 🗑️', 'Nearly five, rubbish time 🗑️'],
+      trashDone: ['Bin’s done 👍', 'New bag in 👍'],
+      plantsGo: ['Morning watering 🌱', 'The plants look thirsty, on it 🌱'],
+      plantsDone: ['Plants are happy 🌿', 'All watered 🌿'],
+      tableGo: ['Wiping the pantry tables 🧻', 'Tables next 🧻'],
+      tableDone: ['Tables are clean ✨', 'All four wiped ✨'],
+      owe: ['Forgot yesterday, doing it now 🙏', 'Yesterday’s, doing it right away 🙏'],
+      called: ['Work’s in, I’ll finish this later!', 'Oh, work, back in a bit for this!'],
+    },
+    where: 'On duty: {what}',
+  },
+  micro: {
+    say: {
+      go: ['Off to warm my lunch 🍱', 'Microwave time 🍱', 'Brought rice from home, just needs warming 🍱'],
+      start: ['Two minutes, that’s all', 'Two minutes and it’s perfect', 'Two and a half for good measure'],
+      beep: ['Beep beep beep, done!', 'Done, piping hot 🔥'],
+      next: ['My turn!', 'Me next!'],
+      hot: ['Hot hot hot 🔥', 'Off to the table 😋'],
+      desk: ['Lunch at my desk with a show 😋', 'Eating at my desk, quicker'],
+      smell: ['Who’s warming braised fish? 😷', 'That fish sauce smell… 😭', 'What IS that smell 😷'],
+      pop: ['Oops, forgot to open the lid 😅', 'Pop! Forgot the vent 😅'],
+      called: ['Work! I’ll get it later!', 'Oh, work, back to my desk first!'],
+    },
+    where: { line: 'In line at the microwave ({n} ahead)', heat: 'Warming lunch at the microwave', eat: 'Taking lunch to a table' },
+  },
+  // the farewell for a project gone quiet, and its return (people/farewell.js)
+  farewell: {
+    card: 'Good luck!',
+    badge: 'STAFF',
+    empty: 'DESK FREE',
+    open: 'Farewell to {name} today, everyone 🥲 sign the card, then cake',
+    pack: ['Packing up… 🥲', 'Last day today 🥲', "I'm taking the little plant"],
+    wish: ['All the best', 'Come and visit', "Don't forget us", 'Keep in touch 🥲', 'Find us all jobs there', 'Safe travels', 'Stay awesome', "We'll miss you"],
+    photo: ['One, two, three… smile! 📸', 'Look here everyone, 1 2 3 smile! 📸'],
+    badgeBack: ['Here’s my badge back 🥲', 'Leaving my badge with you'],
+    badgeGot: ['Got it. Keep in touch!', 'Thanks, message me any time'],
+    thanks: ["Thank you all so much, I'll miss you 🥲", 'Thanks for everything you taught me 🙏'],
+    bye: ['Bye everyone 👋', 'Take care, all 🥲'],
+    toast: 'Farewell party for {name} in the meeting room 🥲',
+    tease: ['Oh, you’re back? 😆', 'Couldn’t stay away, huh 😆', 'Missed us that much? 🤣'],
+    backSay: ['Back at the old company 😆', 'Hello again 😆'],
+  },
+  // interns made permanent at HR's desk (people/interns.js)
+  intern: {
+    card: 'INTERN',
+    plate: 'Intern',
+    official: 'Permanent staff',
+    nation: 'EMPLOYMENT',
+    contract: 'LABOUR CONTRACT',
+    going: ['Off to HR', 'HR wants me to sign something 😳'],
+    hrSign: ['{name}, read it through and sign here', 'Your permanent contract, sign here please'],
+    signing: ['Signing ✍️', 'Here you go ✍️'],
+    stamp: ['Stamp! All done, congratulations 🎉', 'Stamped: you’re one of us now 🎉'],
+    bossComing: ['Well, congratulations are in order!', 'Let me shake your hand'],
+    bossSay: ['Congratulations, keep it up 💪', 'Welcome to the team, for real 🤝'],
+    thanks: ['Thank you so much 🙇', 'Thanks, everyone 🥹'],
+    toast: '{name} signs a permanent contract at HR 🎉',
+    party: '{name} made permanent',
   },
 };

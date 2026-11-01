@@ -23,6 +23,11 @@ import { buildRepair } from './street-repair.js';
 import { buildSirens } from './street-siren.js';
 import { buildCsgt } from './street-csgt.js';
 import { buildNhau } from './street-nhau.js';
+import { buildAtm } from './street-atm.js';
+import { buildCom } from './eat-com.js';
+import { buildPickle } from './street-pickle.js';
+import { buildPhoto } from './street-photo.js';
+import { buildEv } from './street-ev.js';
 import { buildWires } from './street-wires.js';
 import { buildSignals } from './street-signals.js';
 import { buildRiderExtras } from './street-riders.js';
@@ -277,7 +282,7 @@ const walkersAt = (h) => (h >= 7 && h < 22 ? 1 : h >= 6 && h < 23 ? 0.6 : 0.22);
 /** G: the city group; the street grid (XS, ZS, STREET_W), SB (the office's superblock), shops: the shop fronts (shops.js),
     parks: the blocks left as parks, solids: the buildings' footprints ([x0, x1, z0, z1], for walking in); for the park
     life and the weekend's wedding: trees ([x, z, size]), plazas (the parks' paved squares), faces (the buildings' fronts) */
-export function buildStreetLife(G, { XS, ZS, STREET_W, SB, shops = [], parks = [], solids = [], trees = [], plazas = [], faces = [], inShop = () => undefined }) {
+export function buildStreetLife(G, { XS, ZS, STREET_W, SB, shops = [], parks = [], solids = [], trees = [], plazas = [], faces = [], inShop = () => undefined, pickle: court = null }) {
   textures();
   const low = quality.level === 'low';
   const C = officeMiddle();
@@ -780,11 +785,14 @@ export function buildStreetLife(G, { XS, ZS, STREET_W, SB, shops = [], parks = [
   const lightAt = (L, idx, t) => { const [i, j] = L.axis === 'z' ? [L.i, idx] : [idx, L.j]; return lightOf(phaseOf(i, j, t, L.axis)); };
 
   /* ---------- scooters parked on the office's pavement (the staff's own, outings.js) ---------- */
+  let ev = null;   // (the e-scooters: built with the set pieces, below)
   const BIKES = low ? 12 : 24, scoot = scooterParts(), bikeFree = [...Array(BIKES).keys()];
   const bikeBody = new THREE.InstancedMesh(mergeAll(scoot.body), paintM, BIKES), bikeTrim = new THREE.InstancedMesh(mergeAll(scoot.trim), trimM, BIKES);
   for (const o of [bikeBody, bikeTrim]) { o.frustumCulled = false; for (let i = 0; i < BIKES; i++) o.setMatrixAt(i, Z0); G.add(o); }
   bikeBody.castShadow = !low;
-  function parkBike(L, s, side, color) {
+  // (electric: one of the e-scooters, street-ev.js, its ids from 1000; seed: its owner's, for its share of the charge)
+  function parkBike(L, s, side, color, electric = false, seed = 0) {
+    if (electric && ev) { const i = L ? ev.park(L, s, side, color, seed) : -1; return i < 0 ? -1 : 1000 + i; }
     const id = bikeFree.shift();
     if (id == null || !L) return -1;
     const [x, z] = spotOf(L, s, side);
@@ -795,6 +803,7 @@ export function buildStreetLife(G, { XS, ZS, STREET_W, SB, shops = [], parks = [
   }
   function unparkBike(id) {
     if (id == null || id < 0) return;
+    if (id >= 1000) { ev?.unpark(id - 1000); return; }
     bikeBody.setMatrixAt(id, Z0); bikeTrim.setMatrixAt(id, Z0); bikeBody.instanceMatrix.needsUpdate = bikeTrim.instanceMatrix.needsUpdate = true;
     bikeFree.push(id);
   }
@@ -1110,6 +1119,12 @@ export function buildStreetLife(G, { XS, ZS, STREET_W, SB, shops = [], parks = [
   if (food.cart) finder.taken.push([food.cart.x, food.cart.z, 2.4], [food.stall.x, food.stall.z, 2.8]);
   if (park.chessAt) finder.taken.push([...park.chessAt, 2.0]);
   finder.taken.push([STOP.x + HALF + 0.42, STOP.s, 2.6]);   // (the bus stop)
+  // the pickleball court by a park (street-pickle.js; city.js chose where): kept clear like the rest
+  // (?debug&without=pickle,photo,ev: built without them, to measure what they cost)
+  const WITHOUT = typeof location !== 'undefined' && new URLSearchParams(location.search).has('debug') ? (new URLSearchParams(location.search).get('without') || '').split(',') : [];
+  const pickle = buildPickle(G, { site: WITHOUT.includes('pickle') ? null : court, folk, low, closeWalk, INS });
+  if (court) { const along = court.axis === 'x', len = along ? court.x1 - court.x0 : court.z1 - court.z0, wid = along ? court.z1 - court.z0 : court.x1 - court.x0, n = Math.ceil(len / wid);
+    for (let k = 0; k < n; k++) { const u = (k + 0.5) / n; finder.taken.push(along ? [court.x0 + u * len, (court.z0 + court.z1) / 2, Math.hypot(wid / 2, len / n / 2) + 0.3] : [(court.x0 + court.x1) / 2, court.z0 + u * len, Math.hypot(wid / 2, len / n / 2) + 0.3]); } }
   const corner = buildCorner(G, { crowd: trades, finder, trees, scooterParts, C });
   const repair = buildRepair(G, { crowd: trades, finder, trees, C, scooterParts });
   const morning = buildMorning(G, { crowd: trades, finder, far: food.cart ? [[food.cart.x, food.cart.z, 13]] : [], callRider });
@@ -1117,6 +1132,14 @@ export function buildStreetLife(G, { XS, ZS, STREET_W, SB, shops = [], parks = [
   const trade = [corner, repair, morning, lunar];
   // the quán nhậu on a park's edge across the street (street-nhau.js): open in the evening, the office's people some nights
   const nhau = buildNhau(G, { finder, folk, low, depart, far: wedding.sites.map(([x, z]) => [x, z, 4.5]) });
+  // the quán cơm bình dân for lunch (eat-com.js) and the bank's ATM booth with its payday line (street-atm.js): their figures in one set
+  const eats = folk(G, 18, { low, shadows: false }), clear = wedding.sites.map(([x, z]) => [x, z, 4.5]);
+  const com = buildCom(G, { finder, crowd: eats, low, far: clear }), atm = buildAtm(G, { finder, crowd: eats, far: clear });
+  // the Korean-style photo studio, where a release takes four of the office for a strip (street-photo.js)
+  const photo = buildPhoto(G, { finder: WITHOUT.includes('photo') ? { find: () => null } : finder, folk, low, far: clear });
+  // the e-scooters in the office's row and the battery-swap cabinet on a corner (street-ev.js)
+  if (!WITHOUT.includes('ev')) ev = buildEv(G, { finder, low, riderParts, place: (L, s, side, m) => { const [x, z] = spotOf(L, s, side); q.setFromAxisAngle(UP, yawOf(L)); P.set(x, GY + (side > HALF + 0.15 ? 0.12 : 0), z); return m.compose(P, q, S1); } });
+  trade.push(com, atm, pickle, photo, ...(ev ? [ev] : []));
   // a few big street trees by the kerb near the office, where their shade falls just before a stop line (street-shade.js)
   const streetTrees = plantStreetTrees(G, { lanes, spotOf, inSB, HALF, XS, ZS, C, GY, avoid: [...finder.taken, ...wedding.sites.map(([x, z]) => [x, z, 4.0])] });
   // the countdowns beside the lights, and the shade scooters wait in on a hot day
@@ -1132,7 +1155,7 @@ export function buildStreetLife(G, { XS, ZS, STREET_W, SB, shops = [], parks = [
   for (const o of G.children.slice(before)) o.userData.setPiece = true;   // (for ?debug: what they cost)
 
   // what you can walk up to in first person (first-person.js): the cart and the stall, while they are open
-  const spots = () => [...(food.cart ? [food.cart.g.visible && { kind: 'banhmi', x: food.cart.x, z: food.cart.z }, food.stall.g.visible && { kind: 'tea', x: food.stall.x, z: food.stall.z }].filter(Boolean) : []), ...csgt.spots(), ...nhau.spots()];
+  const spots = () => [...(food.cart ? [food.cart.g.visible && { kind: 'banhmi', x: food.cart.x, z: food.cart.z }, food.stall.g.visible && { kind: 'tea', x: food.stall.x, z: food.stall.z }].filter(Boolean) : []), ...csgt.spots(), ...nhau.spots(), ...com.spots(), ...atm.spots(), ...pickle.spots(), ...photo.spots(), ...(ev?.spots() || [])];
   // walking in on the street: the ground under you (the pavement is a step up from the road) and what is in the way (the
   // buildings, the office's raised terrace, the edge of the city)
   const pads = blocks.map((b) => [b.x0, b.x1, b.z0, b.z1]), TERR = [TER.x0, TER.x1, TER.z0, TER.z1];
@@ -1146,12 +1169,12 @@ export function buildStreetLife(G, { XS, ZS, STREET_W, SB, shops = [], parks = [
     marks,   // zebras and stop lines, merged with the city's other road paint
     update(dt, t) {
       now = t; updateLights(t); census(t); updateParking(t); updateTraffic(dt, t); drawVehicles(t); if (PN) updatePeople(dt, t); updateFood(t); park.update(dt, t, hour); wedding.update(dt, t, hour); for (const p of trade) p.update(dt, t, hour); siren.update(dt, t); nhau.update(dt, t, hour); csgt.update(dt, t, hour); signals.update(t); crowd.flush(); guests.flush(); trades.flush(); },
-    night(on) { headPts.visible = tailPts.visible = beams.visible = on; nightOn = on; foodAt = -1; park.night(on); wedding.night(on); siren.night(on); csgt.night(on); nhau.night(on); },
+    night(on) { headPts.visible = tailPts.visible = beams.visible = on; nightOn = on; foodAt = -1; park.night(on); wedding.night(on); siren.night(on); csgt.night(on); nhau.night(on); pickle.night(on); photo.night(on); },
     // for outings.js and walking in (first-person.js); slots: for ?debug
     street: { route, exits, callRider, depart, parkBike, unparkBike, at: (L, s, side) => { const [x, z] = spotOf(L, s, side); return { x, z }; },
       pavement: GY + 0.12, road: GY, pavementSide: HALF + INS, spots, groundAt, blockedAt, setWalker: (p) => { walker = p; }, slots, wedding: wedding.debug, park: park.debug, trades: () => ({ corner: corner.debug(), repair: repair.debug(), morning: morning.debug(), lunar: lunar.debug(), shade: shadeOn, shadeStops: lanes.flatMap((L) => Object.entries(L.shade || {}).map(([idx, sh]) => { const [x, z] = spotOf(L, sh, 1.3), [lx, lz] = spotOf(L, L.cross[idx] - L.dir * 5.2, 1.3); return { at: [+x.toFixed(1), +z.toFixed(1)], line: [+lx.toFixed(1), +lz.toFixed(1)], waiting: L.list.filter((v) => v.name === 'moto' && v.v < 0.3 && Math.abs(v.s - sh) < 3).length }; })) }),
       carrying: () => vehicles.filter((v) => v.on && v.extra).map((v) => { const [x, z] = spotOf(v.L, v.s, v.side); return { what: Object.keys(v.extra), at: [+x.toFixed(1), +z.toFixed(1)], v: +v.v.toFixed(1) }; }),
-      csgt: csgt.debug, nhau: nhau.office, nhauDebug: nhau.debug,
+      csgt: csgt.debug, nhau: nhau.office, nhauDebug: nhau.debug, com: com.office, comDebug: com.debug, atm: atm.office, atmDebug: atm.debug, pickle: pickle.office, pickleDebug: pickle.debug, photo: photo.office, photoDebug: photo.debug, ev: ev?.office || null, evDebug: ev?.debug || null,
       siren: (kind) => { const v = siren.call(kind); return v ? { kind: v.name, lane: `${v.L.axis}${v.L.v}${v.L.dir > 0 ? '+' : '-'}`, s: +v.s.toFixed(1) } : null; }, sirens: () => sirens.map((v) => ({ kind: v.name, s: +v.s.toFixed(1), v: +v.v.toFixed(1), side: +v.side.toFixed(2), at: [+v.px?.toFixed(1), +v.pz?.toFixed(1)] })) },
   };
 }

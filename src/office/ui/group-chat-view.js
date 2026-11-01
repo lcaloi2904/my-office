@@ -7,8 +7,8 @@
 // "Tin nhắn mới" where you stopped reading; replies quoting what they answer; a recalled message's "Tin nhắn đã được
 // thu hồi"; the ♡ on a bubble's corner and a small pill once someone reacts (hover a bubble for the six, a reply and,
 // on yours, recall); polls and reminders as cards in the middle; "… đang soạn tin"; the input bar: stickers and emoji,
-// "Tin nhắn", ••• (a poll, @ someone), the mic and a photo, or send once you type. No brand, logo, sticker art or sound
-// of theirs: the stickers are drawn here, the sound is the office's own.
+// "Tin nhắn", ••• (a poll, @ someone), the mic and a photo, or send once you type; writing to Claude, a prompt helper over
+// it. No brand, logo, sticker art or sound of theirs: the stickers are drawn here, the sound is the office's own.
 import { $, STATIC, el, replay } from '../core/env.js';
 import { state } from '../core/state.js';
 import { icon } from './icons.js';
@@ -16,14 +16,19 @@ import { avatar } from './chat-avatars.js';
 import { photoOn } from './photo.js';
 import { canSession, dn, sessions } from '../people/workers.js';
 import { openTaskSheet, dictate, shrink } from './task-sheet.js';
+import { openBurn } from './burn.js';
 import { toast } from './activity.js';
+import { loopCard, loopPeek } from './stuck.js';
+import { cacheWords } from './cache-words.js';
 import { TOKEN } from '../net/live.js';
 import { pushOn, pushState, pushTest } from './notify.js';
 import { REACTIONS, byId, chat, chatPoll, chatSend, chatSendPhoto, onChat, people, react, recall, rsvp, setOpen, vote, who } from './group-chat.js';
-import { t as tr, locale } from '../../i18n/index.js';
+import { coach, numberTasks } from '../../shared/prompt-coach.js';
+import { t as tr, lang, locale } from '../../i18n/index.js';
 
 let root, body, typingEl, pinEl, newBtn, input, bar, stickersEl, membersEl, mentionEl, moreEl, replyEl, headSub, headAv, toEl, pickEl, quickEl, attachEl, convEl;
 let replyTo = null, readTo = null, stickTab = 'sticker';   // the message you answer; the last one read when the window shut; the panel's tab
+let steerTo = null;   // a run at work you cut in on (its card's 💬): { task, name }
 const RUN_MS = 3 * 60e3, GAP_MS = 20 * 60e3;   // one run of bubbles: the same person within 3 minutes; a time line after 20 quiet minutes
 const seeVotes = new Set();   // polls whose voters are listed
 const p2 = (n) => String(n).padStart(2, '0');
@@ -127,6 +132,7 @@ function content(m) {
     const box = el('span', 'zc-photo'), img = el('img'); img.src = m.photo; img.alt = tr('chat.photo'); box.append(img, el('span', 'zc-ptime', fmtTime(m.at))); return box;
   }
   if (m.kind === 'work') return workCard(m);
+  if (m.kind === 'loop') return loopCard(m, redrawOne);   // (a session stuck in a loop: ui/stuck.js)
   if (bigEmoji(m.text)) return el('span', 'zc-bigemo', m.text);
   const t = el('span', 'zc-text');
   // @names in blue, the way the app shows a mention: the whole name of someone in the group (names have spaces), else one word
@@ -209,7 +215,7 @@ function workCard(m) {
     el('small', null, tr('chat.card.meta', { n: w.n || 0, took: clock((w.end || Date.now()) - (w.at || m.at)) })));
   if (live) Object.assign(head.lastChild.dataset, { at: String(w.at || m.at), n: String(w.n || 0) });   // (its clock runs on: tick())
   box.append(head);
-  if (state === 'wait' && w.ask) box.append(el('div', 'zc-work-ask', tr(w.perm ? 'chat.card.askHere' : 'chat.card.ask', { what: w.ask })));
+  if (state === 'wait' && w.ask) box.append(el('div', 'zc-work-ask', tr(w.perm || w.attach ? 'chat.card.askHere' : 'chat.card.ask', { what: w.ask })));   // (a background session's: no 45 s)
   // right here: allow or deny what it waits for (a risky command: deny only, as on any phone), stop it
   if (live) {
     const acts = el('div', 'zc-work-acts');
@@ -219,6 +225,7 @@ function workCard(m) {
       if (!w.risky) acts.append(btn(tr('chat.card.allow'), 'is-ok', () => call('/api/perm', { id: w.perm, choice: 'allow' })));
       acts.append(btn(tr('chat.card.deny'), 'is-no', () => call('/api/perm', { id: w.perm, choice: 'deny' })));
     }
+    if (w.task) { const st = el('button', 'zc-work-btn is-steer', tr('chat.steer.btn')); st.type = 'button'; st.addEventListener('click', (e) => { e.stopPropagation(); setSteer({ task: w.task, name: m.name }); }); acts.append(st); }   // (a note while it works: what you write next)
     if (w.task) acts.append(btn(tr('chat.card.stop'), 'is-stop', () => call('/api/tasks/stop', { id: w.task })));
     if (acts.children.length) box.append(acts);
     if (state === 'wait' && w.perm && w.risky) box.append(el('small', 'zc-work-none', tr('chat.card.risky')));
@@ -233,6 +240,8 @@ function workCard(m) {
     box.append(more);
   }
   if (!live && !steps.length) box.append(el('small', 'zc-work-none', tr('chat.card.none')));
+  // a background session (server/bg-sessions.mjs): how to open it on the Mac, its command to select whole
+  if (w.attach) { const [a, b = ''] = tr('chat.card.attach', { cmd: '\u0001' }).split('\u0001'), hint = el('small', 'zc-work-attach'); hint.append(a, el('code', null, w.attach), b); box.append(hint); }
   return box;
 }
 // one to three emoji and nothing else (a 👍 sent with the button, say): shown big, without a bubble
@@ -343,7 +352,7 @@ function peek(m) {
   if (chat.open || m.kind === 'sys' || m.from === 'me' || photoOn() || document.querySelector('.drawer:not([hidden])')) return;
   let p = $('zc-peek'); if (!p) { p = el('button', 'zc-peek'); p.id = 'zc-peek'; p.type = 'button'; p.addEventListener('click', () => toggle(true)); document.body.append(p); }
   if (m.kind === 'work') return;   // (a card at work: its answer is the news)
-  const txt = m.kind === 'text' ? mask(m.text) : m.kind === 'poll' ? `📊 ${m.poll.q}` : m.kind === 'remind' ? `⏰ ${m.remind.title}` : m.kind === 'photo' ? tr('chat.photo') : tr('chat.sticker');
+  const txt = m.kind === 'loop' ? loopPeek(m) : m.kind === 'text' ? mask(m.text) : m.kind === 'poll' ? `📊 ${m.poll.q}` : m.kind === 'remind' ? `⏰ ${m.remind.title}` : m.kind === 'photo' ? tr('chat.photo') : tr('chat.sticker');
   const box = el('span', 'zc-peek-t'); box.append(el('b', null, tr('chat.group')), el('span', null, `${m.name}: ${txt}`));
   p.replaceChildren(groupAvatar(44), box);
   p.hidden = false; p.classList.remove('is-out'); clearTimeout(peekTimer);
@@ -364,10 +373,11 @@ onChat((what, m) => {
 /* ---------- the input: text, a reply, @ someone, stickers and emoji, a poll, a photo; send once something is typed ---------- */
 function syncBar() { bar.classList.toggle('has-text', !!input.value.trim()); root.classList.toggle('has-text', !!input.value.trim()); }
 function setReply(m) {
+  if (m && steerTo) setSteer(null);
   replyTo = m;
   const s = m?.tag === 'claude' && sessions.get(m.from);   // (an answer from Claude: what you write back goes to it)
   if (s?.sid && canSession(s, 'startTask')) setTarget({ id: s.id, sid: s.sid, name: dn(s), folder: folderOf(s) });
-  replyEl.hidden = !m;
+  replyEl.hidden = !m && !steerTo; coachLater();
   if (m) {
     const t = m.kind === 'text' ? mask(m.text) : m.kind === 'poll' ? `📊 ${m.poll.q}` : m.kind === 'photo' ? tr('chat.photo') : tr('chat.sticker');
     replyEl.querySelector('b').textContent = tr('chat.replyTo', { name: m.from === 'me' ? tr('chat.you') : m.name });
@@ -378,7 +388,8 @@ function setReply(m) {
 function send() {
   if (replay.on) { toast(tr('drawer.readOnly')); return; }
   const v = input.value; input.value = ''; syncBar(); mentionEl.hidden = true; input.style.height = '';
-  if (target && (v.trim() || attach.length)) { sendTo(v.trim() || tr('chat.to.photoOnly')); setReply(null); return; }
+  if (steerTo && v.trim()) { const to = steerTo; setSteer(null); steerSend(to, v.trim()); drawCoach(); return; }
+  if (target && (v.trim() || attach.length)) { sendTo(v.trim() || tr('chat.to.photoOnly')); setReply(null); drawCoach(); return; }
   if (v.trim()) chatSend(v, { replyTo: replyTo?.id });
   setReply(null);
   // @ a conversation: give it this as work? (one tap opens the sheet with it filled in: its folder, photos, send)
@@ -418,14 +429,24 @@ function drawTarget() {
   if (target) {
     const x = el('button', 'zc-ib zc-to-x'); x.type = 'button'; x.title = tr('chat.to.clear'); x.append(icon('x')); x.addEventListener('click', () => setTarget(null));
     toEl.append(el('small', 'zc-to-sub', tr(target.dir ? (target.fresh ? 'chat.to.subNew' : 'chat.to.subMine') : 'chat.to.sub', { folder: target.folder })), x);
+    if (target.id) { const c = el('small', 'zc-to-cache'); toEl.insertBefore(c, x); drawToCache(); }   // (its prompt cache: answer while it is warm)
   }
   const narrow = matchMedia('(max-width: 640px)').matches;   // (a phone: the short one; whom it goes to is on the "To" chip just above)
   input.placeholder = target ? tr(narrow ? 'chat.to.placeholderShort' : 'chat.to.placeholder', { name: target.name }) : tr(narrow ? 'chat.placeholder' : 'chat.placeholderPc', { group: tr('chat.group') });
   root.classList.toggle('is-to', !!target);
+  input.maxLength = target ? 4000 : 600;   // (work for Claude takes up to 4000 characters, server/tasks.mjs; the group's chat 600)
   if (target?.sid) { const c = el('button', 'zc-ib zc-to-conv'); c.type = 'button'; c.title = tr('chat.conv.open'); c.append(el('span', null, '📜')); c.addEventListener('click', () => openConv(target)); toEl.insertBefore(c, toEl.querySelector('.zc-to-x')); }
   for (const b of root.querySelectorAll('.zc-photo-btn')) b.hidden = !state.isLocal && !target;   // (to Claude: a photo from this device; to the group: a photo of the office, the Mac's)
   drawQuick(); if (!target) { attach = []; drawAttach(); }
+  drawCoach();
 }
+// the conversation's prompt cache under "To": warm for how long (cheap to carry on), or cold (it reads it all again)
+function drawToCache() {
+  const c = toEl?.querySelector('.zc-to-cache'); if (!c) return;
+  const w = cacheWords(sessions.get(target?.id)?.cache, matchMedia('(max-width: 640px)').matches ? 'chatShort' : 'chat');   // (a phone: the short one)
+  c.hidden = !w.text; c.dataset.state = w.state; if (c.textContent !== w.text) c.textContent = w.text;
+}
+setInterval(() => { if (root && !root.hidden) drawToCache(); }, 20_000);
 
 /* ---------- quick commands over the input (to a conversation or a project): a tap fills the input, ✎ changes them ----------
    Shared by the Mac and the phones (data/quick.json); the office's own until you change them. */
@@ -472,11 +493,82 @@ function drawAttach() {
   if (!attachEl) return;
   attachEl.hidden = !attach.length;
   attachEl.replaceChildren(...attach.map((u, i) => { const t = el('span', 'zc-attach-t'), img = el('img'), x = el('button', null, '✕'); img.src = u; x.type = 'button'; x.addEventListener('click', () => { attach.splice(i, 1); drawAttach(); }); t.append(img, x); return t; }));
+  coachLater();   // (a photo more or less: another hint, maybe)
 }
 function pickPhotos() {
   const f = el('input'); f.type = 'file'; f.accept = 'image/*'; f.multiple = true;
   f.addEventListener('change', async () => { for (const file of [...f.files].slice(0, 4 - attach.length)) { try { attach.push(await shrink(file)); } catch { /* not an image it can read */ } } drawAttach(); input.focus(); });
   f.click();
+}
+
+/* ---------- the prompt helper, writing to Claude (its rules: src/shared/prompt-coach.js, worked out right here): one hint at
+   a time over the input once you stop typing (~400 ms), with chips that edit what you wrote; it never stops a message
+   going, and a hint you close or use stays away for the rest of that message. "✨ Viết lại cho rõ" asks Claude itself, on
+   the Mac (POST /api/prompt/rewrite: the words only, never the photos), and "Hoàn tác" puts yours back. Off in Settings →
+   More → Group chat. ---------- */
+let coachEl = null, coachT = 0, rewriting = false, undo = null;   // undo: { before, after } once rewritten, until you change it
+const coachOff = new Set();   // the hints closed or used for the message being written
+const coachOn = () => { try { return localStorage.getItem('office-coach') !== 'off'; } catch { return true; } };
+// (emptied: a new message at once, so a hint closed for the last one may come again; else once you stop typing)
+const coachLater = () => { clearTimeout(coachT); if (!input.value.trim() && !attach.length) drawCoach(); else coachT = setTimeout(drawCoach, 400); };
+// a chip's change: the input sized to it, the caret where you go on typing, the keyboard kept up
+function setDraft(text, caret = text.length) {
+  input.value = text; syncBar(); input.style.height = ''; input.style.height = `${Math.min(110, input.scrollHeight)}px`;
+  input.focus(); input.setSelectionRange(caret, caret);
+}
+const addLine = (line) => setDraft(`${input.value.replace(/\s+$/, '')}\n${line}`);
+// "Trích lại…": quotes (“”) right after the words that point, the caret between them
+function quoteAt(h) {
+  const v = input.value, at = h.phrase ? v.indexOf(h.phrase) : -1, end = at < 0 ? v.replace(/\s+$/, '').length : at + h.phrase.length;
+  setDraft(`${v.slice(0, end)} “”${v.slice(end)}`, end + 2);
+}
+const CHIPS = {
+  photoBare: ['fixPhoto', 'likePhoto', 'explainPhoto', 'fillPhoto'].map((k) => [k, () => setDraft(`${tr(`chat.coach.chip.${k}Text`)}${input.value.trim()}`)]),
+  vague: ['notOld', 'criteria', 'example'].map((k) => [k, () => addLine(tr(`chat.coach.chip.${k}Text`))]),
+  dangling: [['quote', quoteAt]],
+  multi: [['number', () => setDraft(numberTasks(input.value.trim(), tr('chat.coach.chip.inOrder')))]],
+  tooShort: [['result', () => addLine(tr('chat.coach.chip.resultText'))]],
+};
+function drawCoach() {
+  clearTimeout(coachT);
+  if (!coachEl || rewriting) return;
+  const text = input.value;
+  if (!text.trim() && !attach.length) coachOff.clear();   // (a new message: every hint may come again)
+  if (undo && text !== undo.after) undo = null;   // (changed since: yours from here on)
+  const hint = !undo && target && coachOn() ? coach({ text, photos: attach.length, quoted: !!replyTo, lang: lang() }).find((h) => !coachOff.has(h.id)) : null;
+  coachEl.hidden = !hint && !undo;
+  if (coachEl.hidden) { coachEl.replaceChildren(); delete coachEl.dataset.hint; return; }
+  const chips = el('div', 'zc-coach-chips'), x = el('button', 'zc-ib zc-reply-x zc-coach-x'); x.type = 'button'; x.title = tr('chat.coach.close'); x.append(icon('x'));
+  const chip = (k, label, fn, cls = 'zc-coach-c') => {
+    const b = el('button', cls, label); b.type = 'button'; b.dataset.k = k;
+    b.addEventListener('pointerdown', (e) => e.preventDefault());   // (the input keeps the keyboard up)
+    b.addEventListener('click', () => fn(b)); return b;
+  };
+  coachEl.classList.toggle('is-done', !!undo);
+  if (undo) {   // (one line: what happened, "Hoàn tác", ✕)
+    coachEl.dataset.hint = 'rewritten';
+    chips.append(chip('undo', tr('chat.coach.undo'), () => { const t = undo.before; undo = null; setDraft(t); drawCoach(); }));
+    x.addEventListener('click', () => { undo = null; drawCoach(); });
+    coachEl.replaceChildren(el('i', 'zc-coach-ic', '✨'), el('span', 'zc-coach-t', tr('chat.coach.rewritten')), chips, x);
+    return;
+  }
+  coachEl.dataset.hint = hint.id;
+  const done = () => { coachOff.add(hint.id); coachEl.hidden = true; };   // (hidden until you type again: then the next one, if any)
+  for (const [k, fn] of CHIPS[hint.id]) chips.append(chip(k, tr(`chat.coach.chip.${k}`), () => { done(); fn(hint); }));
+  x.addEventListener('click', done);
+  coachEl.replaceChildren(el('i', 'zc-coach-ic', '💡'), el('span', 'zc-coach-t', tr(`chat.coach.${hint.id}`, { phrase: hint.phrase || '', n: hint.n || 2 })), x, chips);
+  // the rewrite on a line of its own under the chips, in violet: it is the one that asks Claude (and spends a little)
+  if (text.trim()) { const ai = chip('rewrite', tr('chat.coach.rewrite'), rewrite, 'zc-coach-ai'); ai.title = tr('chat.coach.rewriteTitle'); coachEl.append(ai); }
+}
+// "✨ Viết lại cho rõ": the input waits (read-only) while Claude rewrites it; what you wrote comes back with "Hoàn tác"
+async function rewrite(btn) {
+  const before = input.value; if (rewriting || !before.trim()) return;
+  rewriting = true; btn.disabled = true; btn.textContent = tr('chat.coach.rewriting'); input.readOnly = true; coachEl.classList.add('is-busy');
+  const r = await fetch(`/api/prompt/rewrite${tq()}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: before, lang: lang(), photos: attach.length }) }).then((x) => x.json()).catch(() => null);
+  rewriting = false; input.readOnly = false; coachEl.classList.remove('is-busy');
+  if (r?.ok && r.text && input.value === before) { undo = { before, after: r.text }; setDraft(r.text); }
+  else if (!r?.ok) toast(r?.message || tr('drawer.unreachable'), 7000);
+  drawCoach();
 }
 
 /* ---------- one conversation on its own screen: everything said in it and what Claude did, as in the Claude app, kept up to
@@ -547,7 +639,8 @@ async function openPick() {
   if (!list.length) items.push(el('p', 'zc-to-note', r ? tr('chat.to.none') : tr('drawer.unreachable')));
   for (const s of list) {
     const folder = s.dir.split('/').slice(-2).join('/'), st = tr(s.status === 'rest' ? 'chat.memberRest' : s.status === 'wait' ? 'chat.memberWait' : 'chat.memberWork');
-    const o = opt(avatar(faceOf(s.id, s.name), 30), s.name, `📁 ${folder} · ${st}`, target?.sid === s.sid, () => { setTarget({ id: s.id, sid: s.sid, name: s.name, folder }); input.focus(); }, r && !r.allowed);
+    const cw = s.status === 'work' ? '' : cacheWords(s.cache, 'chat').text;   // (at work it is warm anyway)
+    const o = opt(avatar(faceOf(s.id, s.name), 30), s.name, `📁 ${folder} · ${st}${cw ? ` · ${cw}` : ''}`, target?.sid === s.sid, () => { setTarget({ id: s.id, sid: s.sid, name: s.name, folder }); input.focus(); }, r && !r.allowed);
     o.dataset.sid = s.sid;
     const see = el('span', 'zc-to-see', '📜'); see.title = tr('chat.conv.open');
     see.addEventListener('click', (e) => { e.stopPropagation(); pickEl.hidden = true; openConv({ id: s.id, sid: s.sid, name: s.name, folder }); });
@@ -564,6 +657,33 @@ async function openPick() {
   }
   pickEl.replaceChildren(...items);
 }
+/* ---------- "Chen lời giữa chừng": a note for a conversation while it works ("sửa luôn test", "sai file rồi, dừng"), from its
+   card's 💬 or when "To" finds it busy; Claude reads it between two steps, or it goes once it is done (server: POST
+   /api/tasks/steer, server/steer.mjs) ---------- */
+function setSteer(x) {
+  steerTo = x; if (x) replyTo = null;
+  replyEl.hidden = !x && !replyTo;
+  root.classList.toggle('is-steer', !!x);
+  if (!x) { drawTarget(); return; }   // (its placeholder back)
+  replyEl.querySelector('b').textContent = tr('chat.steer.bar', { name: x.name });
+  replyEl.querySelector('.zc-reply-t').textContent = tr('chat.steer.hint');
+  input.placeholder = tr('chat.steer.placeholder'); input.focus();
+}
+async function steerSend(to, text) {
+  const r = await fetch(`/api/tasks/steer${tq()}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ task: to.task, sid: to.sid, dir: to.dir, text }) }).then((x) => x.json()).catch(() => null);
+  if (r?.ok) return;   // (what happened is said in the group: in now, or kept for when it is done)
+  toast(r?.code === 'notAllowed' ? tr('chat.to.notAllowed') : r?.message || tr('drawer.unreachable'), 7000);
+  if (!input.value) { input.value = text; syncBar(); }   // (nothing lost: back in the input)
+}
+// "To" a conversation at work: in now, mid-way, or kept in the input for later
+function askSteer(to, text) {
+  const ask = el('div', 'zc-ask zc-steer-ask'), yes = el('button', 'zc-ask-yes', tr('chat.steer.yes')), no = el('button', 'zc-ask-no', tr('chat.steer.no'));
+  yes.type = no.type = 'button';
+  yes.addEventListener('click', () => { ask.remove(); steerSend({ sid: to.sid, dir: to.dir }, text); });
+  no.addEventListener('click', () => { ask.remove(); if (!input.value) { input.value = text; syncBar(); } });
+  ask.append(el('span', null, tr('chat.steer.ask', { name: to.name })), no, yes);
+  body.append(ask); body.scrollTop = body.scrollHeight;
+}
 async function sendTo(text) {
   if (replay.on) { toast(tr('drawer.readOnly')); return; }
   if (target?.id && sessions.has(target.id) && !canSession(sessions.get(target.id), 'startTask')) { setTarget(null); toast(tr('drawer.readOnly')); return; }
@@ -577,6 +697,7 @@ async function sendTo(text) {
     notifyNudge();
     return;
   }
+  if ((r?.code === 'busy' || r?.code === 'macBusy') && !to.fresh) { askSteer(to, text); return; }   // (at work: cut in?)
   toast(r?.code === 'notAllowed' ? tr('chat.to.notAllowed') : r?.message || tr('drawer.unreachable'), 7000);
   if (!input.value) { input.value = text; syncBar(); }   // (nothing lost: back in the input)
 }
@@ -660,7 +781,10 @@ function drawMore() {
   at.addEventListener('click', () => { moreEl.hidden = true; input.focus(); input.setRangeText(input.value && !/\s$/.test(input.value) ? ' @' : '@', input.selectionStart, input.selectionEnd, 'end'); mentions(); });
   const task = el('button', 'zc-more-o'); task.type = 'button'; task.append(icon('clipboard'), el('span', null, tr('chat.task.title')));
   task.addEventListener('click', () => { moreEl.hidden = true; openTaskSheet(root); });
-  moreEl.replaceChildren(task, at, form);
+  // what eats the plan (ui/burn.js): from the chat too, so a phone reaches it
+  const burn = el('button', 'zc-more-o'); burn.type = 'button'; burn.append(icon('chart'), el('span', null, tr('burn.open')));
+  burn.addEventListener('click', () => { moreEl.hidden = true; openBurn(); });
+  moreEl.replaceChildren(task, burn, at, form);
 }
 function drawMembers() {
   const rows = [];
@@ -705,7 +829,7 @@ function build() {
   moreEl = el('div', 'zc-more'); moreEl.hidden = true;
   // answering a message: "Trả lời <tên>" over the input, with what it says and an ✕
   replyEl = el('div', 'zc-reply'); replyEl.hidden = true;
-  const replyX = el('button', 'zc-ib zc-reply-x'); replyX.type = 'button'; replyX.title = tr('chat.cancel'); replyX.append(icon('x')); replyX.addEventListener('click', () => setReply(null));
+  const replyX = el('button', 'zc-ib zc-reply-x'); replyX.type = 'button'; replyX.title = tr('chat.cancel'); replyX.append(icon('x')); replyX.addEventListener('click', () => { setReply(null); if (steerTo) setSteer(null); });
   const replyText = el('span', 'zc-reply-q'); replyText.append(el('b'), el('span', 'zc-reply-t'));
   replyEl.append(icon('reply'), replyText, replyX);
   // a computer's toolbar over the input: stickers, a photo of the office, a file, a card, a poll, @, more
@@ -717,8 +841,8 @@ function build() {
   bar = el('form', 'zc-bar');
   input = el('textarea', 'zc-in'); input.rows = 1; input.maxLength = 600;
   input.placeholder = tr(matchMedia('(max-width: 640px)').matches ? 'chat.placeholder' : 'chat.placeholderPc', { group: tr('chat.group') });
-  input.addEventListener('input', () => { syncBar(); mentions(); input.style.height = ''; input.style.height = `${Math.min(110, input.scrollHeight)}px`; });
-  input.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); } if (e.key === 'Escape') { if (replyTo) setReply(null); else toggle(false); } });
+  input.addEventListener('input', () => { syncBar(); mentions(); input.style.height = ''; input.style.height = `${Math.min(110, input.scrollHeight)}px`; coachLater(); });
+  input.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); } if (e.key === 'Escape') { if (steerTo) setSteer(null); else if (replyTo) setReply(null); else toggle(false); } });
   // the phone's 🎤: speak into the input (the browser's speech recognition, in the office's language)
   let stopMic = null;
   const micBtn = ib('mic', tr('chat.task.mic'), () => { if (stopMic) { stopMic(); stopMic = null; } else stopMic = dictate(micBtn, input, () => { syncBar(); input.dispatchEvent(new Event('input')); }); }, 'zc-mo zc-when-empty zc-mic');
@@ -736,10 +860,11 @@ function build() {
   hintX.addEventListener('click', () => { hint.hidden = true; try { localStorage.setItem('office-chat-hint', 'seen'); } catch { /* storage blocked */ } });
   toEl = el('div', 'zc-to'); toEl.hidden = DEMO_CHAT; pickEl = el('div', 'zc-to-pick'); pickEl.hidden = true;
   quickEl = el('div', 'zc-quick'); quickEl.hidden = true; attachEl = el('div', 'zc-attach'); attachEl.hidden = true;
+  coachEl = el('div', 'zc-coach'); coachEl.hidden = true; coachEl.setAttribute('role', 'status'); coachEl.setAttribute('aria-label', tr('chat.coach.label'));
   convEl = el('div', 'zc-conv'); convEl.hidden = true;
   if (!DEMO_CHAT) loadQuick();
   notifyBar = el('div', 'zc-nbar'); notifyBar.hidden = true;
-  root.append(head, notifyBar, pinEl, body, convEl, newBtn, typingEl, mentionEl, replyEl, hint, stickersEl, moreEl, toolbar, pickEl, quickEl, attachEl, toEl, bar, membersEl);
+  root.append(head, notifyBar, pinEl, body, convEl, newBtn, typingEl, mentionEl, replyEl, hint, stickersEl, moreEl, toolbar, pickEl, quickEl, attachEl, coachEl, toEl, bar, membersEl);
   drawTarget();
   $('app').append(root);
 }

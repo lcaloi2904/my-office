@@ -9,24 +9,35 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
+import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { execFile, execFileSync, spawn } from 'node:child_process';
 import { sysSnapshot, sysAction, scanCleanups, trackOwners, startTrend, setI18n, fmtBytes as sysBytes } from './system.mjs';
 import { OS } from './platform/index.mjs';
 import { redact } from './redact.mjs';
-import { testRunner } from './testrun.mjs';
+import { testCounts, testRunner } from './testrun.mjs';
 import { scanUsage, blankUsage, ctxMax } from './usage.mjs';
 import next from 'next';
 import { buildTimeline } from '../src/shared/timeline.js';
 import { dangerKey } from '../src/shared/danger.js';
 import { createChatEngine, REACTIONS } from '../src/shared/chat-engine.js';
 import { createTasks } from './tasks.mjs';
+import { createBg, bgSettings, printSettings } from './bg-sessions.mjs';
+import { steerable, inboundFrom, isSocket, deliver } from './steer.mjs';
+import { createRewriter } from './rewrite.mjs';
 import { createPush } from './push.mjs';
 import { SHOT_ASK, shoot, shotsIn } from './shots.mjs';
+import { createClaudeVersion } from './claude-version.mjs';
 import { createTrophies } from './trophies.mjs';
 import { createGit } from './git.mjs';
+import { createStranded } from './stranded.mjs';
 import { weekSummary } from './wrapped.mjs';
 import { createPrefs } from './prefs.mjs';
+import { createLoopGuard, LOOP_DEFAULTS, LOOP_MIN, LOOP_N } from './loops.mjs';
+import { createTenure, FAREWELL_DAYS, FAREWELL_DEFAULT } from './tenure.mjs';
+import { cacheClock, cacheFromResume, cacheFromStatus, cacheGuess } from '../src/shared/cache-clock.js';
+import { createOtel } from './otel.mjs';
+import { managedEnvs, otelOwner } from './otel-setup.mjs';
 import { pickLang, createT } from '../src/i18n/index.js';
 import { createAgentRegistry } from './agents/registry.mjs';
 import { createClaudeAdapter } from './agents/claude/compat.mjs';
@@ -83,6 +94,7 @@ const ompUsageCollector = createOmpUsageCollector({
   },
 });
 const syncOmpUsageWatch = () => ompUsageCollector.setWatching([...clients].some((c) => c.local));
+import { createLiftService } from './lift-service.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = Number(process.env.OFFICE_PORT) || 4310;
@@ -305,8 +317,17 @@ const git = createGit({
   onCommit: (r, subject) => gitEvent(r, 'commit', clip(redact(oneLine(subject)), 64)),
   onPush: (r) => gitEvent(r, 'push', r.branch),
   onCi: (r) => gitEvent(r, r.ci === 'red' ? 'cired' : 'cigreen', r.ciName),
+  onRelease: (r, tag) => gitEvent(r, 'release', clip(redact(oneLine(tag)), 40)),   // (four of them off to the photo booth: people/photobooth.js)
 });
 const pollGit = () => git.poll([...sessions.values()].map((s) => s.cwd));
+
+/* ---------- each project's working life (server/tenure.mjs): the farewell after a long quiet, the return ---------- */
+// (a folder's project as the page names it: its repository's folder, else its own)
+const projectOf = async (cwd) => base((cwd && (await git.rootOf(cwd).catch(() => ''))) || cwd);
+const farewellDays = () => { const d = prefs.get('farewellDays'); return d === 0 || FAREWELL_DAYS.includes(d) ? d : FAREWELL_DEFAULT; };
+const liveProjects = () => new Set([...sessions.values()].map((s) => (s.cwd && git.repoOf(s.cwd)?.name) || base(s.cwd)).filter(Boolean));
+const tenureOut = () => ({ ok: true, days: farewellDays(), choices: FAREWELL_DAYS, projects: tenure.list(farewellDays(), liveProjects()) });
+const tenure = createTenure({ dataDir: DATA_DIR, claudeDir: CLAUDE_DIR, nameOf: projectOf, onChange: () => broadcast({ k: 'tenure', ...tenureOut() }) });
 setInterval(() => { if (watching()) pollGit(); }, 20_000).unref();
 setInterval(() => { if (watching()) git.pollCi(); }, 120_000).unref();
 
@@ -328,6 +349,8 @@ const legacyPub = (s) => ({ id: s.id, pid: s.pid, name: s.name, title: s.title |
   lastAt: s.lastEventAt || s.createdAt, doneAt: s.doneAt || 0, todos: s.todos || [], lastReply: s.lastReply || '', origin: s.origin || '',
   bg: s.bg ? [...s.bg.values()].slice(0, 6) : [],
   dayFirst: s.dayFirst || null,
+  stuck: s.stuck || null,
+  cache: cacheOut(s),
   git: gitOf(s), ...git.identityOf(s.cwd),
   usage: s.usage?.model ? { cost: Math.round(s.usage.cost * 100) / 100, ...liveCtx(s), model: s.usage.model, out: s.usage.out } : null });
 // Keep the legacy projection intact; only add server-owned agent metadata.
@@ -583,10 +606,18 @@ const chatOut = () => ({ ok: true, msgs: chat.state.msgs, pinned: chat.state.pin
 
 /* ---------- "Giao việc" (server/tasks.mjs): Claude Code runs started from the office ---------- */
 const taskSids = new Set(), taskQuote = new Map();   // the sessions those runs became (their leaving isn't announced: their result is); your task, quoted in the answer
+// Phone work as Claude Code background sessions (server/bg-sessions.mjs), when switched on on the Mac and this Claude Code
+// has them: their settings call the office back the way the hooks do (curl; the small node script on Windows)
+const bgRun = createBg(), WIN = process.platform === 'win32', fwd = (p) => p.replace(/\\/g, '/'), SEND = `"${fwd(process.execPath)}" "${fwd(path.join(ROOT, 'hooks', 'send.mjs'))}"`;
+const bgOn = () => !!prefs.get('phoneTasksBg');
+const bgOut = () => { const k = bgRun.known(findClaude()); return { on: bgOn(), ok: k ? k.ok : null, version: k?.version || null }; };
 const tasks = createTasks({
   dataDir: DATA_DIR, claude: () => findClaude(),
   env: () => { const e = { ...process.env }; if (nowDir) e.CLAUDE_CONFIG_DIR = nowDir; return e; },   // (the account new sessions start on)
+  bg: { ...bgRun, want: bgOn, settings: () => bgSettings({ port: PORT, win: WIN, send: SEND }) },
+  printSettings: (t) => printSettings({ port: PORT, task: t.id, win: WIN, send: SEND }),   // (a `-p` run tells where its inbox is: server/steer.mjs)
   onStep: (t, x) => cardStep(t.id, stepOf(x.name, x.input)),
+  onBg: (t, what, detail) => onBgTask(t, what, detail),
   onDone: (t) => {
     if (t.sid) taskSids.add(t.sid);
     const card = cards.get(t.id); cards.delete(t.id);
@@ -604,10 +635,15 @@ const tasks = createTasks({
     else chat.system(`📋 ${folder}: ${clip(oneLine(text), 300)}`);
     pushOut({ title: `💬 ${t.from?.name || folder}`, body: clip(oneLine(text), 180), tag: `task-${t.id}`, url: '/?chat' });
     if (who && urls.length) (async () => { for (const u of urls) { const photo = await shoot(u).catch(() => null); if (photo) chat.say(who, '', { photo, now: true }); } })();
+    if (t.from?.orig && steerLater.has(t.from.orig)) setTimeout(() => sendLater(t.from.orig), 1500);   // (a note that couldn't get in: now, as a message)
   },
 });
+/* ---------- "✨ Viết lại cho rõ", the chat's prompt helper (server/rewrite.mjs): a message for Claude, made clearer by a
+   small model, on the account new sessions start on, in an empty folder of the office's ---------- */
+const rewriter = createRewriter({ claude: () => findClaude(), env: () => { const e = { ...process.env }; if (nowDir) e.CLAUDE_CONFIG_DIR = nowDir; return e; }, dir: path.join(DATA_DIR, 'rewrite') });
 /* ---------- notifications on the phones that said yes (server/push.mjs): Claude's answers, and an approval a run started
    from the office needs while nobody has the office open; none while an office page is looked at ---------- */
+const claudeVersion = createClaudeVersion({ dataDir: DATA_DIR });   // (Claude Code's version on this computer, server/claude-version.mjs)
 const push = createPush({ dataDir: DATA_DIR, log: (l) => fsp.appendFile(ACTION_LOG, `${new Date().toISOString()} ${l}\n`).catch(() => {}) });
 const QUICK_FILE = path.join(DATA_DIR, 'quick.json');   // the chat's quick commands, once you change them (shared by the Mac and the phones)
 const pushOut = (msg) => { if (push.count() && !officeFocused()) push.notify(msg).catch(() => {}); };
@@ -621,6 +657,27 @@ function cardStep(taskId, step) {
   const c = cards.get(taskId); if (!c) return;
   c.steps.push(step); c.n++; if (c.steps.length > 40) c.steps.shift();
   if (!c.timer) c.timer = setTimeout(() => { c.timer = 0; chat.setWork(c.id, { steps: c.steps, n: c.n }); }, 700);   // (a burst of steps: one update; its state is set where it changes)
+}
+// The command that opens a phone's work, running as a background session, on the Mac (with its account's folder)
+function attachCmd(t) {
+  const bin = findClaude(), cli = !bin || bin.onPath ? 'claude' : tilde(bin.file), dir = t.env?.CLAUDE_CONFIG_DIR;
+  const acct = dir && path.resolve(dir) !== path.resolve(CLAUDE_DIR) ? (WIN ? `$env:CLAUDE_CONFIG_DIR="${dir}"; ` : `CLAUDE_CONFIG_DIR=${tilde(dir)} `) : '';
+  return `${acct}${WIN && bin && !bin.onPath ? `& "${bin.file}"` : cli} attach ${t.job}`;
+}
+// A phone's work as a background session: started (its card says how to open it on the Mac), run as `claude -p` instead
+// (said once, with why), or waiting for you on the Mac (a prompt of its own, not one the office holds)
+function onBgTask(t, what, detail) {
+  const card = cards.get(t.id), folder = path.basename(t.dir);
+  if (what === 'started') { if (card) chat.setWork(card.id, { attach: attachCmd(t) }); fsp.appendFile(ACTION_LOG, `${new Date().toISOString()} task ${t.id} background session ${t.job}${t.copy ? ' (a copy)' : ''}\n`).catch(() => {}); return; }
+  if (what === 'fallback') {
+    fsp.appendFile(ACTION_LOG, `${new Date().toISOString()} task ${t.id} as claude -p (${detail})\n`).catch(() => {});
+    if (detail === 'untrusted') chat.system(tr('chat.task.bgUntrusted', { folder }));
+    else if (detail !== 'old') chat.system(tr('chat.task.bgFailed', { folder }));   // (a Claude Code without them: the switch says so already)
+    return;
+  }
+  if (!card || (card.wait && !card.macWait)) return;   // (one the office holds: its card shows that one)
+  if (what === 'wait') { card.macWait = true; card.wait = tr(`chat.card.waitMac.${/permission/.test(detail || '') ? 'perm' : /input/.test(detail || '') ? 'input' : 'other'}`); chat.setWork(card.id, { state: 'wait', ask: card.wait, perm: null, steps: card.steps, n: card.n }); }
+  else if (what === 'work' && card.macWait) { card.macWait = false; card.wait = null; chat.setWork(card.id, { state: 'work', ask: null, perm: null }); }
 }
 // one line for a step on the card: what Claude does (its tool), on what (a file, a command, a search)
 function stepOf(name, i = {}) {
@@ -668,9 +725,140 @@ async function parkForPhone(s) {
   broadcast({ k: 'sess', s: pub(s) });
   return { ok: true };
 }
-const tasksOut = (local) => ({ ok: true, allowed: local || !!prefs.get('phoneTasks'), running: tasks.list(),
+// a background session (agent view) stopped with `claude stop`, on its account: its conversation is kept
+async function stopBgSession(s) {
+  const bin = findClaude(), slug = acctOf(s) || '', e = { ...process.env };
+  if (slug) e.CLAUDE_CONFIG_DIR = dirOfSlug(slug); else delete e.CLAUDE_CONFIG_DIR;
+  return !!bin && bgRun.stop(bin.file, s.jobId, e);
+}
+const tasksOut = (local) => ({ ok: true, allowed: local || !!prefs.get('phoneTasks'), running: tasks.list(), bg: bgOut(),
   projects: knownDirs.filter((d) => fs.existsSync(d)).map((d) => ({ dir: tilde(d), name: path.basename(d) })),
-  sessions: [...sessions.values()].filter((s) => s.sid && s.cwd).map((s) => ({ id: s.id, sid: s.sid, name: s.title || s.name, dir: tilde(s.cwd), status: s.status })) });
+  sessions: [...sessions.values()].filter((s) => s.sid && s.cwd).map((s) => ({ id: s.id, sid: s.sid, name: s.title || s.name, dir: tilde(s.cwd), status: s.status, cache: cacheOut(s) })) });
+
+/* ---------- what eats the plan (server/otel.mjs): Claude Code's own telemetry, received at /v1/metrics and /v1/logs
+   ----------
+   A session's folder comes from the hooks while it is open, else from the start of its transcript (one read per
+   session, once a minute at most). */
+function transcriptCwd(sid) {
+  if (!/^[\w-]{8,80}$/.test(sid)) return '';
+  const root = path.join(CLAUDE_DIR, 'projects');
+  let dirs = []; try { dirs = fs.readdirSync(root); } catch { return ''; }
+  for (const d of dirs) {
+    const f = path.join(root, d, `${sid}.jsonl`);
+    if (!fs.existsSync(f)) continue;
+    const buf = Buffer.alloc(65536); let n = 0;
+    try { const fd = fs.openSync(f, 'r'); try { n = fs.readSync(fd, buf, 0, buf.length, 0); } finally { fs.closeSync(fd); } } catch { return ''; }
+    const m = /"cwd":"((?:[^"\\]|\\.)*)"/.exec(buf.toString('utf8', 0, n));
+    try { return m ? JSON.parse(`"${m[1]}"`) : ''; } catch { return ''; }
+  }
+  return '';
+}
+const otel = createOtel({ dir: path.join(DATA_DIR, 'otel'), cwdOf: (sid) => bySid(sid)?.cwd || transcriptCwd(sid) });
+// The panel's numbers: today or the last 7 days, the 40 sessions that cost most (the rest in one line, so they still add
+// up), and the plan's week as an exchange rate: the % of the weekly limit used so far over what was counted since that
+// week began (≈, whole days), when there is enough of both to mean something.
+function burnOut(range) {
+  const r = otel.report(range === '7d' ? '7d' : 'today');
+  let settings = {}; try { settings = JSON.parse(fs.readFileSync(path.join(CLAUDE_DIR, 'settings.json'), 'utf8')); } catch { /* none */ }
+  const w = (planLimits?.windows || []).find((x) => x.key === 'weekly');
+  let plan = null;
+  if (w && w.pct >= 1 && w.resetsAt > Date.now()) { const usd = otel.usdSince(w.resetsAt - 7 * 86400e3); if (usd >= 0.5) plan = { pct: w.pct, resetsAt: w.resetsAt, perUsd: w.pct / usd, name: planLimits.account?.plan || '' }; }
+  const shown = r.sessions.slice(0, 40), rest = r.sessions.slice(40);
+  const named = (x) => { const s = bySid(x.sid); return { ...x, name: s ? s.title || s.name : '', open: !!s, dir: tilde(x.cwd), cwd: undefined }; };
+  return { ok: true, ...r, sessions: shown.map(named), rest: { n: rest.length, usd: rest.reduce((a, x) => a + x.usd, 0), share: rest.reduce((a, x) => a + x.share, 0) },
+    projects: r.projects.map((p) => ({ ...p, dir: tilde(p.cwd), cwd: undefined })), setup: otelOwner({ settings, managed: managedEnvs() }).state, plan };
+}
+
+/* Giving work to a conversation or a project ("Gửi tới", 📋 Giao việc), from the chat, a phone, or a note kept for when
+   a conversation is done: [status, reply]. who: 'mac', 'phone <ip>' or 'queued', for the log. */
+async function giveWork(b, who) {
+  // who it goes to: a conversation the office knows (carried on itself, the very one), or a project folder (a new
+  // conversation there, or the one you started there); one way for both the chat's "Gửi tới" and 📋 Giao việc
+  if (!isClaudeRequest(b)) return [403, { ok: false, code: 'agentReadOnly' }];
+  const target = b?.id ? agents.resolveForControl(String(b.id), 'startTask') : null;
+  if (b?.id && (!target || (b.sid && String(b.sid) !== target.session.sid))) return [403, { ok: false, code: 'agentReadOnly' }];
+  const s = target?.session || (b?.sid && [...sessions.values()].find((x) => x.sid === String(b.sid) && x.cwd));
+  // An explicit session target may not fall back to launching a new task in a directory.
+  if ((b?.id || b?.sid) && (!s?.sid || !s.cwd)) return [400, { ok: false, code: 'noDir', message: tr('chat.task.noDir') }];
+  const want = String(b?.dir || '').replace(/^~(?=$|\/)/, os.homedir()), pdir = !s && (knownDirs.find((d) => d === want) || stranded.dirOf(want));   // (or a worktree the Mac panel listed, "Giao Claude làm nốt")
+  if (!s && !pdir) return [400, { ok: false, code: 'noDir', message: tr('chat.task.noDir') }];
+  const text = String(b?.text || '').trim().slice(0, 4000), images = (Array.isArray(b?.images) ? b.images : []).slice(0, 4).map(String);
+  if (!text) return [400, { ok: false, code: 'empty' }];
+  const name = s ? s.title || s.name : path.basename(pdir), key = s ? s.sid : `dir:${pdir}`, th = threads.get(key);
+  if (th?.running) return [409, { ok: false, code: 'busy', message: tr('chat.task.threadBusy', { name }) }];
+  let from;
+  if (s) {   // the conversation itself: open in the editor and resting, it is closed there first; at work there: not now
+    const open = s.pid && !s.parked;
+    if (open && (s.status !== 'rest' || s.busy || [...pending.values()].some((p) => p.sess === s.id))) return [409, { ok: false, code: 'macBusy', message: tr('chat.task.macBusy', { name }) }];
+    // (a background session resting: stopped, its conversation kept, then carried on; with background sessions on,
+    // server/tasks.mjs does that itself and wakes it in the background again)
+    if (open && s.jobId) { if (!bgOn() && !(await stopBgSession(s))) return [409, { ok: false, code: 'macOpen', message: tr('server.move.failed') }]; }
+    else if (open) { const pk = await parkForPhone(s); if (!pk.ok) return [409, { ok: false, code: 'macOpen', message: pk.message }]; }
+    from = { sid: s.sid, fork: false, name, id: s.id, orig: key, chat: true, acct: acctOf(s) || '' };
+  } else {   // a project: a new conversation, or the one you started there (for 6 hours; ＋ asks for a new one)
+    const on = th?.sid && !b.fresh && Date.now() - th.at < 6 * 3600e3 ? th.sid : null;
+    const live = on && bySid(on);   // (that one opened on the Mac since, `claude attach`, and at work there: it waits)
+    if (live?.pid && (live.status !== 'rest' || live.busy)) return [409, { ok: false, code: 'macBusy', message: tr('chat.task.macBusy', { name: live.title || live.name }) }];
+    from = { sid: on, fork: false, name, orig: key, chat: true };
+  }
+  chat.say('me', `@${name} ${text}`, { now: true, long: true });
+  const mine = chat.state.msgs.at(-1);
+  for (const img of images) if (/^data:image\/jpeg;base64,/.test(img) && img.length < 500_000) chat.photo(img);
+  const r = tasks.start({ dir: s ? s.cwd : pdir, text, images, from, env: s ? acctEnv(from.acct) : null, system: SHOT_ASK, stopAfter: s?.entry === 'claude-vscode' });   // (one from your editor goes back to it alone)
+  if (r.ok) {
+    threads.set(key, { sid: from.sid, at: Date.now(), running: true });
+    if (s) s.viaOffice = r.task.id;
+    const card = chat.workCard(s ? s.id : 'claude', { state: 'work', steps: [], n: 0, at: Date.now(), task: r.task.id });   // (task: its Stop button)
+    if (card) cards.set(r.task.id, { id: card.id, steps: [], n: 0, at: Date.now(), timer: 0 });
+    taskQuote.set(r.task.id, mine ? { id: mine.id, name: tr('chat.boss'), text: clip(text, 90) } : null);
+  } else chat.system(tr('chat.task.notStarted', { why: tr(`chat.task.why.${r.code}`) }));
+  fsp.appendFile(ACTION_LOG, `${new Date().toISOString()} message ${who} ${s ? `${s.sid}${from.acct ? ` on ${from.acct}` : ''}` : from.sid ? `carry ${from.sid}` : `new in ${pdir}`} ${r.ok ? 'started' : r.code} ${clip(oneLine(text), 100)}\n`).catch(() => {});
+  return [r.ok ? 200 : 409, r.ok ? { ok: true, task: r.task } : { ok: false, code: r.code, message: tr(`chat.task.why.${r.code}`) }];
+}
+
+/* ---------- "Chen lời giữa chừng" (server/steer.mjs): a note into a conversation while it works ----------
+   POST /api/tasks/steer { task | sid | dir, text }: a run the office started (its card), a conversation (its session id),
+   or the one the office carries on in a project. Into its inbox now when it can take one (Claude reads it between two
+   steps); otherwise kept, one per conversation (what you add joins it), and sent as an ordinary message once it is done. */
+const steerLater = new Map();   // threads' key (a session id, or 'dir:' a project) -> { body, text, name, at }
+async function steerTo(b, who) {
+  if (!isClaudeRequest(b)) return [403, { ok: false, code: 'agentReadOnly' }];
+  const target = b?.id ? agents.resolveForControl(String(b.id), 'startTask') : null;
+  if (b?.id && (!target || (b.sid && String(b.sid) !== target.session.sid))) return [403, { ok: false, code: 'agentReadOnly' }];
+  const text = String(b?.text || '').trim().slice(0, 2000);
+  if (!text) return [400, { ok: false, code: 'empty' }];
+  const want = String(b?.dir || '').replace(/^~(?=$|\/)/, os.homedir()), pdir = !b?.sid && knownDirs.find((d) => d === want);
+  let t = b?.task ? tasks.get(String(b.task)) : b?.sid ? tasks.of(String(b.sid)) : pdir ? tasks.byKey(`dir:${pdir}`) : null;
+  const key = t?.from?.orig || (b?.sid ? String(b.sid) : pdir ? `dir:${pdir}` : null);
+  if (!t && key) t = tasks.byKey(key);
+  const s = (t?.sid && bySid(t.sid)) || (b?.sid && bySid(String(b.sid))) || (key?.startsWith('dir:') && threads.get(key)?.sid && bySid(threads.get(key).sid)) || null;
+  const name = t?.from?.name || (s && (s.title || s.name)) || (pdir && path.basename(pdir)) || 'Claude';
+  if (!t && !(s?.pid && (s.status !== 'rest' || s.busy))) return [409, { ok: false, code: 'notBusy', message: tr('chat.steer.notBusy', { name }) }];
+  const inbox = t?.inbox || s?.inbox || null, acct = s && acctOf(s);
+  const can = steerable({ inbox, mode: s?.mode || '', inbound: inboundFrom({ configDir: t?.env?.CLAUDE_CONFIG_DIR || (acct ? dirOfSlug(acct) : CLAUDE_DIR), cwd: s?.cwd || t?.dir }), isSocket });
+  chat.say('me', `💬 @${name} ${text}`, { now: true, long: true });
+  const now = can.ok && await deliver(inbox, tr('server.steer.note', { text }));
+  fsp.appendFile(ACTION_LOG, `${new Date().toISOString()} note ${who} ${t ? `task ${t.id}` : s?.sid || key} ${now ? 'delivered' : `kept (${can.ok ? 'failed' : can.why})`} ${clip(oneLine(text), 100)}\n`).catch(() => {});
+  if (now) {
+    if (t) cardStep(t.id, `💬 ${clip(redact(oneLine(text)), 70)}`);
+    chat.system(tr('chat.steer.sent', { name }));
+    return [200, { ok: true, how: 'now' }];
+  }
+  const why = can.ok ? 'failed' : can.why, k = key || s?.sid;
+  if (!k) return [409, { ok: false, code: 'notBusy', message: tr('chat.steer.notBusy', { name }) }];
+  const was = steerLater.get(k);
+  steerLater.set(k, { body: k.startsWith('dir:') ? { dir: k.slice(4) } : { sid: k }, text: clip(was ? `${was.text}\n${text}` : text, 4000), name, at: Date.now() });
+  for (const [x, v] of steerLater) if (steerLater.size > 8 || Date.now() - v.at > 6 * 3600e3) steerLater.delete(x);   // (a few, for a few hours)
+  chat.system(tr('chat.steer.later', { name, why: tr(`chat.steer.why.${why}`) }));
+  return [200, { ok: true, how: 'later', why }];
+}
+// a kept note, sent as an ordinary message now that its conversation is done (not if it is busy again: then said so)
+async function sendLater(key) {
+  const x = steerLater.get(key); if (!x) return;
+  steerLater.delete(key);
+  const [code, out] = await giveWork({ ...x.body, text: x.text }, 'queued').catch(() => [500, {}]);
+  if (code !== 200) chat.system(tr('chat.steer.notSent', { name: x.name, why: out?.message || tr('drawer.unreachable') }));
+}
 
 /* ---------- the project folders sessions have worked in: where "Giao việc" may start a new conversation (a phone
    picks one of these, never a path of its own); the last 30, kept in data/projects.json ---------- */
@@ -723,6 +911,8 @@ async function doScan() {
     const name = j.name || base(j.cwd) || 'claude';
     if (s.name !== name || s.cwd !== j.cwd || s.link !== link) { s.name = name; s.cwd = j.cwd || ''; s.link = link; changed = true; noteDir(s.cwd); }
     s.pid = j.pid; s.fromFile = true; s.busy = j.status === 'busy'; s.entry = j.entrypoint || '';
+    s.jobId = j.kind === 'bg' && /^[0-9a-f]{6,16}$/.test(j.jobId || '') ? j.jobId : null;   // (a background session: `claude stop` / `attach` take this)
+    s.inbox = typeof j.messagingSocketPath === 'string' && j.messagingSocketPath ? j.messagingSocketPath : null;   // (where a note reaches it while it works: server/steer.mjs)
     // Claude's own session file says busy: trust it even if we missed the hook (e.g. the server restarted mid-turn).
     if (s.busy && s.status === 'rest') { s.status = 'work'; if (!s.taskStart) s.taskStart = j.statusUpdatedAt || Date.now(); s.lastEventAt = Math.max(s.lastEventAt, Date.now()); changed = true; }
     if (changed) broadcast({ k: 'sess', s: pub(s) });
@@ -829,6 +1019,7 @@ async function onHook(p) {
   lastHookAt = Date.now();
   const ev = p.hook_event_name, sid = p.session_id;
   if (!ev || !sid) return;
+  const loopSig = loops.onEvent(p);   // (at once, before anything awaited: the next call's check must already know)
   rollDay();
   let s = bySid(sid);
   if (!s) { await scanSessions(); s = bySid(sid); }
@@ -843,7 +1034,10 @@ async function onHook(p) {
   s.lastEventAt = now;
   { const day = new Date(now).toLocaleDateString('sv'); if (ev !== 'SessionEnd' && s.dayFirst?.day !== day) s.dayFirst = { day, at: now }; }   // (its first sign of life each day: the lobby's attendance terminal)
   if (p.transcript_path) s.transcript = p.transcript_path;
-  { const run = runOf(sid, p.cwd, now); if (run && !s.viaOffice) s.viaOffice = run.id; }   // (a run from the office: its card tells it)
+  if (ev !== 'SessionEnd') projectOf(s.cwd || p.cwd).then((name) => tenure.touch(name, { at: now, turn: ev === 'Stop', cwd: s.cwd || p.cwd })).catch(() => {});   // (its project's working life: server/tenure.mjs)
+  if (typeof p.permission_mode === 'string') s.mode = p.permission_mode;   // (one that skips permission prompts holds notes from elsewhere: server/steer.mjs)
+  const run = runOf(sid, p.cwd, now); if (run && !s.viaOffice) s.viaOffice = run.id;   // (a run from the office: its card tells it)
+  const bgTask = run?.mode === 'bg' ? run : null;   // (a background session: its card's steps and its answer come from here)
   const agent = p.agent_id || null;
   if (agent && ev !== 'SubagentStop') ensureSub(s, agent, p.agent_type, now).seenAt = now;
   const prevStatus = s.status;
@@ -851,11 +1045,14 @@ async function onHook(p) {
   let toFeed = true;
   const mk = (type, label = '', extra = {}) => ({ id: ++seq, ts: now, sess: s.id, name: s.name, type, label, ...extra });
   const toolCallId = typeof p.tool_use_id === 'string' && /^[A-Za-z0-9._:-]{1,160}$/.test(p.tool_use_id) ? p.tool_use_id : null;
+  let after = null;   // (a background session's turn over: its task settled once this event is out, still as the office's)
 
   switch (ev) {
-    case 'SessionStart':
+    case 'SessionStart': {
       e = mk('start', p.source || '');
+      const c = cacheFromResume(p, ttlGuess(), now); if (c) { s.cache = c; s.cacheExact = false; }   // (resumed: cold or not, from Claude Code; the status line takes over after its first answer)
       break;
+    }
     case 'SessionEnd':
       e = mk('end', p.reason || '');
       if (!s.fromFile) setTimeout(() => dropSession(s.key, s), 1500);
@@ -878,6 +1075,7 @@ async function onHook(p) {
       if (runner) Object.assign(c, { type: 'test', runner });
       if (!agent) { if (s.status === 'rest' && !s.taskStart) s.taskStart = now; s.status = 'work'; s.inTool = true; s.last = { type: c.type, label: c.label }; }
       else { const x = s.subs[agent]; if (x) { x.last = { type: c.type, label: c.label }; x.steps++; } }   // (it may have stopped while the call was being read)
+      if (bgTask && !agent) cardStep(bgTask.id, stepOf(p.tool_name, p.tool_input || {}));
       const img = imageId(c.file);
       e = mk(c.type, c.label, { desc: c.desc, agent, agentType: p.agent_type || null, quiet: !!agent, ...(toolCallId ? { toolCallId, phase: 'running' } : {}), ...(c.runner ? { runner: c.runner } : {}), ...(img ? { img } : {}) });
       if (agent) toFeed = false;
@@ -891,7 +1089,8 @@ async function onHook(p) {
       const m = p.tool_name === 'Bash' && DEPLOY_RE.exec(String(p.tool_input?.command || ''));
       if (m) { stats.deploy++; dirty = true; trophies.bump('deploy'); e = mk('deploy', m[1]); }
       const runner = !e && p.tool_name === 'Bash' && testRunner(p.tool_input?.command);
-      if (runner) { e = mk('testok', runner, { agent, quiet: !!agent }); if (agent) toFeed = false; }
+      // (with how many passed: the pickleball court's point, src/office/world/backdrops/street-pickle.js)
+      if (runner) { const r = p.tool_response, n = testCounts(typeof r === 'string' ? r : r && typeof r === 'object' ? `${r.stdout || ''}\n${r.stderr || ''}` : ''); e = mk('testok', runner, { agent, quiet: !!agent, ...(n || {}) }); if (agent) toFeed = false; }
       break;
     }
     case 'PostToolUseFailure': {
@@ -899,7 +1098,7 @@ async function onHook(p) {
       if (s.status === 'wait') s.status = 'work';
       const c = await classifyVi(p.tool_name, p.tool_input), runner = p.tool_name === 'Bash' && testRunner(p.tool_input?.command);
       // (a failing test run is the test board's red lamp, not a failure that counts towards an incident)
-      e = runner ? mk('testfail', runner, { agent, quiet: !!agent }) : mk('fail', c.label || p.tool_name || '', { agent, quiet: !!agent });
+      e = runner ? mk('testfail', runner, { agent, quiet: !!agent, ...(testCounts(p.error) || {}) }) : mk('fail', c.label || p.tool_name || '', { agent, quiet: !!agent });
       if (agent) toFeed = false;
       break;
     }
@@ -928,11 +1127,15 @@ async function onHook(p) {
     }
     case 'Stop':
       setTimeout(() => refreshTitle(s), 4000); usageAfterTurn();
+      if (steerLater.has(sid) && !tasks.of(sid)) setTimeout(() => sendLater(sid), 2000);   // (a note that couldn't get in while it worked: now; a run's own: when it ends)
       s.inTool = false;
       s.status = 'rest'; s.doneAt = now;
+      if (!s.cacheExact) s.cache = cacheGuess(now, s.live?.ctx ?? s.usage?.ctx, ttlGuess());   // (no prompt_cache from the status line: the documented lifetime from now)
+      s.askedYou = /\?\W{0,4}$/.test(String(p.last_assistant_message || '').trim().slice(-400));   // (it ended its turn asking you something: the nudge below)
       trackBackground(s, p);
       s.lastReply = clip(redact(oneLine(typeof p.last_assistant_message === 'string' ? p.last_assistant_message : await lastReplyOf(s))), 240);
       e = mk('stop', clip(s.lastReply, 90));
+      if (bgTask) { const said = typeof p.last_assistant_message === 'string' ? p.last_assistant_message : await lastReplyOf(s); after = () => tasks.settle(bgTask.id, { result: said }); }   // (its whole answer)
       break;
     case 'StopFailure': {
       s.status = 'rest';
@@ -941,6 +1144,7 @@ async function onHook(p) {
       if (out) autoMoveSoon(acct);   // (with switching on, this conversation and the others resting on it move over)
       const moves = out?.to && prefs.get('autoMove') !== false && s.entry === 'claude-vscode' && untilOf(acct) - Date.now() >= 15 * 60e3;
       e = mk('fail', !out ? tr('server.event.modelError') : out.to ? tr(moves ? 'server.event.limitMove' : 'server.event.limitSwitch', { to: out.to }) : tr('server.event.limitHit'), { limit: !!out });
+      if (bgTask) after = () => tasks.settle(bgTask.id, { error: String(p.last_assistant_message || p.error || 'error') });
       break;
     }
     case 'PreCompact':
@@ -949,6 +1153,7 @@ async function onHook(p) {
     default:
       return;
   }
+  if (loopSig) onLoop(s, loopSig);
   if (e) {
     if (toFeed) pushFeed(e);
     broadcast({ k: 'ev', e, s: pub(s), stats });
@@ -961,6 +1166,7 @@ async function onHook(p) {
   if (toolCallId && (ev === 'PostToolUse' || ev === 'PostToolUseFailure')) {
     broadcast({ k: 'stats', stats, s: pub(s), post: agent || 'main', toolCallId, phase: ev === 'PostToolUseFailure' ? 'error' : 'completed' });
   }
+  after?.();
 }
 
 /* ---------- conversation view ---------- */
@@ -1150,7 +1356,11 @@ const lockMsg = (until) => tr('server.pin.locked', { n: Math.max(1, Math.ceil((u
    A synchronous PermissionRequest hook (curl, at most 50 s) posts here. The request is held only while an office page
    has focus: pages report focus every 2 s and on blur, so a prompt in the IDE or terminal is never held up by a page
    nobody is looking at. Unanswered after 45 s, the page blurred, or the hook went away: the reply is empty and Claude
-   Code shows its own prompt as usual. "Always allow" echoes Claude Code's own suggestion back (documented). */
+   Code shows its own prompt as usual. "Always allow" echoes Claude Code's own suggestion back (documented).
+   A phone's work running as a background session has a hook of its own that waits (`?long=1`, server/bg-sessions.mjs):
+   held with no deadline until answered (on the phone, in the office), whoever looks; its usual hook is answered at once.
+   OFFICE_HOLD_MS shortens the 45 s for the tests. */
+const HOLD_MS = Math.min(45_000, Number(process.env.OFFICE_HOLD_MS) || 45_000);
 const presence = new Map();   // page id -> { focused, at }
 const officeFocused = () => { const now = Date.now(); for (const p of presence.values()) if (p.focused && now - p.at < 5000) return true; return false; };
 const pending = new Map();    // request id -> held request
@@ -1181,22 +1391,29 @@ function ruleText(sug) {
   const where = ['session', 'localSettings', 'projectSettings', 'userSettings'].includes(sug.destination) ? tr(`server.rule.${sug.destination}`) : '';
   return `${r0.toolName}${r0.ruleContent ? `(${clip(redact(r0.ruleContent), 60)})` : ''} ${where}`.trim();
 }
-async function onPermission(p, res) {
+// a phone's work running as a background session: which of its two hooks this is decides who answers (see above)
+function longHold(p, long) {
+  const t = tasks.of(p?.session_id), bg = t?.mode === 'bg' ? t : null;
+  if (long) return bg ? { task: bg } : { skip: true };   // (its settings, but not a phone's work now: Claude Code goes on as usual)
+  return bg?.hooked ? { skip: true } : {};   // (its long-waiting hook carries this one)
+}
+async function onPermission(p, res, long = false) {
+  const lh = longHold(p, long); if (lh.skip) { res.writeHead(200).end(''); return; }
   // a run started from the office (a phone's work) may wait for a phone to answer even with no office open: they get a push
   const ours = !!p?.session_id && push.count() > 0 && !!prefs.get('phoneApprove') && tasks.list().some((t) => t.sid === p.session_id || t.from?.sid === p.session_id);
-  if (!p || !p.session_id || ASK_TOOLS.has(p.tool_name) || (!officeFocused() && !ours)) { res.writeHead(200).end(''); return; }
+  if (!p || !p.session_id || ASK_TOOLS.has(p.tool_name) || (!officeFocused() && !ours && !long)) { res.writeHead(200).end(''); return; }
   let s = bySid(p.session_id); if (!s) { await scanSessions(); s = bySid(p.session_id); }
   const c = await classifyVi(p.tool_name, p.tool_input);
   const suggestion = Array.isArray(p.permission_suggestions) ? p.permission_suggestions.find((x) => x && x.type === 'addRules' && x.behavior === 'allow') || null : null;
   const id = crypto.randomUUID(), now = Date.now();
   const entry = { id, res, sess: s?.id || null, name: s?.name || base(p.cwd) || 'claude', tool: p.tool_name, type: c.type, label: c.label, detail: permDetail(p),
-    remember: suggestion ? ruleText(suggestion) : null, suggestion, at: now, until: now + 45_000 };
-  entry.timer = setTimeout(() => settlePerm(id), 45_000);
+    remember: suggestion ? ruleText(suggestion) : null, suggestion, at: now, until: long ? 0 : now + HOLD_MS, long, task: lh.task?.id || null };
+  if (!long) entry.timer = setTimeout(() => settlePerm(id), HOLD_MS);   // (the long one: until answered, or its hook gives up)
   pending.set(id, entry);
   res.on('close', () => { if (pending.get(id) === entry) { pending.delete(id); clearTimeout(entry.timer); broadcast({ k: 'permDone', id }); } });
   if (s && s.status !== 'wait') { s.status = 'wait'; broadcast({ k: 'sess', s: pub(s) }); }
   broadcast({ k: 'perm', p: permPub(entry) });
-  if (ours) pushOut({ title: tr('server.push.permTitle', { name: entry.name }), body: clip(`${c.label}: ${oneLine(entry.detail)}`, 180), tag: `perm-${id}`, url: '/', urgent: true });
+  if (ours || (long && prefs.get('phoneApprove'))) pushOut({ title: tr('server.push.permTitle', { name: entry.name }), body: clip(`${c.label}: ${oneLine(entry.detail)}`, 180), tag: `perm-${id}`, url: '/', urgent: true });
   { const run = tasks.list().find((t) => t.sid === p.session_id || t.from?.sid === p.session_id), card = run && cards.get(run.id);
     if (card) { card.wait = clip(`${c.label}: ${oneLine(entry.detail)}`, 120); chat.setWork(card.id, { state: 'wait', ask: card.wait, perm: id, risky: !!dangerKey(entry), steps: card.steps, n: card.n });   // (perm: its Allow / Deny buttons)
       res.on('close', () => { if (cards.get(run.id) === card) { card.wait = null; chat.setWork(card.id, { state: 'work', ask: null, perm: null }); } }); } }
@@ -1209,11 +1426,12 @@ async function onPermission(p, res) {
    (question text -> chosen label, several labels joined with ", "). A plan is approved by allowing ExitPlanMode, or
    sent back with your note by denying it. The page sends indexes; texts are taken from the original input here. */
 const ASK_TOOLS = new Set(['AskUserQuestion', 'ExitPlanMode']);
-async function onQuestion(p, res) {
-  if (!p || !p.session_id || !ASK_TOOLS.has(p.tool_name) || !officeFocused()) { res.writeHead(200).end(''); return; }
+async function onQuestion(p, res, long = false) {
+  const lh = longHold(p, long); if (lh.skip) { res.writeHead(200).end(''); return; }
+  if (!p || !p.session_id || !ASK_TOOLS.has(p.tool_name) || (!officeFocused() && !long)) { res.writeHead(200).end(''); return; }
   let s = bySid(p.session_id); if (!s) { await scanSessions(); s = bySid(p.session_id); }
   const i = p.tool_input || {}, id = crypto.randomUUID(), now = Date.now(), txt = (v, n) => clip(redact(oneLine(v)), n);
-  const entry = { id, res, sess: s?.id || null, name: s?.name || base(p.cwd) || 'claude', tool: p.tool_name, input: i, at: now, until: now + 45_000 };
+  const entry = { id, res, sess: s?.id || null, name: s?.name || base(p.cwd) || 'claude', tool: p.tool_name, input: i, at: now, until: long ? 0 : now + HOLD_MS, long, task: lh.task?.id || null };
   if (p.tool_name === 'AskUserQuestion') {
     const qs = Array.isArray(i.questions) ? i.questions.slice(0, 4) : [];
     if (!qs.length) { res.writeHead(200).end(''); return; }
@@ -1225,11 +1443,18 @@ async function onQuestion(p, res) {
     Object.assign(entry, { kind: 'plan', type: 'plan', label: tr('server.tool.plan') });
     entry.plan = clip(redact(String(i.plan || '')), 20000); entry.detail = clip(oneLine(entry.plan), 200);
   }
-  entry.timer = setTimeout(() => settlePerm(id), 45_000);
+  if (!long) entry.timer = setTimeout(() => settlePerm(id), HOLD_MS);
   pending.set(id, entry);
   res.on('close', () => { if (pending.get(id) === entry) { pending.delete(id); clearTimeout(entry.timer); broadcast({ k: 'permDone', id }); } });
   if (s && s.status !== 'wait') { s.status = 'wait'; broadcast({ k: 'sess', s: pub(s) }); }
   broadcast({ k: 'perm', p: permPub(entry) });
+  // a phone's work asking (a background session): its card says so, answered where approvals are; a push if nobody looks
+  const card = lh.task && cards.get(lh.task.id);
+  if (card) {
+    card.wait = clip(`${entry.label}: ${oneLine(entry.detail)}`, 120); chat.setWork(card.id, { state: 'wait', ask: card.wait, perm: null, steps: card.steps, n: card.n });
+    res.on('close', () => { if (cards.get(lh.task.id) === card) { card.wait = null; chat.setWork(card.id, { state: 'work', ask: null, perm: null }); } });
+    if (prefs.get('phoneApprove')) pushOut({ title: tr('server.push.permTitle', { name: entry.name }), body: clip(oneLine(entry.detail), 180), tag: `perm-${id}`, url: '/', urgent: true });
+  }
 }
 // The reply for a question card: `answers` from the page is [{ q, pick: [option indexes], other }].
 function askDecision(p, b) {
@@ -1249,6 +1474,80 @@ function planDecision(p, choice, note) {
   const why = oneLine(note).slice(0, 1000);
   return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: why ? tr('server.perm.planReviseWhy', { why }) : tr('server.perm.planRevise') } };
 }
+
+/* ---------- "Ngắt vòng lặp kẹt": a session going round in circles (server/loops.mjs) ----------
+   The async hooks and the status line feed it; a synchronous PreToolUse hook (curl, 0.3 s at most, nothing printed
+   when the office is down or slow: the call goes ahead) posts each call to /hook/loop, which answers at once. The Nth
+   identical failure makes the next identical call denied with a reason Claude reads; the person's name tag goes red,
+   a card in the chat says what repeats (Stop, a hint for Claude), and phones get a notification. The other two signs
+   (compaction after compaction, cost rising with nothing edited) are only shown. Settings → More turns it off. */
+const loopConfig = () => ({ ...LOOP_DEFAULTS, ...(prefs.get('loopGuard') || {}) });
+// the call in a few words, as the card and the reason show it: a command as typed, else the tool and its file
+const loopLabel = (name, i = {}) => clip(redact(oneLine(name === 'Bash' || name === 'PowerShell' ? i.command
+  : `${name}${i.file_path || i.notebook_path ? ` ${base(i.file_path || i.notebook_path)}` : i.url ? ` ${host(i.url)}` : i.pattern || i.query ? ` ${i.pattern || i.query}` : ''}`)), 60);
+const loops = createLoopGuard({ config: loopConfig, labelOf: loopLabel });
+let loopHookAt = 0;   // (the synchronous hook heard from: Settings says to run install again when it never was)
+const loopCards = new Map();   // session id -> its card in the chat (the last 16)
+const loopRun = (s) => (s.viaOffice && tasks.list().find((t) => t.id === s.viaOffice)) || (s.sid && runOf(s.sid, s.cwd)) || null;   // (a run from the office: Stop stops it)
+function loopLine(st, name) {
+  const usd = st.usd != null ? `$${st.usd.toFixed(2)}` : '';
+  return tr(`chat.loop.${st.kind}`, { name, label: `\`${st.label || ''}\``, n: st.n, next: (st.n || 0) + (st.blocked || 0), blocked: st.blocked || 0, mins: st.mins, usd });
+}
+function onLoop(s, sig) {
+  if (!s || !sig) return;
+  const card = loopCards.get(s.id), name = s.title || s.name;
+  const setCard = (loop) => { if (card) chat.setLoop(card.id, loop); };
+  if (sig.type === 'fire') {
+    const st = sig.stuck, run = loopRun(s);
+    if (card && ['on', 'stopping'].includes(chat.byId(card.id)?.loop?.state)) setCard({ state: 'over', why: 'again' });   // (stuck another way: the new card below says how)
+    s.stuck = { kind: st.kind, label: st.label || '', n: st.n || 0, blocked: st.blocked || 0, usd: st.usd ?? null, mins: st.mins || 0, at: st.at };
+    broadcast({ k: 'sess', s: pub(s) });
+    const m = chat.loopCard(s.id, { ...s.stuck, state: 'on', hint: sig.hint ? 'got' : null, sess: s.id, task: run?.id || null });
+    if (m) { loopCards.delete(s.id); loopCards.set(s.id, { id: m.id }); if (loopCards.size > 16) loopCards.delete(loopCards.keys().next().value); }
+    pushOut({ title: tr('server.loop.pushTitle', { name }), body: clip(loopLine(s.stuck, name), 180), tag: `loop-${s.id}`, url: '/?chat' });
+    fsp.appendFile(ACTION_LOG, `${new Date().toISOString()} stuck ${st.kind} ${s.sid} ${clip(oneLine(st.label || ''), 80)}${st.blocked ? ' (denied)' : ''}\n`).catch(() => {});
+  } else if (sig.type === 'blocked') {
+    if (s.stuck) { s.stuck.blocked = sig.stuck.blocked; broadcast({ k: 'sess', s: pub(s) }); }
+    setCard({ blocked: sig.stuck.blocked, ...(sig.hint && { hint: 'got' }) });
+  } else if (sig.type === 'clear') {
+    s.stuck = null; broadcast({ k: 'sess', s: pub(s) });
+    if (card && chat.byId(card.id)?.loop?.state !== 'stopped') setCard({ state: 'over', why: sig.why, ...(sig.hintLost && { hint: 'lost' }) });
+  } else if (sig.type === 'hint') setCard({ hint: 'got' });
+  else if (sig.type === 'hintLost') setCard({ hint: 'lost' });
+  else if (sig.type === 'stopped') setCard({ state: 'stopped' });
+}
+// the reply to the synchronous hook: nothing (Claude Code decides as usual), a deny with its reason, your hint, or Stop
+function loopReply(p) {
+  const r = loops.check(p), hint = r.hint ? tr('server.loop.hintFor', { hint: r.hint }) : '';
+  const out = r.stop ? { continue: false, stopReason: tr('server.loop.stopReason') }
+    : r.deny ? { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: `${tr('server.loop.deny', { n: r.deny.n })}${hint ? `\n\n${hint}` : ''}` } }
+      : hint ? { hookSpecificOutput: { hookEventName: 'PreToolUse', additionalContext: hint } } : null;
+  return { out, sig: r.sig };
+}
+// Stop and a hint from the card (any page that may give work: the Mac, a phone when it is allowed)
+function loopAct(b, mac) {
+  const id = String(b?.id || ''), s = [...sessions.values()].find((x) => x.id === id); if (!s?.sid) return { ok: false, message: tr('server.loop.gone') };
+  const card = loopCards.get(s.id);
+  if (b.op === 'stop') {
+    const run = loopRun(s);
+    if (run) { const ok = tasks.stop(run.id); if (ok && card) chat.setLoop(card.id, { state: 'stopped' }); return { ok, how: 'task' }; }
+    if (s.status === 'rest') return { ok: false, code: 'resting', message: tr('server.loop.resting', { name: s.title || s.name }) };
+    loops.stop(s.sid); if (card) chat.setLoop(card.id, { state: 'stopping' });
+    fsp.appendFile(ACTION_LOG, `${new Date().toISOString()} stuck stop ${s.sid} from ${mac ? 'mac' : 'phone'}\n`).catch(() => {});
+    return { ok: true, how: 'next' };
+  }
+  if (b.op === 'hint') {
+    if (!mac && !prefs.get('phoneTasks')) return { ok: false, code: 'notAllowed', message: tr('chat.task.notAllowed') };
+    // a turn already over can't take it at its next step: the page carries the conversation on instead (POST /api/tasks)
+    if (s.status === 'rest') return { ok: false, code: 'resting', sid: s.sid };
+    if (!loops.hint(s.sid, oneLine(b.text))) return { ok: false, code: 'empty' };
+    if (card) chat.setLoop(card.id, { hint: 'sent' });
+    fsp.appendFile(ACTION_LOG, `${new Date().toISOString()} stuck hint ${s.sid} from ${mac ? 'mac' : 'phone'}\n`).catch(() => {});
+    return { ok: true };
+  }
+  return { ok: false };
+}
+const loopOut = () => ({ ok: true, ...loopConfig(), choices: { n: LOOP_N, min: LOOP_MIN }, hookAt: loopHookAt });
 
 /* ---------- plan usage from Claude Code's status line ----------
    bin/cli.mjs installs hooks/status-line.mjs as the statusLine command; it posts the documented fields here: the
@@ -1289,8 +1588,36 @@ function onStatus(p) {
   if (s) {
     const cw = p.context_window || {}, size = numOr(cw.context_window_size), pctUsed = numOr(cw.used_percentage);
     s.live = { at: statusAt, ctxMax: size, ctx: size && pctUsed != null ? Math.round((size * pctUsed) / 100) : null, cost: numOr(p.cost?.total_cost_usd) };
+    onLoop(s, loops.onStatus(p.session_id, p.cost, s.status !== 'rest'));
+    const c = p.prompt_cache && cacheFromStatus(p.prompt_cache, s.live.ctx);
+    if (c) {
+      const was = s.cache; s.cache = c; s.cacheExact = true;
+      // (at work the session's events carry it; resting, only a change worth redrawing: it went cold, or a new clock)
+      if (s.status !== 'work' && (!was || (was.until > 0) !== (c.until > 0) || Math.abs(was.until - c.until) > 60e3 || was.tokens !== c.tokens)) broadcast({ k: 'sess', s: pub(s) });
+    }
   }
 }
+
+/* ---------- the prompt cache's clock ("Đồng hồ bộ nhớ đệm", src/shared/cache-clock.js) ----------
+   Per session: until when its cache stays warm and what the next message re-reads once it is cold, from the status
+   line (prompt_cache), a resumed session's SessionStart, or, with neither, guessed from the end of its last turn and the
+   documented lifetime: an hour on a subscription (the plan's limits are known), five minutes otherwise. Optionally (off
+   unless you turn it on: Settings → More) a phone is told when a session waiting for your answer is about to go cold. */
+const ttlGuess = () => (planLimits?.windows?.length ? '1h' : '5m');
+const cacheOut = (s) => (s.cache ? { until: s.cache.until, ttl: s.cache.ttl, tokens: s.cache.tokens, guessed: !!s.cache.guessed } : null);
+const NUDGE_MS = 5 * 60e3;
+setInterval(() => {
+  if (!prefs.get('cacheNudge') || !push.count()) return;
+  const now = Date.now();
+  for (const s of sessions.values()) {
+    const k = cacheClock(s.cache, now);
+    // waiting for you: a question it ended its turn with, or one it holds open (a question, an approval)
+    const waits = s.status === 'wait' || (s.status === 'rest' && s.askedYou);
+    if (k.state !== 'warm' || k.left > NUDGE_MS || !waits || s.nudged === s.cache.until) continue;
+    s.nudged = s.cache.until;
+    pushOut({ title: tr('server.cache.nudgeTitle', { name: s.title || s.name, n: Math.max(1, Math.round(k.left / 60e3)) }), body: tr('server.cache.nudgeBody', { tokens: num(Math.round(k.tokens / 1000)) }), tag: `cache-${s.id}`, url: '/?chat' });
+  }
+}, 30_000).unref();
 
 /* ---------- plan usage read from Anthropic, the way the IDE's Usage panel does (allowed by the user, 27/10/2026) ----------
    Claude Code's own login is read from the macOS Keychain each time (never stored, logged or sent anywhere else), then
@@ -1826,6 +2153,27 @@ async function openWindow(s) {
   return new Promise((resolve) => execFile('open', args, { timeout: 8000 }, (err) => resolve(err ? { ok: false, message: tr('server.open.failed') } : { ok: true, app: path.basename(app, '.app') })));
 }
 
+/* ---------- "Việc bỏ quên": work left in the worktrees of the repositories sessions have worked in (server/stranded.mjs),
+   for the Mac panel; open one, give Claude the rest of it, or remove a worktree with nothing left in it ---------- */
+const within = (child, dir) => !!child && (child === dir || child.startsWith(dir + path.sep));
+const stranded = createStranded({
+  dirs: () => [...[...sessions.values()].map((s) => s.cwd), ...knownDirs],
+  // (a session open in it, or work given from the chat running there: never removed from under them)
+  inUse: (dir) => [...sessions.values()].some((s) => s.pid && within(s.cwd, dir)) || tasks.list().some((t) => within(t.dir, dir)),
+});
+// "Open": the window of a session working in that folder; else the app the latest session runs in (an editor opens the
+// folder, a terminal a window there); else the Finder (the file manager elsewhere)
+async function openFolder(dir) {
+  const open = [...sessions.values()].filter((s) => s.pid).sort((a, b) => (b.lastEventAt || 0) - (a.lastEventAt || 0));
+  const here = open.find((s) => within(s.cwd, dir));
+  if (here && process.platform === 'darwin') { const r = await openWindow(here); if (r.ok) return r; }
+  const done = (cmd, args, app) => new Promise((resolve) => execFile(cmd, args, { timeout: 8000 }, (err) => resolve(err ? { ok: false, message: tr('server.open.failed') } : { ok: true, app })));
+  if (process.platform === 'win32') return done('explorer.exe', [dir], 'Explorer');
+  if (process.platform !== 'darwin') return done('xdg-open', [dir], '');
+  const app = open[0] && await hostApp(open[0].pid);
+  return app ? done('open', ['-a', app, dir], path.basename(app, '.app')) : done('open', [dir], 'Finder');
+}
+
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
   if (url.pathname === '/ingest/omp/v1') {   // the OMP observer: telemetry only, loopback, a token per source, never a reply that acts
@@ -1847,14 +2195,43 @@ const server = http.createServer((req, res) => {
     });
     return;
   }
+  // Claude Code's OpenTelemetry export (OTLP/HTTP, JSON only): from this computer's own Claude Code, never a page (no
+  // Origin), never the tunnel or the LAN (isLoopback); 4 MB a request at most, gzip allowed (OTEL_EXPORTER_OTLP_COMPRESSION)
+  if (req.method === 'POST' && (url.pathname === '/v1/metrics' || url.pathname === '/v1/logs')) {
+    if (!isLoopback(req) || req.headers.origin) { res.writeHead(403).end(); return; }
+    if (!/^application\/json\b/i.test(String(req.headers['content-type'] || ''))) { req.resume(); res.writeHead(415, { 'Content-Type': 'application/json' }).end('{"error":"OTLP/HTTP JSON only: set OTEL_EXPORTER_OTLP_PROTOCOL=http/json"}'); return; }
+    const MAX = 4_000_000, chunks = []; let size = 0, over = false;
+    // (too big: answered at once and the connection closed, the rest of it never read)
+    const tooBig = () => { over = true; chunks.length = 0; res.writeHead(413, { Connection: 'close' }).end(); };
+    if (Number(req.headers['content-length']) > MAX) { tooBig(); return; }
+    req.on('data', (c) => { if (over) return; size += c.length; if (size > MAX) { tooBig(); req.destroy(); } else chunks.push(c); });
+    req.on('end', () => {
+      if (over) return;
+      let body = null;
+      try {
+        let raw = Buffer.concat(chunks);
+        if (/gzip/i.test(String(req.headers['content-encoding'] || ''))) raw = zlib.gunzipSync(raw, { maxOutputLength: 4 * MAX });
+        body = JSON.parse(raw.toString('utf8'));
+      } catch { res.writeHead(400, { 'Content-Type': 'application/json' }).end('{"error":"not OTLP JSON"}'); return; }
+      const wrong = url.pathname === '/v1/metrics' ? !body?.resourceMetrics : !body?.resourceLogs;
+      if (!wrong) otel.ingest(body);
+      res.writeHead(wrong ? 400 : 200, { 'Content-Type': 'application/json' }).end('{}');   // (an empty ExportMetricsServiceResponse / ExportLogsServiceResponse: all accepted)
+    });
+    return;
+  }
   if (req.method === 'GET' && url.pathname === '/api/doctor') {
     if (!isLoopback(req)) { res.writeHead(403).end(); return; }
-    json(res, 200, { uptime: Math.round((Date.now() - startedAt) / 1000), lastEventAt: lastHookAt, sessions: sessions.size, pending: pending.size, node: process.versions.node, statusAt, limitsAt: planLimits?.at || 0, limitsSource: planLimits?.source || null, usageNote: noteText(), agents: { omp: ompAvailability(), ompUsage: { enabled: OMP_USAGE_ON, state: ompUsageCollector.snapshot({ local: true }).state }, ompIssues: ompAdapter?.status().issues || [], diagnostics: agents.diagnostics() } });
+    json(res, 200, { uptime: Math.round((Date.now() - startedAt) / 1000), lastEventAt: lastHookAt, sessions: sessions.size, pending: pending.size, node: process.versions.node, statusAt, limitsAt: planLimits?.at || 0, limitsSource: planLimits?.source || null, usageNote: noteText(), otel: otel.info(), agents: { omp: ompAvailability(), ompUsage: { enabled: OMP_USAGE_ON, state: ompUsageCollector.snapshot({ local: true }).state }, ompIssues: ompAdapter?.status().issues || [], diagnostics: agents.diagnostics() } });
     return;
   }
   if (req.method === 'POST' && url.pathname === '/hook/question') {
     if (!isLoopback(req) || req.headers.origin) { res.writeHead(403).end(); return; }
-    readJson(req, 4_000_000).then((p) => onQuestion(p, res)).catch(() => { try { res.writeHead(200).end(''); } catch { /* gone */ } });
+    readJson(req, 4_000_000).then((p) => onQuestion(p, res, url.searchParams.get('long') === '1')).catch(() => { try { res.writeHead(200).end(''); } catch { /* gone */ } });
+    return;
+  }
+  if (req.method === 'POST' && url.pathname === '/hook/bind') {   // a session the office started, saying which it is and where its inbox is (server/bg-sessions.mjs)
+    if (!isLoopback(req) || req.headers.origin) { res.writeHead(403).end(); return; }
+    readJson(req, 200_000).then((p) => { tasks.bind({ job: String(req.headers['x-office-job'] || ''), task: url.searchParams.get('task') || '', sid: String(p?.session_id || ''), inbox: String(req.headers['x-office-inbox'] || '') }); res.writeHead(200).end('{}'); }).catch(() => { try { res.writeHead(200).end('{}'); } catch { /* gone */ } });
     return;
   }
   if (req.method === 'POST' && url.pathname === '/hook/status') {
@@ -1862,15 +2239,26 @@ const server = http.createServer((req, res) => {
     readJson(req, 200_000).then((p) => { onStatus(p); res.writeHead(200).end('{}'); }).catch(() => { try { res.writeHead(200).end('{}'); } catch { /* gone */ } });
     return;
   }
+  if (req.method === 'POST' && url.pathname === '/hook/loop') {   // every tool call, synchronously: answered at once, from memory
+    if (!isLoopback(req) || req.headers.origin) { res.writeHead(403).end(); return; }
+    loopHookAt = Date.now();
+    readJson(req, 4_000_000).then((p) => {
+      let r = null; try { r = p && loopReply(p); } catch (err) { console.error('loop', err); }
+      res.writeHead(200, { 'Content-Type': 'application/json' }).end(r?.out ? JSON.stringify(r.out) : '');
+      if (r?.sig) onLoop(bySid(p.session_id), r.sig);   // (after the answer: Claude Code isn't kept waiting for the chat)
+    }).catch(() => { try { res.writeHead(200).end(''); } catch { /* gone */ } });
+    return;
+  }
   if (req.method === 'POST' && url.pathname === '/hook/permission') {
     if (!isLoopback(req) || req.headers.origin) { res.writeHead(403).end(); return; }
-    readJson(req, 4_000_000).then((p) => onPermission(p, res)).catch(() => { try { res.writeHead(200).end(''); } catch { /* gone */ } });
+    readJson(req, 4_000_000).then((p) => onPermission(p, res, url.searchParams.get('long') === '1')).catch(() => { try { res.writeHead(200).end(''); } catch { /* gone */ } });
     return;
   }
   if (!hostAllowed(req)) { res.writeHead(421).end(); return; }
   // through the tunnel (the internet), only what a phone may send: the PIN (and a new one, with the one it has now), its
-  // answers to approvals (when the Mac allows them), the page's presence, the chat and work (when the Mac allows it). Everything else that changes something stays on the Mac and the home network.
-  if (req.viaTunnel && req.method !== 'GET' && req.method !== 'HEAD' && !['/pin', '/api/pin', '/api/perm', '/api/presence', '/api/chat', '/api/tasks', '/api/tasks/stop', '/api/push', '/api/quick'].includes(url.pathname)) { json(res, 403, { ok: false, message: tr('server.api.approveOnMac') }); return; }
+  // answers to approvals (when the Mac allows them), the page's presence, the chat and work (when the Mac allows it; the
+  // prompt helper's rewrite too). Everything else that changes something stays on the Mac and the home network.
+  if (req.viaTunnel && req.method !== 'GET' && req.method !== 'HEAD' && !['/pin', '/api/pin', '/api/perm', '/api/presence', '/api/chat', '/api/tasks', '/api/tasks/stop', '/api/tasks/steer', '/api/prompt/rewrite', '/api/push', '/api/quick', '/api/loop'].includes(url.pathname)) { json(res, 403, { ok: false, message: tr('server.api.approveOnMac') }); return; }
   if (url.pathname === '/pin' && (req.method === 'GET' || req.method === 'POST')) {
     const ip = clientIp(req);
     if (isLoopback(req) || cookieOk(req)) { res.writeHead(303, { Location: '/' }).end(); return; }
@@ -1907,7 +2295,7 @@ const server = http.createServer((req, res) => {
       if (url.pathname === '/api/presence') {
         const page = String(b.page || '').slice(0, 64);
         if (b.focused) presence.set(page, { focused: true, at: Date.now() }); else presence.delete(page);
-        if (!officeFocused()) for (const id of [...pending.keys()]) settlePerm(id);   // nobody is looking: give the prompt back
+        if (!officeFocused()) for (const [id, x] of [...pending]) if (!x.long) settlePerm(id);   // nobody is looking: give the prompt back (a background session's waits on)
         json(res, 200, { ok: true, pending: pending.size });
         return;
       }
@@ -2016,46 +2404,30 @@ const server = http.createServer((req, res) => {
         broadcast({ k: 'phone', approve: !!prefs.get('phoneApprove'), tasks: !!b?.on });
         json(res, 200, tasksOut(true)); return;
       }
-      if (url.pathname === '/api/tasks/stop') { json(res, 200, { ok: tasks.stop(String(b?.id || '')) }); return; }
-      if (url.pathname !== '/api/tasks') { json(res, 404, { ok: false }); return; }
-      if (!mac && !prefs.get('phoneTasks')) { json(res, 403, { ok: false, code: 'notAllowed', message: tr('chat.task.notAllowed') }); return; }
-      // who it goes to: a conversation the office knows (carried on itself, the very one), or a project folder (a new
-      // conversation there, or the one you started there); one way for both the chat's "Gửi tới" and 📋 Giao việc
-      if (!isClaudeRequest(b)) { json(res, 403, { ok: false, code: 'agentReadOnly' }); return; }
-      const target = b.id ? agents.resolveForControl(String(b.id), 'startTask') : null;
-      if (b.id && (!target || (b.sid && String(b.sid) !== target.session.sid))) { json(res, 403, { ok: false, code: 'agentReadOnly' }); return; }
-      const s = target?.session || (b.sid && [...sessions.values()].find((x) => x.sid === String(b.sid) && x.cwd));
-      // An explicit session target may not fall back to launching a new task in a directory.
-      if ((b.id || b.sid) && (!s?.sid || !s.cwd)) { json(res, 400, { ok: false, code: 'noDir', message: tr('chat.task.noDir') }); return; }
-      const want = String(b?.dir || '').replace(/^~(?=$|\/)/, os.homedir()), pdir = !s && knownDirs.find((d) => d === want);
-      if (!s && !pdir) { json(res, 400, { ok: false, code: 'noDir', message: tr('chat.task.noDir') }); return; }
-      const text = String(b?.text || '').trim().slice(0, 4000), images = (Array.isArray(b?.images) ? b.images : []).slice(0, 4).map(String);
-      if (!text) { json(res, 400, { ok: false, code: 'empty' }); return; }
-      const name = s ? s.title || s.name : path.basename(pdir), key = s ? s.sid : `dir:${pdir}`, th = threads.get(key);
-      if (th?.running) { json(res, 409, { ok: false, code: 'busy', message: tr('chat.task.threadBusy', { name }) }); return; }
-      let from;
-      if (s) {   // the conversation itself: open in the editor and resting, it is closed there first; at work there: not now
-        const open = s.pid && !s.parked;
-        if (open && (s.status !== 'rest' || s.busy || [...pending.values()].some((p) => p.sess === s.id))) { json(res, 409, { ok: false, code: 'macBusy', message: tr('chat.task.macBusy', { name }) }); return; }
-        if (open) { const pk = await parkForPhone(s); if (!pk.ok) { json(res, 409, { ok: false, code: 'macOpen', message: pk.message }); return; } }
-        from = { sid: s.sid, fork: false, name, id: s.id, orig: key, chat: true, acct: acctOf(s) || '' };
-      } else {   // a project: a new conversation, or the one you started there (for 6 hours; ＋ asks for a new one)
-        const on = th?.sid && !b.fresh && Date.now() - th.at < 6 * 3600e3 ? th.sid : null;
-        from = { sid: on, fork: false, name, orig: key, chat: true };
+      if (url.pathname === '/api/tasks/bg') {   // phone work as background sessions (server/bg-sessions.mjs): on the Mac only
+        if (!mac) { json(res, 403, { ok: false, message: tr('server.api.approveOnMac') }); return; }
+        prefs.set('phoneTasksBg', b?.on ? true : undefined);
+        fsp.appendFile(ACTION_LOG, `${new Date().toISOString()} phone work as background sessions ${b?.on ? 'on' : 'off'}\n`).catch(() => {});
+        await bgRun.probe(findClaude()).catch(() => null);
+        json(res, 200, tasksOut(true)); return;
       }
-      chat.say('me', `@${name} ${text}`, { now: true, long: true });
-      const mine = chat.state.msgs.at(-1);
-      for (const img of images) if (/^data:image\/jpeg;base64,/.test(img) && img.length < 500_000) chat.photo(img);
-      const r = tasks.start({ dir: s ? s.cwd : pdir, text, images, from, env: s ? acctEnv(from.acct) : null, system: SHOT_ASK });
-      if (r.ok) {
-        threads.set(key, { sid: from.sid, at: Date.now(), running: true });
-        if (s) s.viaOffice = r.task.id;
-        const card = chat.workCard(s ? s.id : 'claude', { state: 'work', steps: [], n: 0, at: Date.now(), task: r.task.id });   // (task: its Stop button)
-        if (card) cards.set(r.task.id, { id: card.id, steps: [], n: 0, at: Date.now(), timer: 0 });
-        taskQuote.set(r.task.id, mine ? { id: mine.id, name: tr('chat.boss'), text: clip(text, 90) } : null);
-      } else chat.system(tr('chat.task.notStarted', { why: tr(`chat.task.why.${r.code}`) }));
-      fsp.appendFile(ACTION_LOG, `${new Date().toISOString()} message ${mac ? 'mac' : `phone ${clientIp(req)}`} ${s ? `${s.sid}${from.acct ? ` on ${from.acct}` : ''}` : from.sid ? `carry ${from.sid}` : `new in ${pdir}`} ${r.ok ? 'started' : r.code} ${clip(oneLine(text), 100)}\n`).catch(() => {});
-      json(res, r.ok ? 200 : 409, r.ok ? { ok: true, task: r.task } : { ok: false, code: r.code, message: tr(`chat.task.why.${r.code}`) });
+      if (url.pathname === '/api/tasks/stop') { json(res, 200, { ok: tasks.stop(String(b?.id || '')) }); return; }
+      if (url.pathname !== '/api/tasks' && url.pathname !== '/api/tasks/steer') { json(res, 404, { ok: false }); return; }
+      if (!mac && !prefs.get('phoneTasks')) { json(res, 403, { ok: false, code: 'notAllowed', message: tr('chat.task.notAllowed') }); return; }
+      const [code, out] = await (url.pathname === '/api/tasks/steer' ? steerTo : giveWork)(b, mac ? 'mac' : `phone ${clientIp(req)}`);
+      json(res, code, out);
+    });
+    return;
+  }
+  if (url.pathname === '/api/prompt/rewrite' && req.method === 'POST') {   // the chat's "✨ Viết lại cho rõ": { text, lang, photos: how many } -> { ok, text }
+    if (!authorized(req, url) || !sameOriginOf(req) || !String(req.headers['content-type'] || '').startsWith('application/json')) { json(res, 403, { ok: false }); return; }
+    const mac = isLoopback(req);
+    // (it spends the plan's quota, as work does: from a phone only when the Mac allows work from phones)
+    if (!mac && !prefs.get('phoneTasks')) { json(res, 403, { ok: false, code: 'notAllowed', message: tr('chat.task.notAllowed') }); return; }
+    readJson(req, 40_000).then(async (b) => {
+      const r = await rewriter.rewrite({ text: b?.text, lang: pickLang(b?.lang), photos: b?.photos });
+      fsp.appendFile(ACTION_LOG, `${new Date().toISOString()} rewrite ${mac ? 'mac' : `phone ${clientIp(req)}`} ${r.ok ? 'ok' : r.code} ${String(b?.text || '').length} chars\n`).catch(() => {});   // (how long, never what it says)
+      json(res, r.ok ? 200 : r.code === 'busy' || r.code === 'tooMany' ? 429 : 409, r.ok ? { ok: true, text: r.text } : { ok: false, code: r.code, message: tr(`chat.coach.why.${r.code}`, { detail: r.detail || '' }) });
     });
     return;
   }
@@ -2092,7 +2464,7 @@ const server = http.createServer((req, res) => {
   if (url.pathname === '/api/tunnel' && (req.method === 'POST' || req.method === 'GET')) {   // the office from anywhere: { on } (this computer only)
     const sameOrigin = sameOriginOf(req);
     if (!isLoopback(req) || !sameOrigin || (req.method === 'POST' && !String(req.headers['content-type'] || '').startsWith('application/json'))) { json(res, 403, { ok: false, message: tr('server.api.approveOnMac') }); return; }
-    if (req.method === 'GET') { json(res, 200, tunnelOut()); return; }
+    if (req.method === 'GET') { Promise.race([bgRun.probe(findClaude()).catch(() => null), new Promise((r) => setTimeout(r, 4000))]).then(() => json(res, 200, tunnelOut())); return; }   // (whether this Claude Code has background sessions: looked at once)
     readJson(req).then((b) => {
       prefs.set('tunnel', b?.on ? true : undefined);
       fsp.appendFile(ACTION_LOG, `${new Date().toISOString()} tunnel ${b?.on ? 'on' : 'off'}\n`).catch(() => {});
@@ -2148,6 +2520,23 @@ const server = http.createServer((req, res) => {
     });
     return;
   }
+  if (req.method === 'POST' && (url.pathname === '/api/stranded/open' || url.pathname === '/api/stranded/remove')) {   // (this computer only, from this page)
+    if (!isLoopback(req) || !sameOriginOf(req) || !String(req.headers['content-type'] || '').startsWith('application/json')) { json(res, 403, { ok: false, message: tr('server.api.openOnMac') }); return; }
+    readJson(req).then(async (b) => {
+      const w = stranded.entry(b?.id);
+      if (url.pathname === '/api/stranded/open') {
+        const r = w ? await openFolder(w.path) : { ok: false, message: tr('mac.stranded.gone') };
+        fsp.appendFile(ACTION_LOG, `${new Date().toISOString()} open folder ${w?.path || '?'} -> ${r.ok ? r.app || 'ok' : r.message}\n`).catch(() => {});
+        json(res, 200, r); return;
+      }
+      const r = await stranded.remove(b?.id);
+      fsp.appendFile(ACTION_LOG, `${new Date().toISOString()} remove worktree ${r.w?.path || '?'} -> ${r.ok ? 'removed' : `${r.code}${r.why ? ` ${r.why}` : ''}`}\n`).catch(() => {});
+      const at = r.w ? tilde(r.w.path) : '';
+      json(res, 200, r.ok ? { ok: true, message: tr(r.w.branch ? 'mac.stranded.removed' : 'mac.stranded.removedDetached', { dir: at, branch: r.w.branch }) }
+        : { ok: false, code: r.code, message: tr(`mac.stranded.refused.${r.code}`, { why: r.why || '' }) });
+    });
+    return;
+  }
   if (req.method === 'POST' && /^\/api\/accounts(\/(code|cancel|login|rename|use|auto|order|move))?$/.test(url.pathname)) {   // (this computer only, from this page)
     const sameOrigin = sameOriginOf(req);
     if (!isLoopback(req) || !sameOrigin || !String(req.headers['content-type'] || '').startsWith('application/json')) { json(res, 403, { ok: false, message: tr('server.account.onMac') }); return; }
@@ -2187,6 +2576,43 @@ const server = http.createServer((req, res) => {
     });
     return;
   }
+  if (req.method === 'POST' && url.pathname === '/api/tenure') {   // this computer only: { op: 'config', days } (Settings → More), { op: 'farewell' | 'official', name } (the page held it)
+    if (!authorized(req, url) || !sameOriginOf(req) || !isLoopback(req) || !String(req.headers['content-type'] || '').startsWith('application/json')) { json(res, 403, { ok: false, message: tr('server.api.approveOnMac') }); return; }
+    readJson(req).then((b) => {
+      if (b?.op === 'config') {
+        const d = Number(b.days);
+        if (d !== 0 && !FAREWELL_DAYS.includes(d)) { json(res, 400, { ok: false }); return; }
+        prefs.set('farewellDays', d);
+        broadcast({ k: 'tenure', ...tenureOut() }); json(res, 200, tenureOut()); return;
+      }
+      if (b?.op === 'official') { json(res, 200, { ok: tenure.markOfficial(String(b.name || '').slice(0, 200)) }); return; }
+      if (b?.op === 'farewell') { const name = String(b.name || '').slice(0, 200); json(res, 200, { ok: tenure.markFarewell(name, farewellDays(), liveProjects().has(name)) }); return; }
+      json(res, 400, { ok: false });
+    });
+    return;
+  }
+  if (req.method === 'POST' && url.pathname === '/api/loop') {   // a stuck session's card: { op: 'stop' | 'hint', id, text }; Settings (this computer only): { op: 'config', on, n, min }
+    if (!authorized(req, url) || !sameOriginOf(req) || !String(req.headers['content-type'] || '').startsWith('application/json')) { json(res, 403, { ok: false }); return; }
+    const mac = isLoopback(req);
+    readJson(req).then((b) => {
+      if (b?.op !== 'config') { json(res, 200, loopAct(b, mac)); return; }
+      if (!mac) { json(res, 403, { ok: false, message: tr('server.api.approveOnMac') }); return; }
+      const now = loopConfig(), next = { on: b.on === undefined ? now.on : !!b.on, n: LOOP_N.includes(b.n) ? b.n : now.n, min: LOOP_MIN.includes(b.min) ? b.min : now.min };
+      prefs.set('loopGuard', next);
+      fsp.appendFile(ACTION_LOG, `${new Date().toISOString()} stuck guard ${next.on ? 'on' : 'off'} n=${next.n} min=${next.min}\n`).catch(() => {});
+      json(res, 200, loopOut());
+    });
+    return;
+  }
+  if (req.method === 'POST' && url.pathname === '/api/cache') {   // the "about to go cold" notification: { nudge } (this computer only)
+    if (!isLoopback(req) || !sameOriginOf(req) || !String(req.headers['content-type'] || '').startsWith('application/json')) { json(res, 403, { ok: false, message: tr('server.api.approveOnMac') }); return; }
+    readJson(req).then((b) => {
+      prefs.set('cacheNudge', b?.nudge ? true : undefined);
+      fsp.appendFile(ACTION_LOG, `${new Date().toISOString()} cache nudge ${b?.nudge ? 'on' : 'off'}\n`).catch(() => {});
+      json(res, 200, { ok: true, nudge: !!prefs.get('cacheNudge') });
+    });
+    return;
+  }
   if (req.method === 'POST' && url.pathname === '/api/prefs') {
     const sameOrigin = sameOriginOf(req);
     if (!authorized(req, url) || !sameOrigin || !String(req.headers['content-type'] || '').startsWith('application/json')) { json(res, 403, { ok: false, message: tr('server.forbidden') }); return; }
@@ -2217,8 +2643,12 @@ const server = http.createServer((req, res) => {
     return;
   }
   if (url.pathname === '/api/chat') { json(res, 200, chatOut()); return; }
+  if (url.pathname === '/api/loop') { json(res, 200, loopOut()); return; }
+  if (url.pathname === '/api/tenure') { json(res, 200, tenureOut()); return; }
+  if (url.pathname === '/api/cache') { json(res, 200, { ok: true, nudge: !!prefs.get('cacheNudge') }); return; }
   if (url.pathname === '/api/tasks') { json(res, 200, tasksOut(isLoopback(req))); return; }
   if (url.pathname === '/api/quick') { let list = null; try { list = JSON.parse(fs.readFileSync(QUICK_FILE, 'utf8')); } catch { /* the page's own until you change them */ } json(res, 200, { ok: true, list }); return; }
+  if (url.pathname === '/api/claude-version') { json(res, 200, { ok: true, ...claudeVersion.get() }); return; }   // (a new one: someone goes to Thế Giới Di Động, outings.js)
   if (url.pathname === '/api/push') { json(res, 200, { ok: true, key: push.publicKey, count: push.count(), on: push.has(String(url.searchParams.get('endpoint') || '')) }); return; }
   if (url.pathname === '/api/image') {   // (sandboxed and never sniffed: an SVG can't run anything opened on its own)
     const file = images.get(String(url.searchParams.get('id') || '')), type = file && IMG_EXT[path.extname(file).slice(1).toLowerCase()];
@@ -2237,7 +2667,7 @@ const server = http.createServer((req, res) => {
     const ompUsage = OMP_USAGE_ON ? ompUsageCollector.snapshot({ local }) : null;
     return { k: 'snap', lang: prefs.lang(), omp, ompUsage, sessions: local ? agents.list() : agents.list().filter((s) => s.agentKind !== 'omp'), perms: [...pending.values()].map(permPub), feed, stats, local, todos, limits: limitsOut(), limitsNote: noteText(), trophies: trophies.pub(),
       lan: local && lanOn ? lanUrl() : null, lanBase: local && lanOn ? lanUrl(false) : null, pin: local ? currentPin() : null,
-      ts: local && lanOn ? tsUrl() : null, tsHere: !!tsUrl(), phoneApprove: !!prefs.get('phoneApprove'), phoneTasks: !!prefs.get('phoneTasks'), lanFixed: local && lanFixed, build: BUILD };
+      ts: local && lanOn ? tsUrl() : null, tsHere: !!tsUrl(), phoneApprove: !!prefs.get('phoneApprove'), phoneTasks: !!prefs.get('phoneTasks'), lanFixed: local && lanFixed, build: BUILD, lift: liftService.pub() };
   };
   if (url.pathname === '/stream') {
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store, no-transform', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
@@ -2317,6 +2747,11 @@ const server = http.createServer((req, res) => {
     replayRange(String(url.searchParams.get('day') || ''), from, to).then((r) => json(res, 200, r)).catch(() => json(res, 200, { items: [], truncated: false }));
     return;
   }
+  if (url.pathname === '/api/stranded') {   // the Mac panel's "Việc bỏ quên" (local: whether opening and removing are offered here)
+    stranded.list({ force: url.searchParams.has('fresh') }).then((r) => json(res, 200, { ...r, local: isLoopback(req) })).catch(() => json(res, 200, { ok: false, items: [] }));
+    return;
+  }
+  if (url.pathname === '/api/burn') { json(res, 200, burnOut(String(url.searchParams.get('range') || ''))); return; }   // what eats the plan (server/otel.mjs)
   if (url.pathname === '/api/sys') {
     sysSnapshot({ open: url.searchParams.has('open') }).then((snap) => json(res, 200, { ...snap, auto: { hours: prefs.autoClose(), last: autoLast[0] || null } })).catch((err) => json(res, 500, { error: String(err.message || err) }));
     return;
@@ -2341,6 +2776,8 @@ const DEV = process.argv.includes('--dev');
 // this build's id: a page from an older one (the office was updated and restarted) loads the new one by itself
 const BUILD = (() => { try { return fs.readFileSync(path.join(ROOT, process.env.OFFICE_DIST_DIR || '.next', 'BUILD_ID'), 'utf8').trim(); } catch { return ''; } })();
 server.on('close', () => { ompUsageCollector.dispose(); void agents.dispose(); });
+// the lift's servicing for the first minutes after a start, longer on a new build (server/lift-service.mjs: a scene)
+const liftService = createLiftService({ dataDir: DATA_DIR, build: BUILD, version: (() => { try { return JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version || ''; } catch { return ''; } })() });
 const nextApp = next({ dev: DEV, dir: ROOT, hostname: HOST, port: PORT, httpServer: server });
 const nextHandle = nextApp.getRequestHandler();
 try { await nextApp.prepare(); }
@@ -2380,7 +2817,7 @@ setInterval(syncLan, 30_000).unref();
 const tunnel = { state: 'off', url: '', host: '', error: '', pid: 0, srv: null, port: 0, tries: 0, gen: 0, watch: null };
 const TUNNEL_PID = path.join(DATA_DIR, 'tunnel.pid'), CF_BIN = path.join(DATA_DIR, 'bin', process.platform === 'win32' ? 'cloudflared.exe' : 'cloudflared');
 const tunnelOut = () => ({ ok: true, on: !!prefs.get('tunnel'), state: tunnel.state, url: tunnel.url, error: tunnel.error, port: tunnel.port, pin: currentPin(),
-  awake: process.platform === 'darwin' ? { held: !!awakeProc, ac: powerAC } : null, rc: rcAtStartup(), tasks: !!prefs.get('phoneTasks') });
+  awake: process.platform === 'darwin' ? { held: !!awakeProc, ac: powerAC } : null, rc: rcAtStartup(), tasks: !!prefs.get('phoneTasks'), bg: bgOut() });
 // Giving Claude work from a phone is Claude Code's own Remote Control: with remoteControlAtStartup in its settings every
 // new session opens its bridge by itself (the other accounts share these settings by a link), and the office shows each
 // session's link. Switched in the phone window, by you, on the Mac; the rest of the file is left as it is.
@@ -2510,7 +2947,7 @@ function stopTunnel() {
   Object.assign(tunnel, { state: 'off', url: '', host: '', error: '', tries: 0, pid: 0 });
 }
 // (the office stopping: cloudflared keeps going for when it comes back; staying awake ends with it, caffeinate -w)
-process.on('exit', () => { try { awakeProc?.kill(); } catch { /* gone */ } });
+process.on('exit', () => { try { awakeProc?.kill(); } catch { /* gone */ } otel.saveSync(); });
 for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => process.exit(0));
 
 server.listen(PORT, HOST, () => {

@@ -9,10 +9,11 @@
 // time, several comings and goings.
 import * as THREE from 'three';
 import { state } from '../core/state.js';
-import { PRO, V2, officeNow, rand, replay } from '../core/env.js';
+import { PRO, STATIC, V2, officeNow, rand, replay } from '../core/env.js';
+import { TOKEN } from '../net/live.js';
 import { scene } from '../scene/renderer.js';
 import { mat } from '../scene/blocks.js';
-import { DZ, LIFT_X, lift, liftArrive } from '../world/entrance.js';
+import { DZ, LIFT_X, lift, liftArrive, liftDown } from '../world/entrance.js';
 import { THEME, THEMES } from '../world/backdrops/index.js';
 import { DESK_SPOTS, DOOR_IN, DOOR_OUT, STATIONS, allocate } from './navigation.js';
 import { showMeal } from './breaks.js';
@@ -24,6 +25,12 @@ import { sfx } from '../audio/sfx.js';
 import { chatLife } from '../ui/group-chat.js';
 import { wx } from '../life/weather.js';
 import { joinNhau, nhauNow, updateNhau } from './nhau.js';
+import { comNow, comPlanned, updateCom } from './comtrua.js';
+import { atmNow, updatePayday } from './payday.js';
+import { pickleNow, updatePickle } from './pickle.js';
+import { photoNow, updatePhoto } from './photobooth.js';
+import { evNow, updateEvswap } from './evswap.js';
+import { homeLunch, microNow } from './comnha.js';
 import { queueUi, toast } from '../ui/activity.js';
 import { t as tr } from '../../i18n/index.js';
 
@@ -44,20 +51,20 @@ const indoors = () => (lift ? { x: LIFT_X, z: DZ } : { x: DOOR_OUT.x, z: DOOR_OU
 // the street's points as a path to walk: each leg's ground (pavement, or the road on a crossing) and the crossings' gates
 export function walk(w, S, pts, cb, face) {
   if (!pts?.length) { cb(); return; }
-  w.path = pts.map((p) => Object.assign(new V2(p.x, p.z), { y0: p.road ? S.road : S.pavement, gate: p.gate }));
+  w.path = pts.map((p) => Object.assign(new V2(p.x, p.z), { y0: p.y0 ?? (p.road ? S.road : S.pavement), gate: p.gate }));   // (y0: a floor of its own, inside a shop on the street)
   const end = pts[pts.length - 1];
   w.spot = { x: end.x, z: end.z, face: face ?? w.face };
   w.pose = 'stand'; w.phase = 'walk'; w.onArrive = cb;
 }
 export const here = (w) => ({ x: w.pos.x, z: w.pos.y });
-// down to the street: the lift (wait for it, step in, the doors shut, down) or out of the door, then unseen a moment
-function goDown(w, R, cb) {
+// down to the street: the lift (wait for it, step in, the doors shut, down; the stairs while it is serviced) or out of
+// the door, then unseen a moment
+export function goDown(w, R, cb) {
   const stage = R.stage, gone = () => { if (!live(R, stage)) return; w.offstage = true; later(lift ? 3 : 1, () => live(R, stage) && cb()); };
   w.goTo(DOOR_IN, () => {
     if (!live(R, stage)) return;
     if (!lift) { w.goTo(DOOR_OUT, gone); return; }
-    w.anim = 'idle'; w.faceTarget = DOOR_IN.face;
-    w.liftWait = () => w.goTo(DOOR_OUT, () => { w.faceTarget = Math.PI / 2; w.liftRide = gone; });
+    liftDown(w, gone);
   });
 }
 export function outside(w, S, at) { w.offstage = false; w.street = true; w.ground = S.pavement; w.pos.set(at.x, at.z); w.spot = { x: at.x, z: at.z, face: w.face }; }
@@ -80,7 +87,7 @@ function done(R) {
 }
 // back at the desk: on with whatever came in, or (still resting) what they brought back, eaten or drunk at the desk (the
 // shopping goes under it), then a nap
-function resume(w, item) {
+export function resume(w, item) {
   const s = sessions.get(w.id);
   w.station = 'desk';
   if (s?.status === 'wait') { w.anim = 'hand'; w.say('wait', tr('people.needsApproval'), 'wait'); }
@@ -118,10 +125,10 @@ function begin(R, w) {
 // the length of a walk from P along pts
 const lengthOf = (P, pts) => pts.reduce((a, p, k) => a + Math.hypot(p.x - (k ? pts[k - 1].x : P.x), p.z - (k ? pts[k - 1].z : P.z)), 0);
 // the chain behind a door (shops.js gives it; by the name on the sign otherwise)
-const CHAIN = { 'Circle K': 'circlek', GS25: 'gs25', '7-Eleven': 'seven', 'WinMart+': 'winmart', Ministop: 'ministop', 'Bách Hóa Xanh': 'bhx', Mixue: 'mixue' };
+const CHAIN = { 'Circle K': 'circlek', GS25: 'gs25', '7-Eleven': 'seven', 'WinMart+': 'winmart', Ministop: 'ministop', 'Bách Hóa Xanh': 'bhx', Mixue: 'mixue', 'Highlands Coffee': 'highlands', 'Thế Giới Di Động': 'tgdd', 'Điện Máy Xanh': 'dmx', Katinat: 'katinat', 'Phúc Long': 'phuclong', 'Long Châu': 'longchau', 'Cộng Cà Phê': 'cong' };
 const keyOf = (d) => d.key || CHAIN[d.name] || '';
 // what each one sends you back with (twice in the list: twice as likely): the chain's own food more often than a drink
-const TAKE = { circlek: ['noodle', 'noodle', 'cup'], gs25: ['tok', 'tok', 'cup'], seven: ['onigiri', 'bun', 'cup'], ministop: ['cone', 'chicken'], winmart: ['cup', 'cup', 'grocery'], bhx: ['cup', 'grocery'], mixue: ['cone', 'cone', 'cup'] };
+const TAKE = { circlek: ['noodle', 'noodle', 'cup'], gs25: ['tok', 'tok', 'cup'], seven: ['onigiri', 'bun', 'cup'], ministop: ['cone', 'chicken'], winmart: ['cup', 'cup', 'grocery'], bhx: ['cup', 'grocery'], mixue: ['cone', 'cone', 'cup'], highlands: ['cup'], tgdd: ['grocery'], dmx: ['grocery'], katinat: ['cup'], phuclong: ['cup'], longchau: ['grocery'], cong: ['cup'] };
 const pick = (a) => a[Math.floor(Math.random() * a.length)];
 // the drink's band (and the shopping bag) in the shop's colour
 function tint(w, item, d) {
@@ -150,25 +157,36 @@ function outOfStore(w, S, R, stage, d, then) {
   });
 }
 // what they say on the way, and on the way back: the chain's food, the late-night noodles
-const line = (R, when) => tr(R.why === 'treat' ? `people.out.treat.${when}` : R.night ? `people.out.night.${when}` : `people.out.${when}.${R.item}`, { shop: R.shop });
+const OWN_LINES = new Set(['treat', 'morning', 'upgrade', 'coffee', 'tea', 'checkin', 'headache', 'cong', 'congWeekend']);   // (trips with words of their own)
+const line = (R, when) => tr(OWN_LINES.has(R.why) ? `people.out.${R.why}.${when}` : R.night ? `people.out.night.${when}` : `people.out.${when}.${R.item}`, { shop: R.shop, version: R.version || '' });
 /** o: { key: one chain only, night: late-night noodles (a 24-hour store, Circle K if there is one near), why: 'hot' (the
-    real weather, a hot afternoon: a 10k cone at the Mixue) or 'treat' (the CI green again: ice cream for everyone) } */
-function shopTrip(w, S, { key = '', night = false, why = '' } = {}) {
+    real weather, a hot afternoon: a 10k cone at the Mixue), 'treat' (the CI green again: ice cream for everyone),
+    'morning' (the day's first cà phê at the Highlands), 'coffee' (an afternoon one there), 'upgrade' (Claude Code
+    moved to a new version: someone goes to Thế Giới Di Động to "lên đời"; version: the new one), 'tea' (the afternoon
+    trà sữa at Phúc Long, or Katinat), 'checkin' (Katinat on a Friday or weekend evening, for the drink and the picture),
+    'headache' (the work keeps failing: something for the headache from Long Châu), 'cong' (a weekday afternoon's cốt dừa
+    cà phê at Cộng) or 'congWeekend' (a weekend morning's) } */
+function shopTrip(w, S, { key = '', night = false, why = '', version = '' } = {}) {
   // the nearest open convenience store as you would walk it, from whichever side of the building is best
   let best = null;
   const from = indoors();
   for (const door of S.doors()) {
-    if (door.open === false || (key && keyOf(door) !== key) || (night && door.h24 === false)) continue;
+    if (door.open === false || (key && keyOf(door) !== key) || (!key && ['tgdd', 'highlands', 'dmx', 'katinat', 'phuclong', 'longchau', 'cong'].includes(keyOf(door))) || (night && door.h24 === false)) continue;   // (the phone shop and the café only when meant)
     for (const ex of S.exits(from.x, from.z)) {
       const r = S.route(ex, door), len = r && lengthOf(ex, r) + ex.d, score = len + (night && keyOf(door) !== 'circlek' ? 30 : 0);
       if (r && len < 80 && (!best || score < best.score)) best = { door, ex, r, score };
     }
   }
   if (!best) return false;
-  const d = best.door, item = night ? 'noodle' : why === 'treat' ? 'grocery' : why === 'hot' ? 'cone' : pick(TAKE[keyOf(d)] || ['cup']);
-  const R = { kind: 'shop', stage: 'go', exit: best.ex, shop: d.name, door: d, item, night, why };
+  const d = best.door, item = night ? 'noodle' : why === 'treat' || why === 'upgrade' ? 'grocery' : why === 'hot' ? 'cone' : pick(TAKE[keyOf(d)] || ['cup']);
+  const R = { kind: 'shop', stage: 'go', exit: best.ex, shop: d.name, door: d, item, night, why, version };
   begin(R, w);
-  if (why) chatLife('mixue', { id: w.id, why, temp: Math.round(wx.temp ?? 33), every: 3 * 3600e3 });
+  if (why === 'hot' || why === 'treat') chatLife('mixue', { id: w.id, why, temp: Math.round(wx.temp ?? 33), every: 3 * 3600e3 });
+  else if (why === 'morning' || why === 'coffee') chatLife('highlands', { id: w.id, why, every: 2 * 3600e3 });
+  else if (why === 'upgrade') chatLife('tgdd', { id: w.id, version, every: 60e3 });
+  else if (why === 'tea' || why === 'checkin') chatLife(keyOf(d), { id: w.id, why, every: 3 * 3600e3 });   // (Phúc Long's, or Katinat's)
+  else if (why === 'headache') chatLife('longchau', { id: w.id, every: 3600e3 });
+  else if (why === 'cong' || why === 'congWeekend') chatLife('cong', { id: w.id, why, every: 3 * 3600e3 });
   else chatLife('store', { id: w.id, shop: d.name, every: 90 * 60e3 });
   w.hush(); w.anim = 'wake'; w.afterAt = state.sim + 1.6;   // a stretch first
   w.after = () => {
@@ -228,7 +246,7 @@ function collect(R, S) {
   if (R.rider.state === 'gone' || state.sim - R.ordered > 240) { abort(R); return; }   // (stuck somewhere: lunch the usual way)
   if (R.rider.state !== 'waiting') return;
   R.since ||= state.sim;
-  const w = [...workers.values()].find(resting);
+  const w = [...workers.values()].find((x) => resting(x) && !homeLunch(x));   // (not someone who brought their own: people/comnha.js)
   if (!w) { if (state.sim - R.since > 150) abort(R); return; }   // nobody to fetch it: lunch the usual way
   begin(R, w); R.stage = 'go';
   sfx.play('pop');   // (the phone)
@@ -299,6 +317,8 @@ const trips = new Set();
 const WAYS = ['bike', 'bike', 'bike', 'bike', 'bike', 'grab', 'grab', 'xsm', 'xsm', 'taxi'];
 const BIKE_COLORS = ['#D9534F', '#F2F2F2', '#2E86DE', '#3B3B3B', '#F2C200', '#7A1F2B', '#1E9E4A', '#C9CED6'];
 export const wayOf = (w) => WAYS[hash(w.id) % WAYS.length], bikeColor = (w) => BIKE_COLORS[(hash(w.id) >>> 5) % BIKE_COLORS.length];
+// half of those who ride their own ride an electric one (street-ev.js; its battery swapped at the cabinet: people/evswap.js)
+export const evOf = (w) => hash(`${w.id}:ev`) % 2 === 0;
 export const coatOf = (w) => w.cfg.coat || w.cfg.shirt;
 export const mainExit = (S) => { const from = indoors(); return S.exits(from.x, from.z).find((e) => e.L) || null; };
 // the row of scooters: along the building's side of the pavement from the way out, both ways, 2 m apart, clear of the corners
@@ -313,6 +333,9 @@ function bikeRow(S) {
   row = { ex, spots, side: S.pavementSide + 0.75 };
   return row;
 }
+/** the row's places (for people/evswap.js): { s, by (whose), id (the parked scooter, -1: none; 1000 and up: electric), busy } */
+export const rowSpots = (S) => bikeRow(S)?.spots || [];
+export const rowOf = (S) => bikeRow(S);
 // the row as it should be: a scooter for each one in who rides their own, none for those gone
 function syncBikes(S) {
   const R = bikeRow(S); if (!R) return;
@@ -320,12 +343,12 @@ function syncBikes(S) {
     if (!sp.by || sp.busy) continue;
     const w = workers.get(sp.by);
     // (leftBike: home by Grab after a drink, the scooter stays the night)
-    if (!w || (w.away && !w.leftBike)) { S.unparkBike(sp.id); sp.by = null; sp.id = -1; } else if (sp.id < 0) sp.id = S.parkBike(R.ex.L, sp.s, R.side, bikeColor(w));
+    if (!w || (w.away && !w.leftBike)) { S.unparkBike(sp.id); sp.by = null; sp.id = -1; } else if (sp.id < 0) sp.id = S.parkBike(R.ex.L, sp.s, R.side, bikeColor(w), evOf(w), hash(w.id));
   }
   for (const w of workers.values()) {
     if (w.sub || w.away || wayOf(w) !== 'bike' || R.spots.some((sp) => sp.by === w.id)) continue;
     const sp = R.spots.find((x) => !x.by); if (!sp) break;
-    sp.by = w.id; sp.id = S.parkBike(R.ex.L, sp.s, R.side, bikeColor(w));
+    sp.by = w.id; sp.id = S.parkBike(R.ex.L, sp.s, R.side, bikeColor(w), evOf(w), hash(w.id));
   }
 }
 // where a rider waits at the kerb: by the way out, the next one along a little further each time
@@ -350,7 +373,7 @@ function goHome(w, gone) {
   if (way === 'bike') {
     const R = bikeRow(S);
     T.spot = R.spots.find((sp) => sp.by === w.id);
-    if (!T.spot) { T.spot = R.spots.find((sp) => !sp.by); if (!T.spot) return false; T.spot.by = w.id; T.spot.id = S.parkBike(ex.L, T.spot.s, R.side, bikeColor(w)); }
+    if (!T.spot) { T.spot = R.spots.find((sp) => !sp.by); if (!T.spot) return false; T.spot.by = w.id; T.spot.id = S.parkBike(ex.L, T.spot.s, R.side, bikeColor(w), evOf(w), hash(w.id)); }
     T.spot.busy = true;
   } else if (!(T.rider = S.callRider(ex.L, kerbAt(ex), { livery: ride(way), far: 60 }))) return false;
   trips.add(T); w.outing = T; w.offstage = true;
@@ -433,11 +456,22 @@ function stepTrip(T, S) {
     let at;
     if (T.way === 'bike') {
       const R = bikeRow(S);
-      T.rider.vanish(); T.spot.id = S.parkBike(R.ex.L, T.spot.s, R.side, bikeColor(w)); T.spot.busy = false;
+      T.rider.vanish(); T.spot.id = S.parkBike(R.ex.L, T.spot.s, R.side, bikeColor(w), evOf(w), hash(w.id)); T.spot.busy = false;
       at = S.at(R.ex.L, T.spot.s, S.pavementSide);
     } else { T.rider.alight(); at = pickup(mainExit(S), m, T.way === 'taxi' ? 0.25 : 0.55); later(0.8, () => T.rider.release()); }
     T.stage = 'walk'; outside(w, S, at);
-    walk(w, S, S.route(at, mainExit(S)), up);
+    // the day's first one in, in the morning: a cà phê at the Highlands on the way up (taken up to the desk)
+    const today = officeNow(), mins = today.getHours() * 60 + today.getMinutes(), hl = coffeeDay !== today.toDateString() && mins >= 360 && mins < 660 && S.doors().find((x) => keyOf(x) === 'highlands' && x.open);
+    if (hl) {
+      coffeeDay = today.toDateString(); chatLife('highlands', { id: w.id, why: 'morning', every: 2 * 3600e3 }); say(w, tr('people.out.morning.go', { shop: hl.name }));
+      walk(w, S, S.route(at, hl), () => {
+        if (!live(T, 'walk')) return;
+        intoStore(w, S, T, 'walk', hl, rand(5, 8), () => {
+          w.carry = 'cup'; tint(w, 'cup', hl); say(w, tr('people.out.morning.got', { shop: hl.name }));
+          outOfStore(w, S, T, 'walk', hl, () => walk(w, S, S.route(here(w), mainExit(S)), up));
+        });
+      }, hl.face);
+    } else walk(w, S, S.route(at, mainExit(S)), up);
   }
 }
 
@@ -445,11 +479,16 @@ function stepTrip(T, S) {
 export function whereabouts(w) {
   const R = w?.outing, T = (k, v) => tr(`people.where.${k}`, v);
   if (!w) return null;
-  if (!R) return w.away ? { ic: 'home', text: T('home') } : null;
+  if (!R) return w.micro ? microNow(w) : w.chore?.where || (w.away ? { ic: 'home', text: T('home') } : null);   // (at the microwave: people/comnha.js; a chore that says where: people/duty.js)
   // (at the till: what they are buying there; on the way down late at night: the noodles)
   if (R.kind === 'shop') return { ic: 'walk', text: R.recalled ? T('rushing') : R.stage === 'in' ? T(`buy.${R.item || 'cup'}`, { shop: R.shop }) : T(R.stage === 'back' || R.stage === 'up' ? 'fromShop' : R.night ? 'toNight' : 'toShop', { shop: R.shop }) };
   if (R.kind === 'lunch') return R.w === w ? { ic: 'coffee', text: T(R.stage === 'back' || R.stage === 'up' ? 'lunchUp' : 'lunchDown') } : null;
   if (R.kind === 'nhau') return nhauNow(R);
+  if (R.kind === 'com') return comNow(R);
+  if (R.kind === 'atm') return atmNow(R);
+  if (R.kind === 'pickle') return pickleNow(R);
+  if (R.kind === 'photo') return photoNow(R);
+  if (R.kind === 'evswap') return evNow(R);
   if (R.kind === 'home' && R.stage === 'shop') return { ic: 'walk', text: T('homeShop', { shop: R.shop }) };
   return { ic: R.kind === 'home' ? 'home' : 'walk', text: T(R.kind === 'home' ? 'leaving' : 'coming', { how: T(`how.${R.way}`) }) };
 }
@@ -458,6 +497,7 @@ export function whereabouts(w) {
 let bikesAt = 0, shown = '';
 export function updateOutings() {
   updateNhau();   // (an evening at the quán nhậu: people/nhau.js)
+  updateCom(); updatePayday(); updatePickle(); updatePhoto(); updateEvswap();   // (lunch at the quán cơm: people/comtrua.js; payday at the ATM: people/payday.js; pickleball: people/pickle.js; the photo booth: people/photobooth.js; a battery swap: people/evswap.js)
   const S = street(), d = officeNow(), m = d.getHours() * 60 + d.getMinutes(), day = d.toDateString();
   if (bags?.visible && (m >= 780 || bags.userData.day !== day)) bags.visible = false;
   // the comings and goings; the row of scooters; the session list when anyone's whereabouts change
@@ -474,7 +514,8 @@ export function updateOutings() {
   }
   if (!S || replay.on || state.sim < 20) return;
   // the team's lunch, ordered between 11:15 and 11:40 once someone is resting to fetch it (the company floor eats in)
-  if (PRO && m >= 675 && m < 700 && lunchDay !== day && [...workers.values()].some(resting)) { lunchDay = day; orderLunch(S, day); return; }
+  // (not on the days they go down to the quán cơm instead: people/comtrua.js)
+  if (PRO && m >= 675 && m < 700 && lunchDay !== day && !comPlanned(d) && [...workers.values()].some(resting)) { lunchDay = day; orderLunch(S, day); return; }
   if (state.sim < lookAt) return;
   lookAt = state.sim + 20;
   // a trip to the shop: in office hours, not over lunch, now and then, someone who has not been out for half an hour;
@@ -482,9 +523,51 @@ export function updateOutings() {
   const night = m >= 1320 || m < 120;
   if ((!night && (m < 480 || m >= 1260 || (m >= 670 && m < 790))) || Math.random() > (night ? 0.4 : 0.3)) return;
   const list = [...workers.values()].filter((w) => resting(w) && state.sim - (w.outAt ?? -1e9) > (night ? 600 : 1800));
+  // Claude Code moved to a new version and nobody has gone yet: whoever is free goes to Thế Giới Di Động
+  if (upgradeDue && list.length && shopTrip(pick(list), S, { key: 'tgdd', why: 'upgrade', version: upgradeDue })) { upgradeDue = ''; return; }
+  // the day's first cà phê (no one came in by the street this morning to have it on the way): 7:00–10:30 at the Highlands
+  if (m >= 420 && m < 630 && coffeeDay !== day && list.length && S.doors().some((d) => keyOf(d) === 'highlands' && d.open)) { coffeeDay = day; if (shopTrip(pick(list), S, { key: 'highlands', why: 'morning' })) return; }
+  // an afternoon coffee there now and then
+  if (!night && m >= 780 && m < 990 && Math.random() < 0.25 && list.length && shopTrip(pick(list), S, { key: 'highlands', why: 'coffee' })) return;
+  // the afternoon trà sữa, once a day, 15:30–17:00: Phúc Long (Katinat where there is no Phúc Long near; both are further
+  // off than the stores, so not every trip)
+  const tea = teaDay !== day && m >= 930 && m < 1020 && Math.random() < 0.3 && ['phuclong', 'katinat'].find((k) => S.doors().some((x) => keyOf(x) === k && x.open));
+  if (tea && list.length && shopTrip(pick(list), S, { key: tea, why: 'tea' })) { teaDay = day; return; }
+  // a weekday afternoon, once, 14:00–17:00, and a weekend morning, once, 8:30–11:30: a cốt dừa cà phê at Cộng ("Đi Cộng làm
+  // ly cốt dừa không?"), where there is one near
+  const wkend = [6, 0].includes(d.getDay()), congWhy = congDay !== day && (wkend ? m >= 510 && m < 690 : m >= 840 && m < 1020) && Math.random() < 0.3 && S.doors().some((x) => keyOf(x) === 'cong' && x.open) && (wkend ? 'congWeekend' : 'cong');
+  if (congWhy && list.length && shopTrip(pick(list), S, { key: 'cong', why: congWhy })) { congDay = day; return; }
+  // Friday and weekend evenings, once, 18:00–21:00: Katinat, for the drink and the picture of it
+  if (checkinDay !== day && [5, 6, 0].includes(d.getDay()) && m >= 1080 && m < 1260 && Math.random() < 0.3 && list.length && shopTrip(pick(list), S, { key: 'katinat', why: 'checkin' })) { checkinDay = day; return; }
   // a hot afternoon outside (the city's real weather, 32° and up, dry): the trip is for a 10k cone at the Mixue
   const hot = !night && m >= 750 && m < 1050 && wx.temp != null && wx.temp >= 32 && wx.rain < 0.05 && S.doors().some((d) => keyOf(d) === 'mixue' && d.open);
   if (list.length) shopTrip(pick(list), S, hot ? { key: 'mixue', why: 'hot' } : { night });
+}
+/* ---------- Claude Code's version on this computer (server: GET /api/claude-version): a new one sends someone to Thế
+   Giới Di Động to "lên đời", once per version per page (the chat line is posted once, by the Mac's page) ---------- */
+let upgradeDue = '', coffeeDay = '', teaDay = '', checkinDay = '', congDay = '';
+const SEEN = 'office-claude-version';
+async function lookForUpgrade() {
+  const r = await fetch(`/api/claude-version${TOKEN ? `?k=${encodeURIComponent(TOKEN)}` : ''}`).then((x) => x.json()).catch(() => null);
+  if (!r?.version || !r.at || Date.now() - r.at > 6 * 3600e3) return;   // (the first one seen, or long ago: no news)
+  let seen = ''; try { seen = localStorage.getItem(SEEN) || ''; } catch { /* storage blocked */ }
+  if (seen === r.version) return;
+  try { localStorage.setItem(SEEN, r.version); } catch { /* storage blocked */ }
+  upgrade(r.version);
+}
+/** Claude Code is at a new version: the group hears of it, and someone free goes to Thế Giới Di Động (now, or soon). */
+export function upgrade(version) {
+  const S = street(), list = [...workers.values()].filter(resting);
+  if (S && !run && !replay.on && list.length && shopTrip(pick(list), S, { key: 'tgdd', why: 'upgrade', version })) return true;
+  upgradeDue = version; chatLife('tgdd', { version, every: 60e3 });
+  return false;
+}
+/** The work keeps failing (incidents.js: three failures in five minutes, the office goes red): someone resting right then
+    goes to Long Châu for something for the headache ("ra mua thuốc đau đầu"). Everyone at work fixing it: nobody goes (and
+    nothing is kept for later, so the demo's own incident at the start doesn't send anyone out a minute on). */
+export function headache() {
+  const S = street(), list = [...workers.values()].filter(resting);
+  return !!(S && !run && !replay.on && list.length && shopTrip(pick(list), S, { key: 'longchau', why: 'headache' }));
 }
 /** The CI green again after going red (incidents.js): someone resting goes to the Mixue for ice cream for everyone. */
 export function treat() {
@@ -494,11 +577,17 @@ export function treat() {
 }
 
 /* for tests and screenshots (?debug): send someone resting out now ('shop', to one chain if `key` says: 'gs25'…; 'night':
-   the late-night noodles), or order the lunch ('lunch') */
+   the late-night noodles; 'tea', 'checkin', 'headache': to Phúc Long, Katinat, Long Châu; 'cong', 'congWeekend': to Cộng),
+   or order the lunch ('lunch') */
 export function goOut(kind = 'shop', key = '') {
   const S = street(); if (!S || run) return false;
   if (kind === 'lunch') return orderLunch(S, officeNow().toDateString());
   if (kind === 'treat') return treat();
+  if (kind === 'upgrade') return upgrade(key || '9.9.9');
+  if (kind === 'morning') { const w = [...workers.values()].find(resting); return !!w && shopTrip(w, S, { key: 'highlands', why: 'morning' }); }
+  if (kind === 'headache') return headache();
+  if (kind === 'cong' || kind === 'congWeekend') { const w = [...workers.values()].find(resting); return !!w && shopTrip(w, S, { key: 'cong', why: kind }); }
+  if (kind === 'tea' || kind === 'checkin') { const w = [...workers.values()].find(resting); return !!w && shopTrip(w, S, { key: kind === 'tea' ? key || 'phuclong' : 'katinat', why: kind }); }
   const w = [...workers.values()].find(resting);
   return !!w && shopTrip(w, S, { key, night: kind === 'night' });
 }
@@ -507,4 +596,5 @@ export const outing = () => (run ? { kind: run.kind, stage: run.stage, id: run.w
 export function setup() {
   streetHooks.home = goHome;
   streetHooks.arrive = arrive;
+  if (!STATIC && !new URLSearchParams(location.search).has('demo')) { setTimeout(lookForUpgrade, 20e3); setInterval(lookForUpgrade, 3 * 60e3); }
 }

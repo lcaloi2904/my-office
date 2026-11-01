@@ -13,6 +13,8 @@ const LOOKS = ['toy', 'pixar'] as const;
 const QUALITY = [['auto', 0], ['low', 1], ['medium', 2], ['high', 3]] as const;
 const CITIES = [['hn', 'Hà Nội'], ['hcm', ''], ['dn', 'Đà Nẵng'], ['hue', 'Huế'], ['hp', 'Hải Phòng'], ['ct', 'Cần Thơ'], ['dl', 'Đà Lạt'], ['nt', 'Nha Trang']] as const;
 const TIME_ICON = { auto: 'clock', day: 'sun', night: 'moon' } as const;
+const LOOP_N = [2, 3, 4, 5], LOOP_MIN = [5, 10, 20, 30];   // (the server's choices: server/loops.mjs)
+const FAREWELL_DAYS = [14, 30, 60, 90];   // (server/tenure.mjs)
 
 export default async function SettingsPanel() {
   const t = await getT();
@@ -117,9 +119,37 @@ export default async function SettingsPanel() {
             <button id="btn-bell" className="tb-btn" type="button" aria-pressed="false" hidden><span data-icon="bell"></span><span className="lbl">{t('ui.topBar.bell')}</span><i className="badge" id="bell-dot" hidden></i></button>
           </div>
           </div>
+          <h3>{t('settings.chat')}</h3>
+          <div className="pop-toggles">{toggle('coach', true)}</div>
+          <p className="pop-note">{t('settings.coachNote')}</p>
           <h3>{t('settings.behaviour')}</h3>
-          <div className="pop-toggles">{toggle('sound', true)}{toggle('perm', true)}</div>
+          <div className="pop-toggles">{toggle('sound', true)}{toggle('perm', true)}{toggle('drill', true)}</div>
           <div className="pop-acts"><button id="btn-tips" className="tb-btn" type="button"><span data-icon="sparkle"></span><span className="lbl">{t('tips.again')}</span></button></div>
+          {/* the stuck-loop breaker (src/office/ui/stuck.js fills it in from the server; hidden in the demo) */}
+          <div className="st-loop" id="st-loop" hidden>
+            <h3>{t('settings.loop.title')}</h3>
+            <div className="pop-toggles"><button type="button" className="tgl" data-loop-tgl="" role="switch" aria-checked="true"><span>{t('settings.loop.on')}</span><i></i></button></div>
+            <p className="pop-note">{t('settings.loop.note')}</p>
+            <div className="st-loop-row"><span>{t('settings.loop.after')}</span>
+              <div className="seg">{LOOP_N.map((n) => <button key={n} type="button" data-loop-n={n} aria-pressed={n === 3 ? 'true' : 'false'}>{t('settings.loop.tries', { n })}</button>)}</div></div>
+            <div className="st-loop-row"><span>{t('settings.loop.costAfter')}</span>
+              <div className="seg">{LOOP_MIN.map((n) => <button key={n} type="button" data-loop-min={n} aria-pressed={n === 10 ? 'true' : 'false'}>{t('settings.loop.mins', { n })}</button>)}</div></div>
+            <p className="pop-note st-loop-install" id="st-loop-install" hidden>{t('settings.loop.install')}</p>
+          </div>
+          {/* farewells for projects gone quiet (src/office/people/farewell.js fills it in from the server; hidden in the demo) */}
+          <div className="st-loop" id="st-farewell" hidden>
+            <h3>{t('settings.farewell.title')}</h3>
+            <div className="pop-toggles"><button type="button" className="tgl" data-fw-tgl="" role="switch" aria-checked="true"><span>{t('settings.farewell.on')}</span><i></i></button></div>
+            <p className="pop-note">{t('settings.farewell.note')}</p>
+            <div className="st-loop-row"><span>{t('settings.farewell.after')}</span>
+              <div className="seg">{FAREWELL_DAYS.map((n) => <button key={n} type="button" data-fw-days={n} aria-pressed={n === 30 ? 'true' : 'false'}>{t('settings.farewell.days', { n })}</button>)}</div></div>
+          </div>
+          {/* the prompt cache's clock: the cups on the desks, and a phone told before a session waiting for you goes cold (src/office/ui/cache-words.js; hidden in the demo) */}
+          <div className="st-cache" id="st-cache" hidden>
+            <h3>{t('settings.cache.title')}</h3>
+            <p className="pop-note">{t('settings.cache.note')}</p>
+            <div className="pop-toggles"><button type="button" className="tgl" data-cache-nudge="" role="switch" aria-checked="false"><span>{t('settings.cache.nudge')}</span><i></i></button></div>
+          </div>
         </section>
       </div>
     </div>

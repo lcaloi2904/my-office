@@ -1,9 +1,10 @@
 // Demo mode: fictional projects and a fictional Mac.
 import { state } from '../core/state.js';
-import { $, STATIC, rand, replay } from '../core/env.js';
+import { $, STATIC, officeNow, rand, replay } from '../core/env.js';
 import { agentOf, observeReplayEvent, sessions, subs, workers } from '../people/workers.js';
 import { chatAct, chatApply, chatLeft, chatLoad } from '../ui/group-chat.js';
 import { setTrophies } from '../life/trophies.js';
+import { setLiftService } from '../life/lift-service.js';
 import { addFeed, queueFeed, queueUi, renderFeed, toast } from '../ui/activity.js';
 import { drM } from '../ui/session-drawer.js';
 import { acctLogin, acctMoved, acctSwitched, limitWarned, liveWindows, loadMac, renderLimits, renderMac } from '../ui/mac-drawer.js';
@@ -13,6 +14,9 @@ import { onEvent } from '../life/incidents.js';
 import { onPerm, perms, renderPerms, reportPresence } from '../ui/permissions.js';
 import { renderPhone } from '../ui/topbar.js';
 import { syncOmpEntry } from '../ui/omp-history.js';
+import { summarize } from '../../shared/burn.js';
+import { setTenure } from '../people/farewell.js';
+import { logLine } from './demo-log.js';
 import { t as tr } from '../../i18n/index.js';
 
 export let DEMO;
@@ -39,8 +43,9 @@ function demoProjects() {
       { prompt: d('staging.prompt'), steps: [['read', 'terraform/staging.tf'], ['edit', 'terraform/staging.tf'], ['bash', 'terraform plan']], wait: d('staging.wait') } ] },
   ];
 }
-let demoSeq = 0;
-export const demoLog = new Map(), demoTimers = [];
+let demoSeq = 0, demoReleases = 3;
+export const demoLog = new Map(), demoTimers = new Set();   // (a timer leaves the set when it fires: the demo runs for days)
+const demoLater = (fn, ms) => { const id = setTimeout(() => { demoTimers.delete(id); fn(); }, ms); demoTimers.add(id); };
 function demoEmit(s, type, label = '', extra = {}) {
   const now = Date.now(), e = { id: ++demoSeq, ts: now, sess: s.id, name: s.name, type, label, ...extra };
   if (!extra.agent && !['wait', 'stop', 'substart', 'substop', 'deploy'].includes(type)) s.last = { type, label };
@@ -53,15 +58,14 @@ function demoEmit(s, type, label = '', extra = {}) {
   if (type === 'edit' || type === 'write') state.stats.edit = (state.stats.edit || 0) + 1;
   if (type === 'bash' || type === 'test') state.stats.cmd = (state.stats.cmd || 0) + 1;
   if (type === 'deploy') state.stats.deploy = (state.stats.deploy || 0) + 1;
-  const log = demoLog.get(extra.agent || s.id) || []; demoLog.set(extra.agent || s.id, log);
-  if (type === 'prompt') log.push({ role: 'user', text: label, ts: now });
-  else if (type === 'stop') log.push({ role: 'claude', text: demoReply(demoSeq % REPLY_KEYS.length), ts: now });
-  else if (!['wait', 'substart', 'substop', 'testok', 'testfail', 'commit', 'push'].includes(type)) log.push({ role: 'tool', type: type === 'test' ? 'bash' : type, label, ts: now });
+  logLine(demoLog, extra.agent || s.id, type === 'prompt' ? { role: 'user', text: label, ts: now }
+    : type === 'stop' ? { role: 'claude', text: demoReply(demoSeq % REPLY_KEYS.length), ts: now }
+    : !['wait', 'substart', 'substop', 'testok', 'testfail', 'commit', 'push'].includes(type) ? { role: 'tool', type: type === 'test' ? 'bash' : type, label, ts: now } : null);
   upsertSession({ ...s, subs: s.subs.map((x) => ({ ...x })) });
   onEvent(e);
 }
 function demoRun(s, task, at = 0) {
-  const later = (ms, fn) => demoTimers.push(setTimeout(fn, ms));
+  const later = (ms, fn) => demoLater(fn, ms);
   const step = () => rand(1500, 3200);
   let t = at;
   later(t, () => { s.status = 'work'; s.taskStart = Date.now(); s.lastPrompt = task.prompt; demoEmit(s, 'prompt', task.prompt); });
@@ -86,8 +90,8 @@ function demoRun(s, task, at = 0) {
     if (type === 'test') {   // the run at the test board, then its result (mostly green; the first run of a new test red)
       later(t, () => demoEmit(s, 'test', label, { runner }));
       t += rand(3500, 6500);
-      const ok = outcome ? outcome === 'ok' : Math.random() < 0.85;
-      later(t, () => demoEmit(s, ok ? 'testok' : 'testfail', runner));
+      const ok = outcome ? outcome === 'ok' : Math.random() < 0.85, n = 12 + Math.floor(Math.random() * 30);   // (how many passed and failed, as a runner's summary says)
+      later(t, () => demoEmit(s, ok ? 'testok' : 'testfail', runner, ok ? { pass: n, fail: 0 } : { pass: n - 1, fail: 1 }));
     } else later(t, () => demoEmit(s, type, label));
   });
   // most tasks end in a commit (a letter in the lobby's post box); every third one is pushed (the postman comes)
@@ -96,6 +100,7 @@ function demoRun(s, task, at = 0) {
     later(t, () => {
       demoEmit(s, 'commit', task.prompt); s.commits = (s.commits || 0) + 1;
       if (s.commits % 3 === 0) later(rand(4000, 9000), () => demoEmit(s, 'push', 'main', { branch: 'main', repo: s.name }));
+      if (s.commits % 6 === 0) later(rand(12000, 16000), () => demoEmit(s, 'release', `v1.${(demoReleases += 1)}.0`, { repo: s.name }));   // (a version tag now and then: the photo booth, people/photobooth.js)
     });
   }
   if (task.deploy) { t += step(); later(t, () => demoEmit(s, 'deploy', task.deploy)); }
@@ -108,10 +113,16 @@ function demoLoop(s, p, first) {
   let k = first ? 0 : Math.floor(Math.random() * p.tasks.length);
   // between tasks a short pause, now and then a long break: long enough to nap, fetch the lunch or pop out to the shop
   // (people/outings.js)
-  const go = (delay) => { const task = p.tasks[k++ % p.tasks.length]; const end = demoRun(s, task, delay); demoTimers.push(setTimeout(() => go(Math.random() < 0.22 ? rand(70000, 150000) : rand(6000, 16000)), end + 50)); };
+  const go = (delay) => { const task = p.tasks[k++ % p.tasks.length]; const end = demoRun(s, task, delay); demoLater(() => go(Math.random() < 0.22 ? rand(70000, 150000) : rand(6000, 16000)), end + 50); };
   go(first ? rand(300, 2500) : rand(4000, 14000));
 }
 const demoAuto = { hours: 0, last: null };
+// the demo's battery, by the office clock: four hours a round, three and a third of them running down from full to
+// 12% (the e-scooters in the street follow it: street-ev.js), then charging back up
+function demoBattery() {
+  const m = (officeNow().getTime() / 60000) % 240;
+  return m < 200 ? { pct: Math.round(100 - m * 0.44), charging: false, ac: false } : { pct: Math.round(12 + (m - 200) * 2.2), charging: true, ac: true };
+}
 export function demoMac() {
   const GBb = 1024 ** 3, now = Math.round(Date.now() / 1000), list = [...sessions.values()];
   const claude = list.map((s, i) => ({ pid: 52000 + i, start: now - 3600 * (i + 1), name: s.name, dir: s.dir, busy: s.status !== 'rest', idle: s.status === 'rest' ? Math.round((Date.now() - s.lastAt) / 1000) + 3600 * i : 0, mem: (260 + i * 90) * 1024 ** 2, remote: i === 0 }));
@@ -131,11 +142,40 @@ export function demoMac() {
   ];
   return { at: Date.now(), mem: { used: 12.6 * GBb, total: 16 * GBb, pressure: 'warn', swapUsed: 3.1 * GBb, swapTotal: 6 * GBb }, cpu: { percent: 42 + Math.round(Math.random() * 10), cores: 10, load: 4.2 },
     disk: { used: 301 * GBb, total: 460 * GBb, free: 159 * GBb }, tight: true, diskTight: false, devServers: [dev, lost], claude, orphans: [],
+    battery: demoBattery(),
     apps: [{ name: 'Google Chrome', mem: 4.8 * GBb, cpu: 31, count: 22, quit: true }, { name: 'Slack', mem: 1.2 * GBb, cpu: 3, count: 6, quit: true }, { name: 'Spotify', mem: 0.6 * GBb, cpu: 2, count: 5, quit: true }, { name: 'Claude Code', mem: 2.1 * GBb, cpu: 14, count: 6, quit: false }],
     ide: { name: 'Claude Code', mem: 2.1 * GBb, windows: 2, ui: { mem: 0.9 * GBb, n: 6 }, ts: { mem: 0, n: 0 }, ext: { mem: 0.6 * GBb, n: 2 }, other: 0.6 * GBb, chats: claude.length, idleChats: claude.filter((c) => !c.busy).length },
     held: 15.2 * GBb, rules: { sessionIdle: 2700, devIdle: 7200, pressure: 'warn' }, auto: demoAuto,
     trend: Array.from({ length: 31 }, (_, i) => ({ t: Date.now() - (30 - i) * 60e3, used: (11.4 + Math.sin(i / 4) * 0.5 + i * 0.04) * GBb, total: 16 * GBb, swap: (2.2 + i * 0.03) * GBb })),
     tips, cleanups: [{ id: 'claude-tmp', title: M('tmpTitle'), detail: M('tmpCleanup'), size: 8.4 * GBb }, { id: 'next-cache', title: M('nextTitle'), detail: M('nextDetail'), size: 0.7 * GBb }, { id: 'npm-cache', title: M('npmTitle'), detail: M('npmDetail'), size: 0.3 * GBb }], cleanupsAt: Date.now() };
+}
+// What eats the plan in the demo (ui/burn.js): a week of made-up sums for the fictional projects, summed as the server
+// sums its own (src/shared/burn.js), on a plan whose week is 46 % used.
+export function demoBurn(range = 'today') {
+  const at = Date.now(), dayOf = (i) => new Date(at - i * 864e5).toLocaleDateString('sv-SE');
+  const S = [['shop-api', 4.2, 'claude-opus-5-5', ['github', 'pdf', 'Explore']], ['landing-page', 2.1, 'claude-sonnet-5', ['', 'frontend-design', '']],
+    ['data-pipeline', 1.6, 'claude-opus-5-5', ['linear', '', 'Plan']], ['mobile-app', 0.9, 'claude-sonnet-5', ['', '', 'Explore']], ['docs-site', 0.35, 'claude-haiku-4-5', ['', '', '']]];
+  const sess = {}, days = [];
+  for (let i = 6; i >= 0; i--) {
+    const s = {}, k = 0.55 + ((i * 37) % 10) / 12;   // (each day a little different, the same on every visit)
+    for (const [j, [name, usd, model, [mcp, skill, agent]]] of S.entries()) {
+      const sid = `demo-${name}-${i}`, u = usd * k * (i ? 1 : 0.8), m = {};
+      sess[sid] = { m: true, cwd: `~/projects/${name}`, l: at - i * 864e5 - j * 600e3 };
+      // a share of the session's cost under one attribution (model, source, agent, skill, plugin, MCP server)
+      const put = (share, src, a = '', sk = '', mc = '') => {
+        const key = [model, src, a, sk, sk === 'pdf' ? 'document-skills' : '', mc].join('\t'), v = u * share, was = m[key] || [0, 0, 0, 0, 0, 0];
+        m[key] = [was[0] + v, ...[1200, 900, 42000, 3000].map((t, x) => was[x + 1] + Math.round(t * v)), 0];
+      };
+      put(0.42, 'main'); put(0.06, 'auxiliary');
+      put(0.24, 'main', '', '', mcp); put(0.12, 'main', '', skill); put(0.16, agent ? 'subagent' : 'main', agent);
+      s[sid] = { m, e: {}, req: Math.round(u * 9), err: 0, pr: Math.round(u * 2) + 1 };
+    }
+    days.push([dayOf(i), { s }]);
+  }
+  const n = range === '7d' ? 7 : 1, r = summarize(days.slice(7 - n), sess, { at }), week = summarize(days, sess, { at }).total.usd;
+  const named = r.sessions.map((x) => ({ ...x, name: x.project, dir: x.cwd, open: x.sid.endsWith('-0') }));
+  return { ok: true, range: n === 7 ? '7d' : 'today', days: days.slice(7 - n).map(([d]) => d), ...r, sessions: named, rest: { n: 0, usd: 0, share: 0 }, setup: 'ours',
+    lastMetricsAt: at - 20e3, lastLogsAt: at - 4e3, plan: { pct: 46, resetsAt: at + 3 * 864e5, perUsd: 46 / week, name: 'Max' } };
 }
 // Replies in the demo conversation: what Claude usually writes (lists, code, tables), so the reader can be judged.
 // Claude's to-do lists, by project (the second project has none).
@@ -260,7 +300,7 @@ export function startDemo() {
   ]);
   state.connectedOnce = true; setConn(true); queueUi();
   // one scripted incident so the red alarm can be seen: three failing commands in a row
-  demoTimers.push(setTimeout(() => { const list = [...sessions.values()]; [0, 1, 2].forEach((k) => setTimeout(() => demoEmit(list[k % list.length], 'fail', tr('demo.incident')), k * 900)); }, 45000));
+  demoLater(() => { const list = [...sessions.values()]; [0, 1, 2].forEach((k) => setTimeout(() => demoEmit(list[k % list.length], 'fail', tr('demo.incident')), k * 900)); }, 45000);
 }
 // One handler for the live stream and for replays. `quiet` (fast-forwarding a replay) places people without walking
 // and fills the feed without bubbles or animations.
@@ -293,6 +333,7 @@ export function applyMsg(d, quiet = false) {
       state.todos = d.todos || []; onTodos();
       state.omp = d.omp || null; syncOmpEntry();
       if (d.trophies) setTrophies(d.trophies);
+      if (d.lift) setLiftService(d.lift);   // (the lift's servicing after the server started: life/lift-service.js)
       state.limits = d.limits || null; state.limitsNote = d.limitsNote || ''; for (const w of liveWindows()) if (w.pct >= 80) limitWarned.add(`${w.key}:${w.resetsAt}:${w.pct >= 95 ? 95 : 80}`); renderLimits();
       $('btn-phone').hidden = false; if ($('btn-phone-top')) $('btn-phone-top').hidden = !state.isLocal;   // (on a phone: its PIN, and what the Mac allows it)
       $('btn-bell').hidden = !('Notification' in window) || !window.isSecureContext;
@@ -332,6 +373,7 @@ export function applyMsg(d, quiet = false) {
   else if (d.k === 'ompUsage') { state.ompUsage = d.ompUsage || null; renderLimits(); if (!drM.hidden) renderMac(); }
   else if (d.k === 'sysauto') { if (!quiet) { toast(d.message, 8000); loadMac(); } }   // (idle sessions closed on the drawer's timer)
   else if (d.k === 'trophies') setTrophies(d.t, quiet ? [] : d.earned || []);
+  else if (d.k === 'tenure') setTenure(d);   // (the projects' working lives: a farewell due, one back; people/farewell.js)
   else if (d.k === 'vi') relabel(d.from, d.to);
 }
 // a translation that arrived after its event: swap the words in bubbles, the feed and the session list

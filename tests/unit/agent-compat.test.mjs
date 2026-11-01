@@ -127,7 +127,7 @@ function productionProjection(sessions, overrides = {}) {
     createAgentRegistry, createClaudeAdapter, projectClaudeSession, sessions, ompAdapter: null,
     readLog: async () => [], tilde: (v) => v, oneLine: (s) => s.replace(/\n/g, ' '),
     unwrapPaste: (s) => s, acctOf: (s) => s.acct || '', acctShown: (s) => s,
-    git: { identityOf: () => null }, gitOf: () => null, liveCtx: (s) => ({ ctx: s.usage.ctx, ctxMax: 100 }),
+    cacheOut: () => null, git: { identityOf: () => null }, gitOf: () => null, liveCtx: (s) => ({ ctx: s.usage.ctx, ctxMax: 100 }),
     ...overrides,
   }, { timeout: 1000 });
 }
@@ -216,24 +216,26 @@ function routeFixture() {
 }
 
 async function requestCallback(fixture, url, body, method = 'POST', extra = {}) {
+  const workStart = serverSource.indexOf('async function giveWork(');
+  const workEnd = serverSource.indexOf('\n// a kept note,', workStart);
   const start = serverSource.indexOf('const server = http.createServer(');
   const end = serverSource.indexOf('\n});', start);
-  assert.ok(start > 0 && end > start, 'HTTP callback boundary exists');
-  const callback = serverSource.slice(start + 'const server = http.createServer('.length, end + 2);
+  assert.ok(workStart > 0 && workEnd > workStart && start > 0 && end > start, 'HTTP callback boundary exists');
+  const callback = serverSource.slice(workStart, workEnd) + '\n;(' + serverSource.slice(start + 'const server = http.createServer('.length, end + 2) + ')';
   const calls = { open: 0, move: 0, start: 0, log: 0 }, responses = [];
   const context = {
     URL, PAGE_FILES: new Set(), DEV: false,
     isLoopback: () => true, hostAllowed: () => true, sameOriginOf: () => true, authorized: () => true,
     readJson: async () => body, json: (_, status, payload) => responses.push({ status, payload }),
     isClaudeRequest, agents: fixture.agents, sessions: fixture.sessions,
-    tr: (key) => key, knownDirs: ['/synthetic/repo'], os: { homedir: () => '/synthetic/home' },
+    tr: (key) => key, knownDirs: ['/synthetic/repo'], stranded: { dirOf: () => null }, clientIp: () => '127.0.0.1', os: { homedir: () => '/synthetic/home' },
     openWindow: async (s) => { calls.open++; assert.equal(s, fixture.s); return { ok: true, app: 'fixture' }; },
     moveSession: async (s) => { calls.move++; assert.equal(s, fixture.s); return { ok: true }; },
     tasks: { start: () => { calls.start++; return { ok: false, code: 'synthetic' }; } },
     slugOf: (s) => s, ACTION_LOG: 'synthetic-log', fsp: { appendFile: async () => { calls.log++; } },
     prefs: { get: () => false }, ...extra,
   };
-  const handler = vm.runInNewContext('(' + callback + ')', context, { timeout: 1000 });
+  const handler = vm.runInNewContext(callback, context, { timeout: 1000 });
   handler({ url, method, headers: { 'content-type': 'application/json' }, socket: {}, ...extra.req }, extra.res || {});
   for (let i = 0; i < 20 && !responses.length; i++) await new Promise((resolve) => setImmediate(resolve));
   assert.equal(responses.length, 1, 'one response from the real handler, without server startup');
@@ -433,7 +435,7 @@ test('actual List Mode keeps unknown providers visible without NaN or fake activ
     fp: { on: false }, closePlace() {}, colorOf: () => '#000', dn: (s) => s.name,
     doingOf: (s) => { assert.equal(s.id, 'c'); return { text: 'rest' }; },
     fmtClock: () => assert.fail('must not invent active duration for unknown'),
-    nowMs: () => 1, short: (s) => s,
+    nowMs: () => 1, short: (s) => s, cacheWords: () => ({ text: '' }),
   });
   list.setLite(true);
   const text = nodeText(box);

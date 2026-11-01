@@ -6,6 +6,9 @@ import { defineConfig } from '@playwright/test';
 const PORT = Number(process.env.E2E_PORT) || 4399, OUT = process.env.E2E_OUT || 'test-results';
 // a home folder of its own too: the office never reads (or, adding an account, writes) the real ~/.claude folders
 export const HOME_DIR = path.resolve(OUT, 'home');
+// Claude Code's own folder inside that home, whatever the shell running the tests has set: a test must never read or
+// write the real one (settings, sessions, transcripts), and every server a test starts on its own inherits this too
+process.env.CLAUDE_CONFIG_DIR = path.join(HOME_DIR, '.claude');
 export const DATA_DIR = path.resolve(OUT, 'office-data');
 export default defineConfig({
   testDir: 'tests/e2e',

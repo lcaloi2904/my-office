@@ -36,6 +36,8 @@ export default {
     pulse: 'Activity, last 30 min',
   },
   // headquarters: the department rooms' door plaques and the wing's signs
+  // the stairs beside the lift (world/entrance.js): the exit sign over the door, the floor's number on the landing, the plate
+  stairs: { exit: 'EMERGENCY EXIT', exitSub: 'STAIRS', floor: 'FLOOR', plate: 'STAIRS', plateSub: 'Floor {n}' },
   dept: {
     free: 'DEPARTMENT {n}',
     freeSub: 'free for the next project',
@@ -230,4 +232,6 @@ export default {
       tea: 'Iced tea',
     },
   },
+  // the note taped to the pantry's microwave cabinet (world/props/microwave.js)
+  microwave: { note1: 'OPEN THE LID!', note2: 'Wipe it after use', note3: 'Go easy on fish & mắm 🙏' },
 };

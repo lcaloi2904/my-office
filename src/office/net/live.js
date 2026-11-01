@@ -8,7 +8,7 @@ import { CHAIR_IDLE, DESKS, PODS, UNITS, chairs, unitOfDesk } from '../world/des
 import { canvasTex } from '../scene/blocks.js';
 import { DEPTS } from '../world/layout.js';
 import { DEPT_SIGNS } from '../world/pro/wing.js';
-import { ACTOR_BUDGET, CHILD_ACTOR_BUDGET, PALETTE, actorCount, actorIdentity, addWorker, agentOf, childActorKey, childObservation, dn, freeActor, hash, leaving, observeActor, sessions, spawnSub, subs, workers } from '../people/workers.js';
+import { ACTOR_BUDGET, CHILD_ACTOR_BUDGET, PALETTE, actorCount, actorIdentity, addWorker, agentOf, childActorKey, childObservation, dn, dropSub, freeActor, hash, leaving, observeActor, sessions, spawnSub, subs, workers } from '../people/workers.js';
 import { queueUi } from '../ui/activity.js';
 import { closeSession } from '../ui/session-drawer.js';
 import { t as tr } from '../../i18n/index.js';
@@ -33,6 +33,9 @@ const projectLabel = (s) => s?.git?.repo || String(s?.dir || '').split(/[\\/]/).
 // screens do; a room fills its first pod before the second
 const SEAT_ORDER = [0, 3, 1, 2, 4, 7, 5, 6];
 const AREAS_KEY = 'office-areas';
+/** the area a project last had on this device (people/farewell.js), or -1 */
+export const areaOf = (proj) => { const u = homes[proj]?.[0]; return u != null && u < UNITS.length ? u : -1; };
+export { projOf };
 let homes = {};   // project -> [area, …] it had, latest first (localStorage)
 try { homes = JSON.parse(localStorage.getItem(AREAS_KEY) || '{}') || {}; } catch { /* storage blocked */ }
 function remember(proj, u) {
@@ -111,12 +114,17 @@ export function reconcileActors(walkInId = null) {
     s.flattened = children.some((x) => x.parentAgentKey && x.parentAgentKey !== rootKey);
     for (const child of visible) wanted.set(childActorKey(s, child), { s, child });
   }
-  for (const [key, w] of subs) if (!wanted.has(key) || !rootIds.has(w.parent?.id)) { subs.delete(key); freeActor(w); }
+  for (const [key, w] of subs) {
+    if (!wanted.has(key) || !rootIds.has(w.parent?.id)) {
+      if (rootIds.has(w.parent?.id) && agentOf(sessions.get(w.parent?.id)) === 'claude' && !replay.on) dropSub(key);
+      else { subs.delete(key); freeActor(w); }
+    }
+  }
   for (const [id, w] of workers) if (!rootIds.has(id)) { workers.delete(id); freeActor(w); freeDesk(id); }
   // A reconnect or a full scene must not retain an old walk-out alongside its replacement.
   const needed = roots.length + wanted.size;
   for (const w of [...leaving]) {
-    if (sessions.has(w.parent?.id || w.id) || actorCount() >= ACTOR_BUDGET || needed + leaving.size > ACTOR_BUDGET) freeActor(w);
+    if ((!w.sub && sessions.has(w.id)) || (w.sub && !sessions.has(w.parent?.id)) || actorCount() > ACTOR_BUDGET || needed + leaving.size > ACTOR_BUDGET) freeActor(w);
   }
   for (const s of roots) {
     s.desk = proDesk(s);
@@ -126,6 +134,7 @@ export function reconcileActors(walkInId = null) {
     }
     if (!w) continue;
     w.setName(short(dn(s), 26)); w.setAgent(agentOf(s)); w.setAcct(agentOf(s) === 'claude' ? s.acct : '');
+    w.setStuck(agentOf(s) === 'claude' ? s.stuck : null);
     w.setTeam((s.subs || []).length);
     observeActor(w, s);
   }

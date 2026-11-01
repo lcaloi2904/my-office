@@ -30,6 +30,8 @@ export default {
     plan: 'Gói 5 giờ: {pct}%',
     pulse: 'Nhịp làm việc 30 phút',
   },
+  // thang bộ cạnh thang máy (world/entrance.js): biển thoát hiểm trên cửa, số tầng sơn trên chiếu nghỉ, biển cạnh cửa
+  stairs: { exit: 'LỐI THOÁT HIỂM', exitSub: 'EXIT', floor: 'TẦNG', plate: 'THANG BỘ', plateSub: 'Tầng {n}' },
   dept: {
     free: 'PHÒNG BAN {n}',
     freeSub: 'chờ dự án tiếp theo',
@@ -224,4 +226,6 @@ export default {
       tea: 'Trà đá',
     },
   },
+  // the note taped to the pantry's microwave cabinet (world/props/microwave.js)
+  microwave: { note1: 'MỞ NẮP KHI HÂM!', note2: 'Hâm xong lau lò giùm', note3: 'Hạn chế hâm cá, mắm 🙏' },
 };

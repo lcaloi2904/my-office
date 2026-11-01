@@ -13,6 +13,7 @@ import { TOKEN } from '../net/live.js';
 import { unseenDone } from '../life/your-turn.js';
 import { DEMO, demoLog } from '../demo/demo.js';
 import { acctActions } from './session-account.js';
+import { drawDrawerCache } from './cache-words.js';
 import { t as tr, locale } from '../../i18n/index.js';
 import { appendSessionBadges, childState, counterNote, projectLabel, renderSessionProviderBreakdown, sessionMetricView } from './session-info.js';
 
@@ -50,6 +51,7 @@ export function renderSessionHead() {
   $('ds-dot').style.background = colorOf(s);
   $('ds-name').textContent = dn(s);
   const dir = $('ds-dir'); dir.replaceChildren(document.createTextNode([projectLabel(s), s.origin].filter(Boolean).join(' · '))); appendSessionBadges(dir, s);
+  drawDrawerCache();   // (its prompt cache: warm for how long, or cold)
   const st = $('ds-status'); st.textContent = agentOf(s) === 'omp' ? unknownLabel(s) : STATUS_LABEL[s.status] || unknownLabel(s); st.dataset.status = s.status;
   $('dr-session').dataset.lifecycle = s.lifecycle || '';
   for (const k of ['read', 'edit', 'cmd']) { $('ds-' + k).textContent = s.counts?.[k] ?? '–'; $('ds-' + k).parentElement.title = counterNote(s); }

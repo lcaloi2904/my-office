@@ -73,6 +73,19 @@ export default {
     full: 'Bảng đã có {n} việc. Xoá bớt việc đã xong rồi thêm tiếp.',
     gone: 'Việc này không còn trên bảng.',
   },
+  loop: {
+    deny: 'My Office đã chặn lệnh này: nó đã chạy {n} lần và lần nào cũng lỗi y hệt, chạy lại y như cũ sẽ lại lỗi. Hãy đổi cách khác, hoặc dừng lại hỏi người dùng.',
+    stopReason: 'Người dùng đã bấm Dừng trong My Office.',
+    hintFor: 'Người dùng gửi gợi ý từ My Office: {hint}',
+    pushTitle: '⛔ {name} đang bị kẹt',
+    resting: '{name} đang nghỉ rồi, không có gì để dừng.',
+    gone: 'Phiên này đã đóng.',
+  },
+  cache: {
+    nudgeTitle: '☕ {name} còn {n} phút là nguội',
+    nudgeBody: 'Phiên đang chờ bạn trả lời. Trả lời ngay thì nhắn tiếp rẻ; để nguội thì lần nhắn sau sẽ đọc lại ~{tokens}k token.',
+  },
+  steer: { note: '[Người dùng chen lời qua My Office (từ điện thoại) trong lúc bạn đang làm]\n{text}' },
   push: {
     permTitle: '⚠️ {name} cần bạn duyệt (trong 45 giây)',
     testTitle: '🔔 My Office',

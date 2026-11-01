@@ -42,8 +42,8 @@ Then open <http://localhost:4310>.
 
 | Command | What it does |
 | --- | --- |
-| `install [--service] [--lan] [--no-approve] [--no-status]` | Adds three kinds of hooks: event hooks, approval hooks, and a status line that reports your plan's usage. Your own status line keeps running inside it. `--service` runs the office in the background from login: launchd on macOS, a systemd user service on Linux, the Startup folder on Windows (no admin needed). `--lan` lets a phone on the same Wi-Fi watch. `--no-approve` leaves out the approval hooks. `--no-status` leaves your status line alone. |
-| `uninstall` | Removes every My Office hook and the background service, and keeps the rest of `settings.json`. |
+| `install [--service] [--lan] [--no-approve] [--no-status] [--no-otel] [--no-otel-names]` | Adds three kinds of hooks: event hooks, approval hooks, and a status line that reports your plan's usage. Your own status line keeps running inside it. It also turns on Claude Code's own usage numbers (OpenTelemetry) for "What eats your plan", unless you already send them somewhere: see below. `--service` runs the office in the background from login: launchd on macOS, a systemd user service on Linux, the Startup folder on Windows (no admin needed). `--lan` lets a phone on the same Wi-Fi watch. `--no-approve` leaves out the approval hooks. `--no-status` leaves your status line alone. `--no-otel` leaves telemetry off; `--no-otel-names` keeps the names of your own MCP servers, skills and agents hidden ("custom"). |
+| `uninstall` | Removes every My Office hook, the telemetry settings install added, and the background service, and keeps the rest of `settings.json`. |
 | `doctor` | Checks each step and says what is missing and how to fix it. |
 | `start [--lan]` | Runs the server in this terminal (no launchd). |
 | `pin [--new]` | Shows the phone PIN; `--new` changes it and signs every phone out. |
@@ -84,6 +84,13 @@ Then open <http://localhost:4310>.
   come back as soon as there is work, or in the morning. With the city outside they go by the street, each their own way:
   their own scooter from the row parked on the pavement in front of the building, a GrabBike or Xanh SM bike (on the
   back), or a Xanh SM taxi. The session list says where anyone out is ("In Circle K", "Heading home (GrabBike)").
+- **The lift after a restart** (company floor): for the first three minutes after the office's server starts (five when
+  it starts on a new build) the lift is being serviced: doors half open behind a yellow-and-black barrier ("UNDER
+  MAINTENANCE · Sorry for the inconvenience"), the call panel open, the car's light flickering, a technician in blue at
+  work with his toolbox and multimeter. Everyone takes the stairs beside it, slower down and out of breath at the top,
+  and the group chat grumbles. At the end he takes the barrier away and rides the lift down; after a new build he first
+  puts an inspection sticker with the version and the date in the car, which stays there. Nothing waits for it.
+  (`?liftservice`, or `?liftservice=new`, shows it.)
 - **Out of Claude**: when an account's plan limit (the 5 hours or the week) is used up, the people on that account leave
   their desks for a break: a tea at the pantry tables, a book, a chat. A board on the wall counts down to when it can be
   used again; when it resets the bell rings and they go back to their desks. Anyone whose session is still working keeps
@@ -121,6 +128,59 @@ Then open <http://localhost:4310>.
   lunar 1st and 15th (the real lunar calendar) the receptionist sets out five fruits on a footed dish, xôi gấc and
   yellow chrysanthemums, lights three sticks of incense and bows; the smoke rises for most of an hour (`?lunar=1` to see
   it any day).
+- **Lunch from home at the microwaves** (company floor): about a third of the office brings rice from home (more than half
+  on a Monday, nobody at the weekend), in a clipped plastic box, a glass one or a stainless tin, carried in an insulated
+  bag. From 11:45 they line up at the pantry's two microwaves, phone out: the door opens, the box goes in, the plate
+  turns in the light, two or three minutes, "tít tít tít" (with the sound on), the next one steps up. Cá kho or mắm leaves
+  smell lines over the corner and a grumble in the group chat; a lid left clipped shut pops. Then lunch at a pantry table
+  or at the desk. They don't fetch the GrabFood or go down to the quán cơm (`?comnha` to see it now).
+- **Daily duty rota** (trực nhật, company floor): a whiteboard on the pantry wall names today's four chores and who does
+  them, the turn moving on each working day among the people of the projects here (HR posts the list in the group chat
+  in the morning): wash the cups, which pile up at the sink through the day (the morning coffee, a glass at lunch, the
+  afternoon cà phê) and are washed one by one after the nap; take the bin bag out to the bin room on the stairs' landing
+  at about five; water the plants in the morning; wipe the pantry's tables. Each does it while resting, never in the
+  middle of work. A chore never got to is owed the next morning: the group chat grumbles ("Hôm qua ai trực mà ly chất
+  đống vậy 😤"), the one whose turn it was says sorry and does it first thing (the board says so in red; the bin spills
+  over meanwhile). The 18:30 cleaner mops the floors and leaves the bin to the rota. No duty at the weekend or on public
+  holidays (the official Vietnamese holidays, Tết and Ngày Văn hóa Việt Nam included). Kept in the browser, per day
+  (`?duty` to see every chore now).
+- **Quarterly fire drill** (diễn tập PCCC, company floor): on the first working day of each quarter HR pins the notice
+  in the group chat, and at 15:00 the fire alarm rings (with the sound on) and the horn-strobes on the walls flash. The
+  lift goes down to the ground floor and parks; HR, the floor's fire marshal in a red armband, calls everyone out, and
+  every person on the floor (working or not, the receptionist, the director) walks down the stairs, never the lift,
+  HR last. With the city outside they gather at an assembly point on the pavement by a green "ĐIỂM TẬP KẾT" standee;
+  HR takes the roll on her clipboard ("Có!") and reports the count and the time it took; the guard, the other marshal,
+  lights a practice fire in a steel tray and shows the powder extinguisher (shake, pull the pin, aim at the base,
+  squeeze), the fire goes out, a round of applause, and everyone goes back up in the lift. Purely for show: the
+  sessions keep working throughout. As Vietnam's fire law has it (Luật PCCC và CNCH 2024; Nghị định 105/2025/NĐ-CP,
+  Điều 16: a facility practises its fire plan at least once a year) and the fire police's guidance (stairs only, never
+  the lift). Settings → More turns it off (`?drill` for one now).
+- **Make-up Saturdays and swapped days off** (làm bù, nghỉ bù): the office keeps Vietnam's official calendar, its public
+  holidays and the Government's swaps (a weekday taken off to join a holiday to the weekend, a Saturday worked for it),
+  in a small dated table with each notice (`src/shared/workdays.js`, how to add a year in its comment). On a make-up
+  Saturday the office works as on any weekday: the receptionist at the front desk, lunch from home and the quán cơm,
+  the duty rota; in the morning someone grumbles in the group chat ("Thứ Bảy mà vẫn phải lên công ty 😩 làm bù mà").
+  The day swapped off is a day off (the front desk shut, no lunch, no rota, no Monday stand-up), as are weekends and
+  holidays; on the last afternoon before a break of three days or more someone says how long it is, and which Saturday
+  to come back on. As announced up to now: Saturday 10/1/2026 for Friday 2/1, Saturday 22/8/2026 for Monday 31/8; none
+  for 2027 (the Government chose Tết 4/2–10/2 and Quốc khánh 2/9–5/9 without one).
+- **Farewells** (tiệc chia tay): a project that really was at work (on two days or more) and has had no session for 30
+  days (Settings → More: 14, 30, 60 or 90, or off) gets a last afternoon in office hours: its person comes in once more
+  with the company card on a lanyard and packs the desk into a cardboard box (the little plant, the mug, the photo frame)
+  while the area's carpet shows; everyone free gathers at the meeting table for HR's small cake and a big card each one
+  signs ("Chúc em thành công", "Nhớ ghé chơi nha"); "Một, hai, ba… cười nào!" and the group photo goes in the group
+  chat; the card is handed back to HR; then out by the lift with the box, the carpet rolls itself up and the desk gets a
+  "Bàn trống" card. Open the project again and its person comes back to the old company: teased in the chat ("Ủa quay
+  lại hả 😆"), the box unpacked, the carpet out again. Only a scene: nothing about the project is touched; the office
+  keeps each project's working life in `data/tenure.json` (on its first run it reads, once, only the dates and folders
+  of Claude Code's transcripts).
+- **Interns made permanent**: a project new to the office (unknown to it and to Claude Code before this came in, so
+  nobody becomes an intern on an update) starts as an intern: its people wear an orange "Thực tập sinh" lanyard and a
+  small "Thực tập sinh" plate stands on the desk. After 20 finished turns on two different days or more, HR holds the
+  ceremony in office hours: the intern goes to her desk, signs the "Hợp đồng lao động" she lays out, the red company
+  stamp comes down, the director walks over to shake hands while the people nearby clap, and back at the desk a name
+  plate takes the intern's place; the group chat says "Chúc mừng … lên chính thức 🎉" (and someone asks for the milk
+  tea it calls for). In the small office, a cake at the meeting table instead.
 - **The midday nap**, 12:30–13:30: the blinds come down, the room dims a little, and whoever has nothing running naps
   at their desk, half leaning back under a blanket, half head down on the desk. An alarm at 13:30, and the blinds go up.
 - **The look of the place**:
@@ -137,6 +197,18 @@ Then open <http://localhost:4310>.
     King's statue by the window, the order counter with the soft-serve machine, the menu's light boxes at real prices
     (the 10.000đ cone, the 25.000đ milk tea), staff in black T-shirts, schoolchildren with cones after school and milk tea
     in the evening, and on weekend evenings the Snow King himself dancing out front to its tune ("Oh! Susanna").
+    Next to it a Highlands Coffee (the deep red sign with its emblem, phin sữa đá and freeze at real prices, laptops in
+    the morning) and a Thế Giới Di Động (the long yellow sign with "thegioididong.com" in black, the promotions on the
+    glass, phones on the display tables, staff in yellow, a tube man dancing at the door, 8:00–22:00). Where the chain
+    really has shops (Hanoi, Ho Chi Minh City, Đà Nẵng, Nha Trang; painted further down the street in Hải Phòng, Huế and
+    Đà Lạt) a Cộng Cà Phê: the army-green front with CỘNG CÀ PHÊ in warm white letters, the white box with its logo out
+    on a bracket, a little roof of terracotta tiles, a plank painted "Ở ĐÂY CÓ BÁN CÀ PHÊ"; inside the retro look of
+    1980s Hanoi (olive walls, worn wooden floor, low wooden stools, a bench with cushions in the red "chăn con công"
+    print, enamel mugs and thermos flasks, an old radio and a wooden-cased TV, faded photographs and a tear-off calendar),
+    the menu printed like ration coupons at the real prices (cốt dừa cà phê 59.000đ, bạc xỉu 45.000đ), staff in olive,
+    folding metal chairs out front and an old bicycle with a basket of flowers, 7:00–23:00. On weekday afternoons and
+    weekend mornings someone resting goes for a cốt dừa ("Đi Cộng làm ly cốt dừa không?"); walking in, you can order at
+    the counter or sit on the low stool by the window.
     The streets follow the office clock: in the morning and evening rush twice the scooters, riding three abreast and
     crawling; empty streets in the small hours. Cars pull in to the kerb in front of the shops and along the park,
     indicating, and pull out again later; taxis stop for a fare with their hazard lights on. Street food across the
@@ -180,6 +252,28 @@ Then open <http://localhost:4310>.
     police stand on the quán's street, and a regular who rides off on his own scooter is stopped and breath-tested. The
     quán's chip opens its menu (illustrative prices) and who from the office is at the table; in first person, E to sit
     down with them (`?nhau` to see it any time);
+  - a pickleball court by a park, at its real size (20 × 44 ft, the kitchen 7 ft each side of the net, the net 34 in in
+    the middle and 36 in at the posts), blue on green, chain-link fence and windscreens, LED floodlights in the evening,
+    "200.000–300.000đ/giờ sau 17h" on the board at the gate; the neighbourhood plays doubles on weekday evenings and
+    weekend mornings and evenings, in visors, tennis skirts and court shoes. On a day the CI has stayed green someone asks
+    "Tối nay kèo pick không?" in the group chat at five, and at half past four people resting go down to play (a fifth
+    films it); a test run while they play is a point, each passing test a shot over the net and the first failing one
+    into the net. After an hour the clip goes into the chat with everyone's share of the court (70k). In first person,
+    E at the gate (`?pickle` to see the court in use);
+  - a Korean-style self photo studio across the street: a pink container, "Chụp ảnh Hàn Quốc" in pink neon, two booths
+    behind their curtains (feet showing under them), a basket of props (cat-ear headbands, giant heart sunglasses, party
+    hats), the price board (a 4-frame strip 70k, the big print 100k), young people coming in the evening and queueing at
+    the weekend. A release (a new version tag in a session's repository, or a GitHub release) sends four people resting
+    there: four frames, four silly poses with the props, the flash; the strip goes into the group chat and they come back
+    up still wearing the props and pin it on the whiteboard, the version under it: the six newest stay, a release history.
+    At the weekend they are back nearly two hours later. In first person, E at the door for a strip of your own;
+  - half the scooters in the row outside the office are electric (the smooth shape of Vietnam's 2026 e-scooters, an LED
+    headlight across the apron, a hub motor, no exhaust), each with a five-bar battery gauge that follows this
+    computer's battery (`pmset` on macOS, `/sys` on Linux; hidden where there is none, as on Windows), filling bar by
+    bar while it charges. Under 20%, the owner of the emptiest one rides it to the battery-swap cabinet on a park's
+    corner (V-Green's kind: lockers with their status lights, the screen and the QR code), takes out the empty pack,
+    scans, puts it in, takes a charged 1.5 kWh one (two or three minutes, 9.000đ) and rides back with it full. In Hà
+    Nội, the sign of the low emission zone inside Ring Road 1 (from 1 July 2026) stands at a corner near the office;
   - traffic lights have Vietnam's countdown boxes beside them, red or green digits counting down the light. On a hot
     sunny day (33 °C+, from the real weather) scooters wait at a red light back in a street tree's shade instead of at
     the stop line;
@@ -191,7 +285,9 @@ Then open <http://localhost:4310>.
     down in the lift for the team's lunch; now and then someone resting pops down to the convenience store across the
     street, waits for the green man, and comes back with a drink; on a really hot afternoon (the city's real weather,
     32° and up) the trip is for a 10k cone at the Mixue, and when CI goes green again someone goes for ice cream for
-    everyone. Work coming in calls them back at a run;
+    everyone. The day's first one in stops at the Highlands for a cà phê on the way up, and when Claude Code on this
+    computer updates (its editor extension, looked at every few minutes) someone runs to Thế Giới Di Động to "lên đời"
+    and the group chat hears the new version. Work coming in calls them back at a run;
   - day and night by the clock;
   - real weather, if you pick a city;
   - seasonal decorations (Halloween, Christmas, Lunar New Year).
@@ -238,6 +334,15 @@ Then open <http://localhost:4310>.
   editing".
 - **When this applies**: only while the page is open and visible, and for at most 45 seconds. Otherwise Claude Code
   asks as usual. You can turn this off in Settings.
+- **Stuck loops get broken**: when a session runs the same thing and gets the same error three times in a row, its
+  fourth try is blocked and Claude is told to change course (a synchronous `PreToolUse` hook that answers from memory;
+  it gives up after 0.3 s, so with the office closed or busy the call simply goes ahead). The person's name tag turns
+  red with "stuck", the team chat gets a card ("api-worker ran `npm test` and got the same error 3 times: try 4
+  blocked") with **Stop** (at its next step; a run started from the office is stopped outright) and **Send a hint**
+  (Claude reads it with its next step; once its turn is over, the hint carries the conversation on), and your phone
+  gets a notification. It also points out compaction after compaction and spending for 10 minutes with no file edited,
+  without blocking anything. Anything you type to the session forgives it. Settings → More: on or off, after how many
+  failures, after how many minutes. Older installs: run `node bin/cli.mjs install` once more to add the hook.
 
 ### Your plan and your Mac
 
@@ -259,8 +364,34 @@ Then open <http://localhost:4310>.
   most) with one button to close every idle Claude session, and suggests the rest: stop a forgotten dev server, quit a
   heavy app, clear caches. Idle sessions can also be closed on a timer (off by default). Every action is checked first
   and logged.
+- **Forgotten work** (in the Mac panel): every git worktree and main checkout of the repositories your sessions worked
+  in (Claude Code's `.claude/worktrees` too) that still holds files not committed, commits not pushed or a stash, with
+  its branch, size and when it last changed. **Open** it in your editor or terminal, **Give it to Claude** (a new
+  conversation in that folder, the words ready to change), or **Delete** a worktree with nothing left in it, after a
+  confirmation: never the main checkout, never one with work in it or a session open, and git (no `--force`) checks
+  again right before.
 - **Each session** has a context bar and a waste bin that fills up with context. It also shows its cost at API prices:
   with a subscription, this is not your bill.
+- **The cache clock**: a cup of coffee on each resting desk whose steam fades as the session's prompt cache cools, gone
+  once it is cold. While it is warm, writing to the session again is cheap; once cold, the next message reads the whole
+  conversation again. The session's drawer says "Prompt cache still warm for ~23 minutes" or "gone cold: the next
+  message re-reads ~180k tokens", and so does the chat's **To** ("warm ~23 min · cheap to continue"), so you can answer
+  before it cools. It comes from the status line's `prompt_cache` (Claude Code 2.1.251 or later) and a resumed
+  session's `SessionStart`; without them it is a guess from the end of the last turn and the documented lifetime (an
+  hour on a subscription, five minutes on an API key), marked "(estimated)". Settings → More can tell your phone when
+  a session waiting for your answer is five minutes from going cold (off by default).
+- **What eats your plan** (the line at the bottom of the plan card, or ••• in the group chat, also on a phone): where
+  Claude Code's usage goes, today or over 7 days. Who eats the most (MCP servers, skills, plugins, subagent types: "MCP
+  github 34% · Skill pdf 12% · Subagent Explore 9%"), split by model and by source (main conversation, subagents,
+  background work), a column a day, then by project and by session. Each figure is in USD at API prices and, once the
+  plan's week is known, in ≈ % of the weekly limit. The numbers are Claude Code's own OpenTelemetry counters and
+  events (code.claude.com/docs/en/monitoring-usage), sent by Claude Code to the office on this computer
+  (`/v1/metrics`, `/v1/logs`, OTLP/HTTP JSON) and kept as daily sums in `data/otel/` for 30 days. `install` adds them
+  to the `env` of `~/.claude/settings.json`, tagged `MY_OFFICE_OTEL` so `uninstall` takes out exactly those keys, and
+  never if you already send telemetry somewhere (settings, your shell or a managed policy): it prints how to add the
+  office as a second exporter to your OpenTelemetry Collector instead. Prompts stay hidden (`OTEL_LOG_USER_PROMPTS` is
+  not set); `OTEL_LOG_TOOL_DETAILS=1` gives the real names of your own MCP servers and skills, and the tool input it
+  adds to the events is dropped unread. A new Claude Code session picks the settings up; open ones keep their old ones.
 
 ### Small things
 
@@ -277,6 +408,13 @@ Then open <http://localhost:4310>.
   shows what Claude does (📖 reads, ✏️ edits, ▶ commands, an approval it waits for), then its answer comes, marked
   Claude, quoting you. Long messages fold with "Read more". Replying to one of Claude's answers writes to it too. Or pick **＋ a new conversation in a project** (the
   folders sessions have worked in, the latest first): Claude starts fresh there, and what you write next carries it on.
+- **Prompt helper**, over the chat's input when you write to Claude: worked out in the page (nothing is sent), it points
+  out what usually costs a round trip, one tip at a time once you stop typing: a screenshot with a word or two, "make it
+  better" with no criterion, "this one" or "item 4" pointing at nothing, several jobs in one message, a message too
+  short to act on. Its chips fix the draft (a sentence for the photo, "Criteria: ", the jobs numbered in the order
+  they should be done); a tip you close stays closed for that message, and it never stops one going. "✨ Rewrite it
+  clearly" asks Claude Code itself to rewrite it as Goal / Context / Done when (a small model, no tools, one turn, the
+  text only, 20 an hour; it uses a little of your plan), with Undo. Off in Settings → More → Group chat.
 - **Notifications on your phone** (Web Push, from `server/push.mjs` with nothing but `node:crypto`; shown by
   `public/sw.js`): Claude's answers, and an approval a phone's work needs while no office page is open, even with the
   phone locked. Turned on on each phone (⚙ → More → 📱) over the https address; on an iPhone, add My Office to the home
@@ -288,6 +426,19 @@ Then open <http://localhost:4310>.
   add up to 4 photos. The Mac runs it as `claude -p`; its commands ask for approval like any session's, and its answer
   comes back to the chat. From a phone only once "Give Claude work from a phone" is on, on the Mac; at most 3 at a
   time and 12 an hour.
+- **Phone work as background sessions** (the phone window, under "Give Claude work from a phone"; off by default): each
+  piece of work is a Claude Code background session (`claude --bg`, agent view, Claude Code 2.1.257 or newer) instead of
+  `claude -p`. Its card still shows its steps, Stop and its answer, from the session's own hooks; an approval or a
+  question waits on the phone and in the office until you answer it (no 45 s), and the card says how to carry it on at
+  the Mac (`claude attach <id>`). It edits your working copy as before (no worktree of its own, nothing pushed by
+  itself). A Claude Code without them, or a folder Claude Code doesn't trust yet (type `claude` there once in a
+  terminal), runs it the old way and the chat says why.
+- **Cut in while it works** ("Chen lời"): 💬 on a working card, or writing with "To" to a conversation that is busy (it
+  asks first), puts your note ("fix the tests too", "wrong file, stop") into that session now, through its inbox socket
+  (Claude Code's cross-session messaging, 2.1.224 or newer): Claude reads it right after the step it is on. Claude Code
+  hands it over as a message from another session, so it never counts as your approval. A session that can't take one
+  (an older Claude Code, one skipping every approval, settings that hold or refuse such messages) is said so in the chat,
+  and the note goes as an ordinary message once it is done.
 - On a phone the office lays itself out like an app, upright or held sideways: a compact top bar (plan, Mac, settings),
   the office filling the screen, and a tab bar (Office · Sessions · Activity · Approve · Chat, with counts) whose tabs
   open each panel as a full-screen sheet. A waiting approval floats just above the tabs with thumb-sized buttons.
@@ -295,7 +446,8 @@ Then open <http://localhost:4310>.
 ## Privacy and safety
 
 - **Everything stays on your Mac.** Hooks post to `127.0.0.1` in the background. If the office is not running, Claude
-  Code carries on as normal.
+  Code carries on as normal. The stuck-loop hook is the one that waits for an answer, 0.3 s at most, and prints
+  nothing when the office is closed or slow, so it never holds Claude Code up because of the office.
 - **Secrets are masked.** Strings that look like passwords, tokens or API keys are masked before they are stored or
   shown.
 - **Plan usage** is read the way the IDE's Usage panel reads it:
@@ -310,7 +462,11 @@ Then open <http://localhost:4310>.
   | GitHub CI check, through your `gh` login | while a page is open | `OFFICE_CI=0` |
   | Translation into Vietnamese | only in Vietnamese mode | `OFFICE_TRANSLATE=0` |
   | Weather | only after you pick a city | leave the city empty |
+  | Rewriting a message for Claude, through Claude Code (your plan) | only when you tap “✨ Rewrite it clearly” in the chat | Settings → More → Group chat |
 
+- **Usage numbers** ("What eats your plan") go from Claude Code to `127.0.0.1` only: the receiver refuses anything
+  from a web page, the Wi-Fi or the tunnel, reads JSON only (4 MB a request at most), and keeps daily sums of cost and
+  tokens; e-mail addresses, prompts and commands are never stored.
 - **Stop buttons** re-check the process ID **and its start time** just before acting. A new process that reused an
   old ID is never stopped by mistake. Every stop, cleanup and approval is written to `data/actions.log`.
 - **Phones**:
@@ -389,6 +545,15 @@ request.
 | Car models | [Kenney Car Kit](https://kenney.nl/assets/car-kit), see `public/assets/vehicles/README.md` | CC0 |
 | Shop signs and liveries (Circle K, GS25, 7-Eleven, WinMart, Xanh SM, Grab, Shopee) | Wikimedia Commons, see `public/assets/brands/README.md`; the Shopee mark from Simple Icons | public domain as text logos; trademarks of their owners, not affiliated |
 | The Mixue shop | drawn and modelled in code (`shop-mixue.js`): no artwork of the chain's; its tune is "Oh! Susanna" (Stephen Foster, 1848) | public domain melody; the name is its owner's trademark, not affiliated |
+| The Highlands Coffee shop | drawn and modelled in code (`shop-highlands.js`): no artwork of the chain's | the name is its owner's trademark, not affiliated |
+| The Thế Giới Di Động shop | drawn and modelled in code (`shop-tgdd.js`): no artwork of the chain's | the name is its owner's trademark, not affiliated |
+| The Katinat shop | drawn and modelled in code (`shop-katinat.js`): no artwork of the chain's | the name is its owner's trademark, not affiliated |
+| The Phúc Long shop | drawn and modelled in code (`shop-phuclong.js`): no artwork of the chain's | the name is its owner's trademark, not affiliated |
+| The Cộng Cà Phê shop | drawn and modelled in code (`shop-cong.js`): no artwork of the chain's, only its generic retro look | the name and its logo are its owner's trademarks, not affiliated |
+| The Long Châu pharmacy | drawn and modelled in code (`shop-longchau.js`): no artwork of the chain's | the names (Long Châu, FPT Retail) are their owner's trademarks, not affiliated |
+| The Điện Máy Xanh shop | drawn and modelled in code (`shop-dmx.js`): no artwork of the chain's | the name is its owner's trademark, not affiliated |
+| The Vietcombank ATM booth | drawn and modelled in code (`street-atm.js`): no artwork of the bank's | the name is its owner's trademark, not affiliated |
+| The V-Green battery-swap cabinet | drawn and modelled in code (`street-ev.js`): no artwork of the company's | the name is its owner's trademark, not affiliated |
 | Weather | [Open-Meteo](https://open-meteo.com) | |
 
 ## Licence

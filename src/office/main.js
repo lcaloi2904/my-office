@@ -38,8 +38,11 @@ import * as worldPropsCat from './world/props/cat.js';
 import * as worldPropsVacuum from './world/props/vacuum.js';
 import * as worldPropsBins from './world/props/bins.js';
 import * as worldPropsShredder from './world/props/shredder.js';
+import * as worldPropsCups from './world/props/cups.js';
 import * as worldPropsDevServers from './world/props/dev-servers.js';
 import * as worldPropsSwitches from './world/props/switches.js';
+import * as worldPropsMicrowave from './world/props/microwave.js';
+import * as worldPropsDutyBoard from './world/props/duty-board.js';
 import * as interactRings from './interact/rings.js';
 import * as peopleNavigation from './people/navigation.js';
 import * as peopleBreaks from './people/breaks.js';
@@ -50,6 +53,8 @@ import * as peopleDirector from './people/director.js';
 import * as peopleErrands from './people/errands.js';
 import * as peopleGatherings from './people/gatherings.js';
 import * as peopleOutings from './people/outings.js';
+import * as peopleComnha from './people/comnha.js';
+import * as peopleDuty from './people/duty.js';
 import * as peopleStaff from './people/staff.js';
 import * as peopleTeatime from './people/teatime.js';
 import * as peopleAccountant from './people/accountant.js';
@@ -60,6 +65,8 @@ import * as peopleFoosball from './people/foosball.js';
 import * as peopleGaming from './people/gaming.js';
 import * as peopleBilliards from './people/billiards.js';
 import * as peopleKaraoke from './people/karaoke.js';
+import * as peopleFarewell from './people/farewell.js';
+import * as peopleInterns from './people/interns.js';
 import * as lifeTrophies from './life/trophies.js';
 import * as lifeSeasons from './life/seasons.js';
 import * as lifeRain from './life/rain.js';
@@ -67,7 +74,11 @@ import * as lifeWeather from './life/weather.js';
 import * as lifeNap from './life/nap.js';
 import * as lifeQuota from './life/quota.js';
 import * as lifeAltar from './life/altar.js';
+import * as lifeLiftService from './life/lift-service.js';
+import * as lifeDrill from './life/drill.js';
+import * as lifeDaySwaps from './life/day-swaps.js';
 import * as lifeTests from './life/tests.js';
+import * as lifePhotostrips from './life/photostrips.js';
 import * as lifePost from './life/post.js';
 import * as uiLite from './ui/lite.js';
 import * as uiOmpHistory from './ui/omp-history.js';
@@ -76,6 +87,7 @@ import * as uiActivity from './ui/activity.js';
 import * as uiSessionDrawer from './ui/session-drawer.js';
 import * as uiCameraBar from './ui/camera-bar.js';
 import * as uiMacDrawer from './ui/mac-drawer.js';
+import * as uiBurn from './ui/burn.js';
 import * as uiTopbar from './ui/topbar.js';
 import * as interactProps from './interact/props.js';
 import * as interactPlaceChips from './interact/place-chips.js';
@@ -88,6 +100,8 @@ import * as uiPhoto from './ui/photo.js';
 import * as uiTimelapse from './ui/timelapse.js';
 import * as uiGroupChat from './ui/group-chat.js';
 import * as uiGroupChatView from './ui/group-chat-view.js';
+import * as uiStuck from './ui/stuck.js';
+import * as uiCacheWords from './ui/cache-words.js';
 import * as uiTips from './ui/tips.js';
 import * as interactFirstPerson from './interact/first-person.js';
 import * as netLive from './net/live.js';
@@ -143,8 +157,11 @@ const MODULES = [
   worldPropsVacuum,
   worldPropsBins,
   worldPropsShredder,
+  worldPropsCups,
   worldPropsDevServers,
   worldPropsSwitches,
+  worldPropsMicrowave,
+  worldPropsDutyBoard,
   interactRings,
   peopleNavigation,
   peopleBreaks,
@@ -155,7 +172,9 @@ const MODULES = [
   peopleErrands,
   peopleGatherings,
   peopleOutings,
+  peopleComnha,
   peopleStaff,
+  peopleDuty,
   peopleTeatime,
   peopleAccountant,
   peopleRounds,
@@ -165,6 +184,8 @@ const MODULES = [
   peopleGaming,
   peopleBilliards,
   peopleKaraoke,
+  peopleFarewell,
+  peopleInterns,
   lifeTrophies,
   lifeSeasons,
   lifeRain,
@@ -172,7 +193,11 @@ const MODULES = [
   lifeNap,
   lifeQuota,
   lifeAltar,
+  lifeLiftService,
+  lifeDrill,
+  lifeDaySwaps,
   lifeTests,
+  lifePhotostrips,
   lifePost,
   uiLite,
   uiOmpHistory,
@@ -181,6 +206,7 @@ const MODULES = [
   uiSessionDrawer,
   uiCameraBar,
   uiMacDrawer,
+  uiBurn,
   uiTopbar,
   interactProps,
   interactPlaceChips,
@@ -193,6 +219,8 @@ const MODULES = [
   uiTimelapse,
   uiGroupChat,
   uiGroupChatView,
+  uiStuck,
+  uiCacheWords,
   uiTips,
   interactFirstPerson,
   netLive,

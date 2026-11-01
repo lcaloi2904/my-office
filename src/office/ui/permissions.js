@@ -19,7 +19,8 @@ let PAGE_ID;
 export function reportPresence(release = false) {
   if (STATIC || replay.on) return;   // a replay cannot claim to be an approval viewer
   const focused = release !== true && !DEMO && state.permOn && document.visibilityState === 'visible' && document.hasFocus();
-  fetch(`/api/presence${TOKEN ? `?k=${encodeURIComponent(TOKEN)}` : ''}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ page: PAGE_ID, focused }), keepalive: true }).catch(() => {});
+  fetch(`/api/presence${TOKEN ? `?k=${encodeURIComponent(TOKEN)}` : ''}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ page: PAGE_ID, focused }), keepalive: true })
+    .then((r) => r.body?.cancel()).catch(() => {});   // (an answer never read keeps its request alive for good: one every 2 s)
 }
 // a risky shell command (src/shared/danger.js): a red warning, a second click, no "always"
 const dangerOf = (p) => { const k = dangerKey(p); return k ? tr(`perm.danger.${k}`) : null; };
@@ -92,7 +93,8 @@ function permCard(p) {
   }
   // a phone, while the Mac doesn't let phones approve: the card says where to answer it instead of offering buttons
   if (!state.isLocal && !state.phoneApprove && !DEMO) acts.replaceChildren(el('small', 'pc-phone-note', tr('perm.phoneOff')));
-  card._tick = () => { const ms = Math.max(0, p.until - Date.now()); left.textContent = tr('time.sec', { n: Math.ceil(ms / 1000) }); fill.style.width = `${(ms / 45000) * 100}%`; };
+  // (a background session's waits until answered: no countdown)
+  card._tick = () => { if (!p.until) { left.textContent = tr('perm.noDeadline'); fill.style.width = '100%'; return; } const ms = Math.max(0, p.until - Date.now()); left.textContent = tr('time.sec', { n: Math.ceil(ms / 1000) }); fill.style.width = `${(ms / 45000) * 100}%`; };
   card._tick();
   return card;
 }

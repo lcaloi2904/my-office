@@ -20,7 +20,9 @@ import { shredAction } from '../world/props/shredder.js';
 import { onTest } from './tests.js';
 import { onCommit, onPush, postAction } from './post.js';
 import { chatEvent } from '../ui/group-chat.js';
-import { treat } from '../people/outings.js';
+import { headache, treat } from '../people/outings.js';
+import { pickleCi, pickleTest } from '../people/pickle.js';
+import { photoRelease } from '../people/photobooth.js';
 
 /* ---------- incidents: three failures in five minutes turn the office red for a while ---------- */
 export const fails = [];
@@ -29,6 +31,7 @@ function startIncident(s) {
   state.incidentUntil = state.sim + 25; $('stage-wrap').classList.add('is-incident'); sfx.play('siren');
   const b = $('incident'); b.textContent = `${tr('incident.banner')}${s ? ` · ${dn(s)}` : ''}`; b.hidden = false;
   for (const w of workers.values()) if (agentOf(sessions.get(w.id)) === 'claude' && sessions.get(w.id)?.status === 'work') w.push({ ...ACT.fail, type: 'fail', text: tr('incident.bubble') });
+  headache();   // (and someone goes down to Long Châu for something for the headache: people/outings.js)
 }
 export function updateIncident(t) {
   const on = state.sim < state.incidentUntil;
@@ -45,11 +48,12 @@ export function onEvent(e) {
   }
   chatEvent(e);   // (the group chat: ui/group-chat.js)
   if (e.type === 'stop' || e.type === 'commit') printPage();   // every finished turn and every commit prints a page
-  if (e.type === 'test' || e.type === 'testok' || e.type === 'testfail') onTest(e);   // the test board's lamps (tests.js)
+  if (e.type === 'test' || e.type === 'testok' || e.type === 'testfail') { onTest(e); if (!e.agent) pickleTest(e); }   // the test board's lamps (tests.js); a point on the pickleball court (people/pickle.js)
   if (e.type === 'commit') onCommit(e); if (e.type === 'push') onPush(e);   // a letter in the post box; the postman (post.js)
   if (e.type === 'push' || e.type === 'deploy') applaud(e.sess);
+  if (e.type === 'release') photoRelease(e.label);   // (four of them to the photo booth across the street: people/photobooth.js)
   if (e.type === 'push') { launchRocket(); sfx.play('deploy'); toast(tr('incident.pushed', { name: dn(sessions.get(e.sess)) || e.repo, branch: state.streamer ? 'git' : e.branch || 'git' })); }
-  if (e.type === 'cired') { sfx.play('siren'); toast(tr('incident.ciRed', { label: e.label || tr('incident.ciRedDefault'), repo: e.repo }), 6500); }
+  if (e.type === 'cired') { pickleCi(e); sfx.play('siren'); toast(tr('incident.ciRed', { label: e.label || tr('incident.ciRedDefault'), repo: e.repo }), 6500); }
   if (e.type === 'cigreen') { toast(tr('incident.ciGreen', { label: e.label || '', repo: e.repo })); treat(); }   // (green again: ice cream from the Mixue for everyone)
   { const s0 = sessions.get(e.sess);
     if (e.type === 'stop' && s0) onTurnDone(s0);

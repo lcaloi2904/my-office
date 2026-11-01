@@ -4,7 +4,7 @@
 // are in gatherings.js and use the helpers exported here.)
 import * as THREE from 'three';
 import { state } from '../core/state.js';
-import { LAYOUT, PRO, rand, replay } from '../core/env.js';
+import { LAYOUT, PRO, rand, reduceMotion, replay } from '../core/env.js';
 import { scene } from '../scene/renderer.js';
 import { ROOM_LAMPS } from '../scene/lights.js';
 import { mat } from '../scene/blocks.js';
@@ -94,14 +94,15 @@ const timers = [];
 export function later(sec, fn) { timers.push({ at: state.sim + sec, fn }); }
 
 /* ---------- held things: a page, a cup, a watering can ---------- */
-let paperGeo, paperM, cupGeo, cupM, canM, canDarkM;
+let paperGeo, paperM, cupGeo, cupM, canM, canDarkM, canGeos;
 function hold(w, kind) {
   let m;
   if (kind === 'can') {
+    canGeos ||= [new THREE.CylinderGeometry(0.06, 0.065, 0.13, 14), new THREE.CylinderGeometry(0.008, 0.012, 0.16, 6), new THREE.TorusGeometry(0.045, 0.008, 6, 14, Math.PI)];   // (shared: a can of its own each time stayed on the GPU)
     m = new THREE.Group();
-    m.add(new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.065, 0.13, 14), canM));
-    const spout = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.012, 0.16, 6), canM); spout.position.set(0, 0.03, 0.09); spout.rotation.x = 1.05; m.add(spout);
-    const handle = new THREE.Mesh(new THREE.TorusGeometry(0.045, 0.008, 6, 14, Math.PI), canDarkM); handle.position.set(0, 0.07, -0.01); m.add(handle);
+    m.add(new THREE.Mesh(canGeos[0], canM));
+    const spout = new THREE.Mesh(canGeos[1], canM); spout.position.set(0, 0.03, 0.09); spout.rotation.x = 1.05; m.add(spout);
+    const handle = new THREE.Mesh(canGeos[2], canDarkM); handle.position.set(0, 0.07, -0.01); m.add(handle);
     m.position.set(0, -0.09, 0.05);
   } else m = kind === 'paper' ? new THREE.Mesh(paperGeo, paperM) : new THREE.Mesh(cupGeo, cupM);
   if (kind === 'paper') { m.position.set(0, -0.06, 0.07); m.rotation.x = 0.3; } else if (kind === 'cup') m.position.set(0, -0.05, 0.03);
@@ -236,6 +237,16 @@ export function waterPlant(i) {
     at: () => { P.wet = Date.now(); savePlants(); P.perk = { from: P.k, t: 0 }; return line('people.plant.done'); },
     done: () => { can?.removeFromParent(); } });
   return true;
+}
+/* for the rota's morning watering (people/duty.js): the thirstiest plants first, where to stand for one, and the
+   pouring itself (the can, the water, the plant perking up; then()) */
+export const plantsToWater = (n) => plantList().slice().sort((a, b) => dryness(b) - dryness(a) || a.i - b.i).slice(0, n).map((P) => P.i);
+export function plantSpot(i, w) { const P = plantList()[i]; return P && (wayTo(w, P.g.position.x, P.g.position.z) || standBy(P.g.position.x, P.g.position.z)); }
+export function pour(i, w, then) {
+  const P = plantList()[i]; if (!P) { then(); return; }
+  w.faceTarget = Math.atan2(P.g.position.x - w.pos.x, P.g.position.z - w.pos.y);
+  const can = hold(w, 'can'); can.rotation.x = 0.5; sfx.play('water'); P.pour = { w, until: state.sim + 1.8 };
+  later(reduceMotion ? 0.4 : 1.9, () => { can.removeFromParent(); P.wet = Date.now(); savePlants(); P.perk = { from: P.k, t: 0 }; then(); });
 }
 const _hand = new THREE.Vector3();
 function updatePlants(dt) {
