@@ -148,3 +148,24 @@ Query `http://127.0.0.1:4310/api/doctor` from the local machine and inspect `age
 1. Set `OFFICE_OMP=off` (or unset `OFFICE_OMP` and `OFFICE_OMP_CONFIG`) and restart My Office. All OMP timers, readers, and `/api/omp/*` + `/ingest/omp/v1` routes stop immediately (`404`).
 2. If the companion extension was installed in OMP, remove `~/.omp/agent/extensions/office-observer/` (and any `OFFICE_OMP_*` environment variables). Running OMP agents continue unaffected.
 3. Optional cleanup of My Office's own local state: delete `data/omp-pins.json` and `~/.omp/office-private/{ingest,observer}.json`. Never delete `~/.omp/agent/sessions`.
+
+---
+
+## 8. Updating from `upstream/main` Without Losing OMP Integration
+
+This repository tracks the personal fork as `origin` (`lcaloi2904/my-office`) and the upstream project as `upstream` (`khanh020905/my-office`).
+
+1. Fetch and merge upstream changes into `main` (never `reset --hard` or `rebase` published history):
+   ```bash
+   git fetch upstream
+   git checkout main
+   git merge upstream/main
+   ```
+2. If a conflict occurs in a shared seam file (`server/index.mjs`, `workers.js`, `live.js`, `activity.js`, `lite.js`, `session-drawer.js`, `quota.js`, `accountant.js`, `timeline.js`, `replay.js`), keep both upstream's new feature and the OMP adapter/capability guards as documented in [AGENTS.md](../AGENTS.md).
+3. Run verification and rebuild:
+   ```bash
+   node node_modules/eslint/bin/eslint.js .
+   node node_modules/typescript/bin/tsc --noEmit
+   node --test tests/unit/agent-*.test.mjs tests/unit/omp-*.test.mjs
+   ```
+   Then run `start-office.cmd rebuild` and `git push origin main`.
