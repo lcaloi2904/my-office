@@ -1,6 +1,6 @@
 ---
 title: "Phase 04: My Office multi-account usage UI"
-status: todo
+status: done
 priority: P2
 effort: "0.75-1 day"
 dependencies: [2, 3]
@@ -68,11 +68,11 @@ Server projection and remote filtering remain authoritative; frontend hiding an 
 
 ## G4 acceptance
 
-- [ ] U1–U3 pass; displays all supported OAuth accounts with stable distinct labels and their actual windows.
-- [ ] No assumptions that a provider's 5h or weekly windows exist; absent is `N/A`, not 0.
-- [ ] Display token usage and quota as two separate concepts; account association only with evidence.
-- [ ] Claude `state.limits`, plan pill, browser controls and animation unaffected.
-- [ ] Remote details masked according to security contract; server does not leak more fields than policy allows.
+- [x] U1–U3 pass; displays all supported OAuth accounts with stable distinct labels and their actual windows.
+- [x] No assumptions that a provider's 5h or weekly windows exist; absent is `N/A`, not 0.
+- [x] Display token usage and quota as two separate concepts; account association only with evidence.
+- [x] Claude `state.limits`, plan pill, browser controls and animation unaffected.
+- [x] Remote details masked according to security contract; server does not leak more fields than policy allows.
 
 ## Verification (after approved changes)
 

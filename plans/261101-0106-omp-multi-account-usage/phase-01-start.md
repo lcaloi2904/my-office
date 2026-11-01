@@ -1,6 +1,6 @@
 ---
 title: "Phase 01: Safe compatibility & account-source preflight"
-status: todo
+status: done
 priority: P1
 effort: "0.5-1 day"
 dependencies: []
@@ -41,11 +41,11 @@ Không sửa source code trong Phase 01. Chỉ cập nhật `plans/261101-0106-o
 
 ## Acceptance / G1
 
-- [ ] Native version/profile/command line exact đã xác minh mà không trích xuất secrets.
-- [ ] Quota JSON contract của nhiều account/multiple windows được ghi thành fixture sanitized; coverage Codex+Agy hoặc rõ unsupported.
-- [ ] Usage read path đã được chứng minh **không có unapproved saved-reset consumption**; nếu không, polling tự động bị chặn.
-- [ ] Schema provider/model/account attribution phân thành exact/inferred/unsupported; không có assumption account identity ẩn.
-- [ ] Windows vs WSL and broker boundaries, privacy controls và rollback quyết định rõ.
+- [x] Native version/profile/command line exact đã xác minh mà không trích xuất secrets.
+- [x] Quota JSON contract của nhiều account/multiple windows được ghi thành fixture sanitized; coverage Codex+Agy hoặc rõ unsupported.
+- [x] Usage read path đã được chứng minh **không có unapproved saved-reset consumption**; nếu không, polling tự động bị chặn.
+- [x] Schema provider/model/account attribution phân thành exact/inferred/unsupported; không có assumption account identity ẩn.
+- [x] Windows vs WSL and broker boundaries, privacy controls và rollback quyết định rõ.
 
 ## Risks, stop conditions & validation
 
@@ -53,7 +53,7 @@ G1 STOP nếu phải đọc `agent.db` hoặc bearer để chạy, CLI dùng use
 
 ## Todo
 
-- [ ] Pin Windows native environment và version
-- [ ] Audit quota read side effects và documented usage JSON
-- [ ] Chốt identity/semantics và fixtures sanitized
-- [ ] G1 evidence + explicit approval trước Phase 02
+- [x] Pin Windows native environment và version
+- [x] Audit quota read side effects và documented usage JSON
+- [x] Chốt identity/semantics và fixtures sanitized
+- [x] G1 evidence + explicit approval trước Phase 02

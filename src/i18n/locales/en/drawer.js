@@ -128,4 +128,11 @@ export default {
   groupDone: 'Just finished',
   noActivity: 'No activity in this session since My Office started.',
   latest: 'Latest',
+  ompMetrics: {
+    title: 'Usage by provider & model',
+    unattributed: 'Account unattributed',
+    tokensInOut: 'in {input} · out {output}',
+    cacheReadWrite: 'cache {read}r/{write}w',
+    costUnavailable: '–',
+  },
 };

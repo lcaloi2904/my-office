@@ -113,3 +113,32 @@
 .acct-move { display: flex; align-items: flex-start; gap: 7px; font-size: .66rem; line-height: 1.45; color: var(--ink); cursor: pointer; }
 .acct-move input { flex: none; margin: 2px 0 0; accent-color: var(--accent); cursor: pointer; }
 @media (prefers-reduced-motion: reduce) { .acct-knob, .acct-knob::after, .acct-use, .acct-pen { transition: none; } }
+/* OMP Multi-Account Usage section (additive, read-only) */
+.omp-usage-sec { display: grid; gap: 6px; margin-top: 8px; padding-top: 9px; border-top: 1px solid var(--line); min-width: 0; }
+.omp-usage-sec[hidden] { display: none !important; }
+.omp-usage-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-bottom: 1px; min-width: 0; }
+.omp-usage-title-wrap { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.omp-refresh-btn { all: unset; box-sizing: border-box; font-size: .62rem; font-weight: 700; line-height: 1; padding: 3px 8px; border-radius: 999px; border: 1px solid var(--line-2); color: var(--muted); cursor: pointer; }
+.omp-refresh-btn:hover { color: var(--ink); border-color: var(--accent-line); }
+.omp-refresh-btn:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 2px; }
+.omp-refresh-btn:disabled { opacity: .5; cursor: progress; }
+.omp-source-line { font-size: .62rem; color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.omp-provider-group { display: grid; gap: 5px; margin-top: 3px; padding-top: 5px; border-top: 1px dashed rgba(255, 255, 255, .08); min-width: 0; }
+.omp-provider-title { font-size: .68rem; font-weight: 700; color: var(--accent-hi, var(--ink)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.omp-acct { display: grid; gap: 3px; padding: 5px 7px; border-radius: 8px; background: rgba(255, 255, 255, .03); border: 1px solid var(--line); min-width: 0; }
+.omp-acct-head { display: flex; align-items: center; gap: 6px; font-size: .68rem; min-width: 0; }
+.omp-acct-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); font-weight: 700; }
+.omp-acct-meta { flex: none; font-size: .6rem; color: var(--faint); white-space: nowrap; }
+.omp-badge { flex: none; font-style: normal; font-size: .58rem; font-weight: 700; line-height: 1; padding: 3px 6px; border-radius: 999px; white-space: nowrap; text-transform: lowercase; background: rgba(255, 255, 255, .07); color: var(--muted); }
+.omp-badge--fresh { color: var(--green-ink, #7EE2A8); background: rgba(60, 200, 120, .14); }
+.omp-badge--stale { color: var(--amber, #F5B95F); background: var(--amber-soft, rgba(245, 185, 95, .15)); }
+.omp-badge--auth-error { color: var(--red, #FF7A7A); background: rgba(255, 100, 100, .15); }
+.omp-win-sub { margin: -1px 0 2px 0 !important; font-size: .6rem; color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.omp-tokens { display: grid; gap: 3px; padding: 5px 7px; border-radius: 8px; background: rgba(255, 255, 255, .02); border: 1px dashed var(--line); min-width: 0; }
+.omp-tokens-head, .ds-omp-metrics-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; min-width: 0; }
+.omp-tokens-title, .ds-omp-metrics-title { font-size: .64rem; font-weight: 700; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.omp-unattr-badge { flex: none; font-size: .58rem; font-weight: 600; padding: 2px 6px; border-radius: 999px; background: rgba(255, 255, 255, .06); color: var(--faint); white-space: nowrap; }
+.omp-token-row, .ds-omp-metric-row { display: grid; gap: 2px; font-size: .63rem; color: var(--muted); min-width: 0; }
+.omp-token-model, .ds-omp-metric-key { font: 600 .62rem/1.3 var(--mono); color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.omp-token-vals, .ds-omp-metric-val { font-size: .6rem; color: var(--faint); overflow-wrap: anywhere; }
+.ds-omp-metrics { display: grid; gap: 4px; margin-top: 6px; padding: 7px 9px; border-radius: 8px; background: rgba(255, 255, 255, .03); border: 1px solid var(--line); min-width: 0; width: 100%; box-sizing: border-box; }

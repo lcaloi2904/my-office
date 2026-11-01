@@ -123,4 +123,11 @@ export default {
   groupDone: 'Vừa xong',
   noActivity: 'Phiên này chưa có hoạt động nào từ khi My Office chạy.',
   latest: 'Mới nhất',
+  ompMetrics: {
+    title: 'Usage theo provider & model',
+    unattributed: 'Chưa xác định tài khoản',
+    tokensInOut: 'vào {input} · ra {output}',
+    cacheReadWrite: 'cache {read}đ/{write}g',
+    costUnavailable: '–',
+  },
 };

@@ -172,6 +172,68 @@ export function mixedAgentFixtures() {
     };
   });
 }
+export function demoOmpUsageFixture(now = Date.now()) {
+  const h = 3_600_000, d = 24 * h;
+  return {
+    version: 1,
+    enabled: true,
+    state: 'ready',
+    profile: 'default',
+    accounts: [
+      {
+        accountKey: 'omp-acct:demo-codex-1',
+        providerId: 'openai-codex',
+        label: 'de* · or*1* · pro',
+        availability: 'ready',
+        observedAt: now - 30_000,
+        lastSuccessAt: now - 30_000,
+        source: 'omp-cli',
+        windows: [
+          { id: 'openai-codex:primary', label: '5 hours · 5h', kind: '5h', usedPercent: 35, remainingPercent: 65, resetsAt: now + 2 * h, sourceUnit: 'used', status: 'ok' },
+          { id: 'openai-codex:secondary', label: '7 days · 7d', kind: 'weekly', usedPercent: 82, remainingPercent: 18, resetsAt: now + 4 * d, sourceUnit: 'used', status: 'warning' },
+        ],
+      },
+      {
+        accountKey: 'omp-acct:demo-codex-2',
+        providerId: 'openai-codex',
+        label: 'de* · or*2* · team',
+        availability: 'stale',
+        observedAt: now - 300_000,
+        lastSuccessAt: now - 300_000,
+        source: 'omp-cli',
+        windows: [
+          { id: 'openai-codex:primary', label: '5 hours · 5h', kind: '5h', usedPercent: 12, remainingPercent: 88, resetsAt: now + 3 * h, sourceUnit: 'used', status: 'ok' },
+        ],
+      },
+      {
+        accountKey: 'omp-acct:demo-agy-1',
+        providerId: 'google-antigravity',
+        label: 'ag*1*',
+        availability: 'ready',
+        observedAt: now - 20_000,
+        lastSuccessAt: now - 20_000,
+        source: 'omp-cli',
+        windows: [
+          { id: 'google-antigravity:google:default:gemini-5h', label: 'Gemini · 5 Hour', kind: '5h', usedPercent: 60, remainingPercent: 40, resetsAt: now + h, sourceUnit: 'remaining', status: 'ok' },
+          { id: 'google-antigravity:google:default:credits', label: 'Quota Bucket · Weekly', kind: 'weekly', usedPercent: null, remainingPercent: null, resetsAt: now + 2 * d, sourceUnit: 'unknown', status: 'unknown' },
+        ],
+      },
+      {
+        accountKey: 'omp-acct:demo-agy-2',
+        providerId: 'google-antigravity',
+        label: 'ag*2*',
+        availability: 'unsupported',
+        observedAt: now - 20_000,
+        lastSuccessAt: now - 20_000,
+        source: 'omp-cli',
+        windows: [],
+        noteCode: 'no-limits-reported',
+      },
+    ],
+    collector: { observedAt: now - 20_000, lastSuccessAt: now - 20_000, noteCode: null, inFlight: false },
+    issues: [],
+  };
+}
 export function startDemo() {
   $('demo-chip').hidden = false;
   state.todos = DEMO_TODOS.map((t) => ({ ...t })); onTodos();
@@ -182,6 +244,7 @@ export function startDemo() {
     demoLoop(s, p, i < 4);
   });
   if (new URLSearchParams(location.search).has('agents')) for (const s of mixedAgentFixtures()) upsertSession(s, false);
+  if (new URLSearchParams(location.search).has('ompUsage')) { state.ompUsage = demoOmpUsageFixture(); renderLimits(); }
   // the first project was continued from a long session: it opens with Claude's own summary
   const t0 = Date.now() - 50 * 60e3;
   demoLog.set('demo-0', [
@@ -221,6 +284,7 @@ export function applyMsg(d, quiet = false) {
     for (const id of [...sessions.keys()]) if (!ids.has(id)) (quiet ? dropSessionNow : removeSession)(id);
     for (const s of d.sessions) upsertSession(s, false);
     state.feed = d.feed || []; state.stats = d.stats || {}; renderFeed();
+    if ('ompUsage' in d) { state.ompUsage = d.ompUsage || null; if (!('local' in d)) renderLimits(); }
     if (!replay.on && 'local' in d) {   // only the live snapshot carries these
       perms.clear(); for (const p of d.perms || []) perms.set(p.id, p); renderPerms(); reportPresence();
       if (!quiet) chatLoad();   // (the group chat as it is now: after a reconnect, what was missed)
@@ -265,6 +329,7 @@ export function applyMsg(d, quiet = false) {
   else if (d.k === 'chat') chatApply(d);   // (the group chat, the same on every page: server/index.mjs)
   else if (d.k === 'chatact') { if (!quiet) chatAct(d.what); }   // (open conversations moved over too)
   else if (d.k === 'limits') { state.limits = d.limits || null; state.limitsNote = d.note || ''; renderLimits(); if (!drM.hidden) renderMac(); }
+  else if (d.k === 'ompUsage') { state.ompUsage = d.ompUsage || null; renderLimits(); if (!drM.hidden) renderMac(); }
   else if (d.k === 'sysauto') { if (!quiet) { toast(d.message, 8000); loadMac(); } }   // (idle sessions closed on the drawer's timer)
   else if (d.k === 'trophies') setTrophies(d.t, quiet ? [] : d.earned || []);
   else if (d.k === 'vi') relabel(d.from, d.to);

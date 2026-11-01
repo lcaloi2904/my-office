@@ -56,7 +56,7 @@ Không có thành phần nào tự động kích hoạt. Việc chép file vào 
 | `plan_review_requested` / `plan_review_resolved` | Lý do chờ `input`, khóa theo `reviewId` | Đã quan sát thực tế (18.14.2 TUI, mở `/plan-review` thủ công, chọn `execute`): chuyển từ `waiting`/`input` về `idle` trước khi đổi phiên; nhánh hủy/tự động chạy tiếp chưa xác minh |
 | Hộp thoại `ask` | **Không hỗ trợ** trạng thái chờ riêng; hiển thị là `active` | Hộp thoại tích hợp trả lời thành công trên 18.14.2 TUI; lúc đang mở vẫn báo `active` |
 | `ctx.isIdle()`, `ctx.hasPendingMessages()`, `ctx.getAsyncJobSnapshot()`, `ctx.sessionManager.getSessionId()` | Các trường trong `heartbeat`/`snapshot` | Đọc phòng thủ; nếu thiếu sẽ tự động bỏ qua |
-| Thống kê usage, model | Tùy chọn, chỉ nhận số và định danh hợp lệ | Đã quan sát thực tế (18.14.1, chế độ print) |
+| Thống kê usage, model, provider | Tùy chọn, chỉ nhận số và định danh `model` / `provider` hợp lệ (không gửi thông tin xác thực OAuth) | Đã xác minh trên 18.14.1/18.14.2 |
 | Callback của subagent (`task` child) | Chủ đích bỏ qua không gửi | Đã xác minh danh tính con/cha và việc loại trừ trên 18.14.2; báo cáo live cho subagent/advisor vẫn không hỗ trợ |
 
 ## Bảo mật lưu trữ trên Windows

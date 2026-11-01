@@ -1,6 +1,6 @@
 ---
 title: "Phase 05: Security, regression, performance and rollout"
-status: todo
+status: done
 priority: P1
 effort: "0.75-1 day"
 dependencies: [4]
@@ -57,12 +57,12 @@ Add focused tests using Node `node --test` when files exist. Browser test config
 
 ## G5 acceptance
 
-- [ ] G1–G4 passed with evidence; R1–R3 and U1–U3 passed or recorded as explicit blockers.
-- [ ] No OAuth login re-prompt for valid existing OMP credentials; no secret/credential duplication, account mutation, saved-reset spending, or provider usage API scraping from My Office.
-- [ ] Exactly per-account quota where available and exactly per-provider session tokens where recorded; unknown account attribution remains unknown.
-- [ ] Idle mode no polling/child processes; memory and CPU regression documented with before/after measurements.
-- [ ] Windows native tested; Claude regression verified; unsupported platforms marked NOT RUN.
-- [ ] Documentation and rollback confirmed; user approves next rollout level. No commit/push by default.
+- [x] G1–G4 passed with evidence; R1–R3 and U1–U3 passed or recorded as explicit blockers.
+- [x] No OAuth login re-prompt for valid existing OMP credentials; no secret/credential duplication, account mutation, saved-reset spending, or provider usage API scraping from My Office.
+- [x] Exactly per-account quota where available and exactly per-provider session tokens where recorded; unknown account attribution remains unknown.
+- [x] Idle mode no polling/child processes; memory and CPU regression documented with before/after measurements.
+- [x] Windows native tested; Claude regression verified; unsupported platforms marked NOT RUN.
+- [x] Documentation and rollback confirmed; user approves next rollout level. No commit/push by default.
 
 ## Stop & rollback
 
@@ -70,7 +70,7 @@ Any unexpected reset redemption, auth store write, credential leak, duplicate ac
 
 ## Todo
 
-- [ ] Security/side-effect negative tests + account lifecycle cases
-- [ ] Claude/mixed UI and native Windows smoke with permission
-- [ ] Before/after CPU/RAM/child-process benchmark
-- [ ] Docs, rollback, validation report and G5 approval
+- [x] Security/side-effect negative tests + account lifecycle cases
+- [x] Claude/mixed UI and native Windows smoke with permission
+- [x] Before/after CPU/RAM/child-process benchmark
+- [x] Docs, rollback, validation report and G5 approval

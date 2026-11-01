@@ -139,7 +139,7 @@ Mặc định chỉ chính Mac mở được. Muốn xem trên điện thoại c
 
 ## Tệp
 
-- `server/`: máy chủ Node. `index.mjs` nhận hook, đọc `~/.claude/sessions/*.json` (theo `CLAUDE_CONFIG_DIR` nếu có), đẩy sự kiện qua SSE, giữ yêu cầu duyệt quyền, ghi nhật ký xem lại, trang PIN, và giao trang cho Next.js. `agents/`: lớp điều phối đa agent (Claude Code và adapter OMP chỉ-đọc tùy chọn; xem [docs/OMP-INTEGRATION.md](docs/OMP-INTEGRATION.md)). `system.mjs`: RAM/CPU/ổ đĩa, dev server, session rảnh, dọn dẹp. `usage.mjs`: token và ngữ cảnh. `trophies.mjs`: tổng tích luỹ cho tủ cúp. `redact.mjs`: luật che bí mật.
+- `server/`: máy chủ Node. `index.mjs` nhận hook, đọc `~/.claude/sessions/*.json` (theo `CLAUDE_CONFIG_DIR` nếu có), đẩy sự kiện qua SSE, giữ yêu cầu duyệt quyền, ghi nhật ký xem lại, trang PIN, và giao trang cho Next.js. `agents/`: lớp điều phối đa agent (Claude Code, adapter OMP chỉ-đọc tùy chọn, và collector quota đa tài khoản OMP cho `openai-codex` / `google-antigravity` bật mặc định — tắt bằng `OFFICE_OMP_USAGE=0`; xem hướng dẫn chi tiết tại [docs/OMP-INTEGRATION.md](docs/OMP-INTEGRATION.md)). `system.mjs`: RAM/CPU/ổ đĩa, dev server, session rảnh, dọn dẹp. `usage.mjs`: token và ngữ cảnh. `trophies.mjs`: tổng tích luỹ cho tủ cúp. `redact.mjs`: luật che bí mật.
 - `app/` + `src/components/`: trang Next.js (App Router). `src/styles/`: CSS theo từng khu vực.
 - `src/office/`: văn phòng 3D (three.js), chia module theo thư mục `core`, `scene`, `world`, `people`, `life`, `ui`, `interact`, `net`, `demo`, `replay`. Bản đồ module ở [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 - `bin/cli.mjs`: lệnh install / uninstall / doctor / start / pin. `hooks/hooks.json` + `.claude-plugin/`: cài dạng plugin. `hooks/status-line.mjs`: status line gửi hạn mức gói về văn phòng.

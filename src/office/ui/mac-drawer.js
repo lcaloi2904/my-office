@@ -10,6 +10,7 @@ import { TOKEN } from '../net/live.js';
 import { DEMO, demoMac } from '../demo/demo.js';
 import { icon } from './icons.js';
 import { t as tr, num } from '../../i18n/index.js';
+import { renderOmpUsagePanel } from './omp-usage-panel.js';
 
 export let macSnap = null;
 let confirmKey = null;
@@ -338,6 +339,7 @@ export function renderLimits() {
   const acc = state.limits?.account, accText = acc ? [acc.plan, acc.org].filter(Boolean).join(' · ') : '';
   $('plan-acct').hidden = true;   // (the plan sits in the main account's heading)
   if (adding.step === 'idle') renderAdd();
+  renderOmpUsagePanel({ resetText });
   if (none) { $('plan-at').textContent = ''; $('plan-empty').textContent = state.limitsNote || tr('mac.plan.loading'); return; }
   $('plan-at').textContent = state.limits.at ? (Date.now() - state.limits.at < 60e3 ? tr('mac.plan.justUpdated') : tr('time.ago', { time: fmtAgo((Date.now() - state.limits.at) / 1000) })) : '';
   if (editing !== null || dragging) return;   // (a name being typed, an account being dragged: drawn again after)
@@ -664,7 +666,7 @@ export function setup() {
   state.macTimer = null;
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') loadMac(); });
   /* plan usage (5-hour / 7-day windows) from Claude Code's status line */
-  state.limits = null; state.limitsNote = '';
+  state.limits = null; state.limitsNote = ''; state.ompUsage = null;
   setInterval(renderLimits, 30000);
   $('btn-mac').addEventListener('click', () => (drM.hidden ? openMac() : closeMac()));
   $('mac-refresh').addEventListener('click', loadMac);

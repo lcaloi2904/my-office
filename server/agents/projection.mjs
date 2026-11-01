@@ -3,9 +3,9 @@ import { capabilitiesFor, ompCapabilities, ompSessionIdentity, reservedAgentId }
 
 const finiteNonnegative = (n) => typeof n === 'number' && Number.isFinite(n) && n >= 0 ? n : null;
 const safeModel = (s) => typeof s === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,95}$/.test(s) ? s : null;
+const safeProvider = (s) => typeof s === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/.test(s) ? s.toLowerCase() : null;
 const COST_SCOPES = new Set(['self', 'inherited', 'subtree']);
 const PROVENANCE = new Set(['recorded', 'provisional']);
-
 export function projectClaudeSession(session) {
   if (!session || typeof session.id !== 'string' || !session.id || reservedAgentId(session.id)) return null;
   return {
@@ -19,23 +19,54 @@ export function projectClaudeSession(session) {
   };
 }
 
-function ompMetrics(raw) {
-  const c = raw && typeof raw === 'object' ? raw.cost : null;
-  const cost = c && typeof c === 'object' && finiteNonnegative(c.value) !== null &&
+function sanitizeCost(c) {
+  return c && typeof c === 'object' && finiteNonnegative(c.value) !== null &&
     COST_SCOPES.has(c.scope) && PROVENANCE.has(c.provenance) && (c.currency == null || c.currency === 'USD')
     ? { value: c.value, currency: 'USD', scope: c.scope, provenance: c.provenance } : null;
-  const t = raw && typeof raw === 'object' && raw.tokens && typeof raw.tokens === 'object' ? raw.tokens : {};
-  const tokens = {
-    input: finiteNonnegative(t.input), output: finiteNonnegative(t.output),
-    cacheRead: finiteNonnegative(t.cacheRead), cacheWrite: finiteNonnegative(t.cacheWrite),
-    provenance: PROVENANCE.has(t.provenance) ? t.provenance : 'unknown',
+}
+function sanitizeTokens(t) {
+  const src = t && typeof t === 'object' ? t : {};
+  return {
+    input: finiteNonnegative(src.input), output: finiteNonnegative(src.output),
+    cacheRead: finiteNonnegative(src.cacheRead), cacheWrite: finiteNonnegative(src.cacheWrite),
+    provenance: PROVENANCE.has(src.provenance) ? src.provenance : 'unknown',
   };
+}
+function sanitizeByProvider(rawList) {
+  if (!Array.isArray(rawList)) return [];
+  const out = [];
+  for (const b of rawList.slice(0, 16)) {
+    if (!b || typeof b !== 'object' || Array.isArray(b)) continue;
+    const providerId = safeProvider(b.providerId) || 'unknown';
+    const models = Array.isArray(b.models) ? b.models.slice(0, 32).filter((m) => m && typeof m === 'object' && !Array.isArray(m)).map((m) => ({
+      model: safeModel(m.model) || 'unknown',
+      entries: count(m.entries),
+      cost: sanitizeCost(m.cost),
+      tokens: sanitizeTokens(m.tokens),
+    })) : [];
+    out.push({
+      providerId,
+      accountKey: null,
+      attribution: 'unattributed',
+      entries: count(b.entries),
+      incomplete: b.incomplete === true,
+      cost: sanitizeCost(b.cost),
+      tokens: sanitizeTokens(b.tokens),
+      models,
+    });
+  }
+  return out;
+}
+function ompMetrics(raw) {
+  const cost = sanitizeCost(raw?.cost);
+  const tokens = sanitizeTokens(raw?.tokens);
   const cctx = raw && typeof raw === 'object' ? raw.context : null;
   const context = cctx && typeof cctx === 'object' &&
     finiteNonnegative(cctx.used) !== null && finiteNonnegative(cctx.window) > 0 &&
     PROVENANCE.has(cctx.provenance)
     ? { used: cctx.used, window: cctx.window, provenance: cctx.provenance } : null;
-  return { cost, tokens, context };
+  const byProvider = sanitizeByProvider(raw?.byProvider);
+  return { cost, tokens, context, byProvider };
 }
 
 const count = (n) => Number.isSafeInteger(n) && n >= 0 ? n : 0;
@@ -130,7 +161,7 @@ export function projectOmpSession(record) {
     taskStart: 0, counts: { read: 0, edit: 0, cmd: 0, web: 0 },
     ...childFields(record, identity.sessionKey), last: null, lastPrompt: '',
     lastAt: finiteNonnegative(record.observedAt) ?? 0,
-    usage: null, model: safeModel(record.model), metrics: ompMetrics(record.metrics),
+    usage: null, model: safeModel(record.model), provider: safeProvider(record.provider), metrics: ompMetrics(record.metrics),
     projectKey: null, worktreeKey: null, capabilities: capabilitiesFor('omp'),
   };
   if (!persisted && !live) return base;

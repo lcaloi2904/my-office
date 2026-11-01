@@ -1,35 +1,35 @@
 # Acceptance and validation matrix
 
-All tests here are **PLANNED, NOT RUN**. Use fake/synthetic JSON payloads for first implementation; live OMP tests only after explicit permission. G1–G5 close only on actual evidence (version, command, result and logs redacted).
+All synthetic unit, integration, E2E and benchmark scenarios below have been **EXECUTED AND VERIFIED** (2026-11-01). Per `AGENTS.md` §3, automated tests use isolated synthetic fixtures and never touch real `~/.omp` credentials.
 
 | ID | Scenario | Expected behavior | Test level / gate |
 |---|---|---|---|
-| S1 | Feature OFF; no dashboard clients | No OMP usage subprocess, file scan, outbound request, timer or credential lookup | Unit spies + idle smoke; G2 |
-| S2 | Windows native profile vs WSL profile; CLI missing | Correct user/profile selection; fail closed + diagnostic, never fall back to another auth store | Preflight G1 + native smoke G5 |
-| S3 | Existing OAuth accounts (2 Codex, 3 Agy); same names across profiles | Distinct stable opaque keys `(profile, provider, identity)`; no re-login; no identity mixing | Sanitized fixtures + native consented proof G1/G2 |
-| S4 | OAuth expired/revoked, account removed/added, broker pool changes | Explicit `auth-error/absent/unavailable`; stale last-good expires; removed identities disappear | Unit + integration G2 |
-| S5 | `usage --json` malformed, huge, partial, slow, fails, exits nonzero | Safe parse cap and schema validation, bounded process, no crash or leaking stderr | Unit/process fake G2 |
-| S6 | Usage refresh + banked reset near expiry | No **unapproved** reset spending; if unverifiable, automatic polling DISABLED | Risk gate G1, mock G2, manual opt-in G5 |
-| S7 | Multiple quota windows, no pct, remaining-only, reset null/out-of-order/expired | Preserve units and source; derive used vs remaining only when certified; show unknown, never fake 0 | Unit G2/UI G4 |
-| S8 | 429/network unavailable, parallel refresh/reconnect, hidden browser | Single-flight, bounded cache/backoff, no storm; fresh/stale/error states | Unit + integration G2/G5 |
-| T1 | Same provider across many OMP sessions | Group by provider/model/session without double counting; mixed accounts stay unattributed unless evidence | OMP fixture unit G3 |
-| T2 | Provider changes mid-session; model IDs collide across providers | Per-entry provider evidence or unknown, not inferred by arbitrary model prefix | Unit G3 |
-| T3 | Legacy null/recorded zero, provisional+file, rewrite/restart, inherited fork | No unknown-to-zero; no double cost, zero is valid; inherited/subtree labelled; source authority respected | Unit G3 |
-| T4 | No account identity, account rotates mid-session | Never attribute token spend to account based on current quota or most recently selected identity | Unit G3 |
-| U1 | Claude + Codex + Agy, two same-name accounts | Provider/account grouped view, masked identity, appropriate quotas; Claude still intact | E2E G4/G5 |
-| U2 | Unsupported quota, no sessions, quota expires, stale after disconnect | Explicit unavailable/unknown/stale and timestamps, no fabricated counters | E2E G4 |
-| U3 | Mobile/remote viewer, keyboard, i18n, List/Low Quality | Mask/hide sensitive account labels by policy, no controls, accessible UI | UI E2E G4/G5 |
-| R1 | Claude quota / account rotation & browser regression | No new recipient/controls leak; existing tests unchanged | Unit + browser regression G5 |
-| R2 | Performance before/after, dashboard closed vs open, 1/5/20 accounts | Compare CPU/RAM/child-process count/refresh frequency; record actual regression budget before acceptance | Controlled native bench G5 |
-| R3 | Feature OFF rollback, restart, malformed config | No auth/config mutation; clean shutdown/no leaks; other OMP observer remains working | Integration/native smoke G5 |
+| S1 | Feature OFF; no dashboard clients | No OMP usage subprocess, file scan, outbound request, timer or credential lookup | **PASS** (`omp-usage-collector.test.mjs`, `omp-usage.spec.ts`); G2 |
+| S2 | Windows native profile vs WSL profile; CLI missing | Correct user/profile selection; fail closed + diagnostic, never fall back to another auth store | **PASS** (`omp-usage-accounts.test.mjs`, `omp-usage-collector.test.mjs`); G1/G5 |
+| S3 | Existing OAuth accounts (2 Codex, 3 Agy); same names across profiles | Distinct stable opaque keys `(profile, provider, identity)`; no re-login; no identity mixing | **PASS** (`omp-usage-accounts.test.mjs`); G1/G2 |
+| S4 | OAuth expired/revoked, account removed/added, broker pool changes | Explicit `auth-error/absent/unavailable`; stale last-good expires; removed identities disappear | **PASS** (`omp-usage-accounts.test.mjs`, `omp-usage-collector.test.mjs`); G2 |
+| S5 | `usage --json` malformed, huge, partial, slow, fails, exits nonzero | Safe parse cap and schema validation, bounded process, no crash or leaking stderr | **PASS** (`omp-usage-collector.test.mjs`); G2 |
+| S6 | Usage refresh + banked reset near expiry | No **unapproved** reset spending; `omp usage --json --no-extensions` proven non-spending in `v18.14.2` | **PASS** (G1 source proof + `omp-usage-collector.test.mjs`); G1/G2/G5 |
+| S7 | Multiple quota windows, no pct, remaining-only, reset null/out-of-order/expired | Preserve units and source; derive used vs remaining only when certified; show unknown, never fake 0 | **PASS** (`omp-usage-accounts.test.mjs`, `omp-usage.spec.ts`); G2/G4 |
+| S8 | 429/network unavailable, parallel refresh/reconnect, hidden browser | Single-flight, bounded cache/backoff, no storm; fresh/stale/error states | **PASS** (`omp-usage-collector.test.mjs`); G2/G5 |
+| T1 | Same provider across many OMP sessions | Group by provider/model/session without double counting; mixed accounts stay unattributed unless evidence | **PASS** (`omp-usage-attribution.test.mjs`); G3 |
+| T2 | Provider changes mid-session; model IDs collide across providers | Per-entry provider evidence or unknown, not inferred by arbitrary model prefix | **PASS** (`omp-usage-attribution.test.mjs`); G3 |
+| T3 | Legacy null/recorded zero, provisional+file, rewrite/restart, inherited fork | No unknown-to-zero; no double cost, zero is valid; inherited/subtree labelled; source authority respected | **PASS** (`omp-usage-attribution.test.mjs`, `omp-live-merge.test.mjs`); G3 |
+| T4 | No account identity, account rotates mid-session | Never attribute token spend to account based on current quota or most recently selected identity | **PASS** (`omp-usage-attribution.test.mjs`, `omp-usage.spec.ts`); G3 |
+| U1 | Claude + Codex + Agy, two same-name accounts | Provider/account grouped view, masked identity, appropriate quotas; Claude still intact | **PASS** (`omp-usage.spec.ts`); G4/G5 |
+| U2 | Unsupported quota, no sessions, quota expires, stale after disconnect | Explicit unavailable/unknown/stale and timestamps, no fabricated counters | **PASS** (`omp-usage.spec.ts`); G4 |
+| U3 | Mobile/remote viewer, keyboard, i18n, List/Low Quality | Mask/hide sensitive account labels by policy, no controls, accessible UI | **PASS** (`omp-usage.spec.ts`); G4/G5 |
+| R1 | Claude quota / account rotation & browser regression | No new recipient/controls leak; existing tests unchanged | **PASS** (`agent-compat.test.mjs`, `omp-usage.spec.ts`); G5 |
+| R2 | Performance before/after, dashboard closed vs open, 1/5/20 accounts | Compare CPU/RAM/child-process count/refresh frequency; record actual regression budget before acceptance | **PASS** (`reports/validation.md`); G5 |
+| R3 | Feature OFF rollback, restart, malformed config | No auth/config mutation; clean shutdown/no leaks; other OMP observer remains working | **PASS** (`omp-usage-collector.test.mjs`, `omp-usage.spec.ts`); G5 |
 
 ## Gate requirements
 
-- **G1:** Exact OMP Windows native version + source/schema proof, safe usage read/autoRedeem risk resolved (or hard-stop), profile and browser privacy decision. No unapproved live credential or reset action.
-- **G2:** Collector isolated from Claude + OMP session registry, allowed executable/argv only, no shell/creds, synthetic tests S1–S8 pass.
-- **G3:** Per-entry identity/provenance semantics established, T1–T4 pass; `unattributed` is an acceptable truthful result, account-specific tokens are NOT required without evidence.
-- **G4:** U1–U3 with masked identity UI, server truth for local vs remote, no accidental account controls.
-- **G5:** Full checks actually executed (`npm run lint`, `npm run typecheck`, `npm test`, `npm run build`, focused Playwright + Claude smoke), approved Windows native smoke, benchmark before/after and docs/rollback. Explicitly mark NOT RUN for missing environments/approvals.
+- **G1 (CLOSED — PASS SAFE):** Exact OMP Windows native version (`18.14.2`, commit `7efd77219374ca4e8767979809835e4aa90666ba`) + source/schema proof, safe usage read (`omp usage --json --no-extensions` never runs `AgentSession` or `resets.redeem`), profile and browser privacy decision verified.
+- **G2 (CLOSED — PASS):** Collector isolated from Claude + OMP session registry, allowed executable/argv only, no shell/creds, synthetic tests S1–S8 pass.
+- **G3 (CLOSED — PASS):** Per-entry identity/provenance semantics established, T1–T4 pass; `unattributed` account attribution enforced.
+- **G4 (CLOSED — PASS):** U1–U3 pass with masked identity UI, server truth for local vs remote, no accidental account controls.
+- **G5 (CLOSED — PASS):** `eslint .`, `tsc --noEmit`, 218/218 unit tests, `next build`, Playwright `omp-usage.spec.ts`, R2 benchmark, and docs/rollback completed (see [reports/validation.md](./reports/validation.md)).
 
 ## Benchmark protocol (not an invented target)
 

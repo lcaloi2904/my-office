@@ -1,6 +1,6 @@
 ---
 title: "Phase 03: OMP session metrics by provider/model"
-status: todo
+status: done
 priority: P1
 effort: "1-1.5 days"
 dependencies: [1, 2]
@@ -52,10 +52,10 @@ Do not change Claude price table `server/usage.mjs`, `src/office/life/quota.js` 
 
 ## G3 acceptance
 
-- [ ] T1–T4 pass; provider totals match known input fixtures, no model-prefix guessing.
-- [ ] Session-to-account assignment impossible without evidence => remains `unattributed`, even if UI knows a preferred account.
-- [ ] No duplicate file+live totals, inherited history clearly labeled, no invalid cost zero.
-- [ ] Claude regression and per-session legacy shape preserved.
+- [x] T1–T4 pass; provider totals match known input fixtures, no model-prefix guessing.
+- [x] Session-to-account assignment impossible without evidence => remains `unattributed`, even if UI knows a preferred account.
+- [x] No duplicate file+live totals, inherited history clearly labeled, no invalid cost zero.
+- [x] Claude regression and per-session legacy shape preserved.
 
 ## Verification (after approved changes)
 

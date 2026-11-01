@@ -32,6 +32,7 @@ import { createAgentRegistry } from './agents/registry.mjs';
 import { createClaudeAdapter } from './agents/claude/compat.mjs';
 import { createOmpAdapter } from './agents/omp/index.mjs';
 import { createOmpBridge, loadIngestTokens } from './agents/omp/bridge.mjs';
+import { createOmpUsageCollector } from './agents/omp/usage-collector.mjs';
 import { projectClaudeSession } from './agents/projection.mjs';
 import { isClaudeRequest, resolveOmpMode } from './agents/schema.mjs';
 import { privateRoot } from '../integrations/omp/private-storage.js';
@@ -71,6 +72,17 @@ async function startOmpIngress() {
   } catch { ompBridge = null; ompIngressFailed = true; }   // (no token, no ingress: files mode carries on)
 }
 /* end OMP wiring */
+const OMP_USAGE_ON = !['0', 'false', 'off'].includes(String(process.env.OFFICE_OMP_USAGE ?? '1').trim().toLowerCase());
+const ompUsageCollector = createOmpUsageCollector({
+  enabled: OMP_USAGE_ON,
+  executable: process.env.OFFICE_OMP_BIN || 'omp',
+  profile: process.env.OFFICE_OMP_PROFILE,
+  onChange: () => {
+    if (!OMP_USAGE_ON) return;
+    broadcast({ k: 'ompUsage', ompUsage: ompUsageCollector.snapshot({ local: true }) }, true);
+  },
+});
+const syncOmpUsageWatch = () => ompUsageCollector.setWatching([...clients].some((c) => c.local));
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = Number(process.env.OFFICE_PORT) || 4310;
@@ -1837,7 +1849,7 @@ const server = http.createServer((req, res) => {
   }
   if (req.method === 'GET' && url.pathname === '/api/doctor') {
     if (!isLoopback(req)) { res.writeHead(403).end(); return; }
-    json(res, 200, { uptime: Math.round((Date.now() - startedAt) / 1000), lastEventAt: lastHookAt, sessions: sessions.size, pending: pending.size, node: process.versions.node, statusAt, limitsAt: planLimits?.at || 0, limitsSource: planLimits?.source || null, usageNote: noteText(), agents: { omp: ompAvailability(), ompIssues: ompAdapter?.status().issues || [], diagnostics: agents.diagnostics() } });
+    json(res, 200, { uptime: Math.round((Date.now() - startedAt) / 1000), lastEventAt: lastHookAt, sessions: sessions.size, pending: pending.size, node: process.versions.node, statusAt, limitsAt: planLimits?.at || 0, limitsSource: planLimits?.source || null, usageNote: noteText(), agents: { omp: ompAvailability(), ompUsage: { enabled: OMP_USAGE_ON, state: ompUsageCollector.snapshot({ local: true }).state }, ompIssues: ompAdapter?.status().issues || [], diagnostics: agents.diagnostics() } });
     return;
   }
   if (req.method === 'POST' && url.pathname === '/hook/question') {
@@ -2222,7 +2234,8 @@ const server = http.createServer((req, res) => {
   const snapNow = (local) => {
     const lanOn = lanIsOn();
     const omp = ompFilesOn() ? { on: true, local, conversation: !!ompAdapter.catalog({ limit: 1 }).conversation } : null;   // (whether the history picker is offered; the list itself is this computer only)
-    return { k: 'snap', lang: prefs.lang(), omp, sessions: local ? agents.list() : agents.list().filter((s) => s.agentKind !== 'omp'), perms: [...pending.values()].map(permPub), feed, stats, local, todos, limits: limitsOut(), limitsNote: noteText(), trophies: trophies.pub(),
+    const ompUsage = OMP_USAGE_ON ? ompUsageCollector.snapshot({ local }) : null;
+    return { k: 'snap', lang: prefs.lang(), omp, ompUsage, sessions: local ? agents.list() : agents.list().filter((s) => s.agentKind !== 'omp'), perms: [...pending.values()].map(permPub), feed, stats, local, todos, limits: limitsOut(), limitsNote: noteText(), trophies: trophies.pub(),
       lan: local && lanOn ? lanUrl() : null, lanBase: local && lanOn ? lanUrl(false) : null, pin: local ? currentPin() : null,
       ts: local && lanOn ? tsUrl() : null, tsHere: !!tsUrl(), phoneApprove: !!prefs.get('phoneApprove'), phoneTasks: !!prefs.get('phoneTasks'), lanFixed: local && lanFixed, build: BUILD };
   };
@@ -2231,11 +2244,12 @@ const server = http.createServer((req, res) => {
     const local = isLoopback(req);
     const client = { res, local };
     clients.add(client);
+    syncOmpUsageWatch();
     fetchPlanUsage();   // skipped when the saved reading is fresh
     pollGit().then(() => git.pollCi());
     scanSessions().then(() => send(res, snapNow(local)));
     const ping = setInterval(() => res.write(': ping\n\n'), 20_000);
-    req.on('close', () => { clearInterval(ping); clients.delete(client); });
+    req.on('close', () => { clearInterval(ping); clients.delete(client); syncOmpUsageWatch(); });
     return;
   }
   if (url.pathname === '/api/live') {   // { seq, msgs }: the snapshot first (or when too far behind), then what came after `since`
@@ -2243,6 +2257,7 @@ const server = http.createServer((req, res) => {
     polledAt = Date.now();
     if (!(since >= 0) || since > sent || (backlog.length && since < backlog[0][0] - 1)) {
       if (fresh) { fetchPlanUsage(); pollGit().then(() => git.pollCi()); }
+      if (isLoopback(req) && OMP_USAGE_ON) void ompUsageCollector.refresh();
       scanSessions().then(() => json(res, 200, { seq: sent, msgs: [snapNow(isLoopback(req))] }));
       return;
     }
@@ -2263,6 +2278,15 @@ const server = http.createServer((req, res) => {
     if (!ompAdapter || !ompFilesOn()) { json(res, 404, { items: [], code: 'ompOff' }); return; }
     if (!isLoopback(req)) { json(res, 403, { items: [], code: 'agentLocalOnly' }); return; }
     json(res, 200, ompAdapter.catalog({ cursor: url.searchParams.get('cursor') || 0, limit: url.searchParams.get('limit') || 25, kind: url.searchParams.get('kind') || 'all' }));
+    return;
+  }
+  if (url.pathname === '/api/omp/usage' && req.method === 'GET') {
+    if (!isLoopback(req)) { json(res, 403, { ok: false, code: 'agentLocalOnly' }); return; }
+    if (!OMP_USAGE_ON) { json(res, 200, ompUsageCollector.snapshot({ local: true })); return; }
+    const wantRefresh = url.searchParams.get('refresh') === '1';
+    (wantRefresh ? ompUsageCollector.refresh({ force: true }) : Promise.resolve(ompUsageCollector.snapshot({ local: true })))
+      .then((snap) => json(res, 200, snap))
+      .catch(() => json(res, 500, ompUsageCollector.snapshot({ local: true })));
     return;
   }
   if (url.pathname === '/api/log') {
@@ -2316,7 +2340,7 @@ const server = http.createServer((req, res) => {
 const DEV = process.argv.includes('--dev');
 // this build's id: a page from an older one (the office was updated and restarted) loads the new one by itself
 const BUILD = (() => { try { return fs.readFileSync(path.join(ROOT, process.env.OFFICE_DIST_DIR || '.next', 'BUILD_ID'), 'utf8').trim(); } catch { return ''; } })();
-server.on('close', () => { void agents.dispose(); });
+server.on('close', () => { ompUsageCollector.dispose(); void agents.dispose(); });
 const nextApp = next({ dev: DEV, dir: ROOT, hostname: HOST, port: PORT, httpServer: server });
 const nextHandle = nextApp.getRequestHandler();
 try { await nextApp.prepare(); }

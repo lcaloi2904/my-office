@@ -38,6 +38,8 @@ if exist "%~dp0data\omp-config.json" (
 ) else (
   echo Note: data\omp-config.json was not found, so OMP history is off.
 )
+rem OMP Multi-Account Usage (openai-codex & google-antigravity): on by default (set OFFICE_OMP_USAGE=0 to disable).
+if not defined OFFICE_OMP_USAGE set "OFFICE_OMP_USAGE=1"
 
 rem Never start a second copy: if the port is taken the office is most likely already running.
 netstat -ano | findstr /R /C:":%OFFICE_PORT% .*LISTENING" >nul

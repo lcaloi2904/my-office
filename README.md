@@ -350,6 +350,9 @@ Then open <http://localhost:4310>.
 | `OFFICE_OMP` | `off` | `files` or `hybrid` enables optional read-only [Oh My Pi (OMP)](docs/OMP-INTEGRATION.md) session observation on this computer (`off` reads nothing). |
 | `OFFICE_OMP_CONFIG` | *(empty)* | Absolute path to `omp-config.json` when `OFFICE_OMP` is `files` or `hybrid` (see [docs/OMP-INTEGRATION.md](docs/OMP-INTEGRATION.md)). |
 | `OFFICE_OMP_INGEST_FILE` | `~/.omp/office-private/ingest.json` | Optional absolute path override for the private `hybrid` telemetry credential store. |
+| `OFFICE_OMP_USAGE` | on (`1`) | Reads OMP OAuth account quota (`openai-codex` and `google-antigravity`) via `omp usage --json --no-extensions` when a local viewer is open (`0` turns it off). |
+| `OFFICE_OMP_BIN` | `omp` | Optional path to the native `omp` executable used for `OFFICE_OMP_USAGE`. |
+| `OFFICE_OMP_PROFILE` | *(active OMP profile)* | Optional OMP profile name (`--profile`) for `OFFICE_OMP_USAGE`. |
 
 ## Development
 

@@ -7,7 +7,8 @@ import { hoverRing, selRing } from '../interact/rings.js';
 import { AGENT_NAME, agentMark, agentOf, canSession, claudeCost, colorOf, dn, dnOf, sessions, unknownLabel, workers } from '../people/workers.js';
 import { renderLite } from './lite.js';
 import { openSession, renderActivity, renderSessionHead, renderSubs, tab, toggleSession } from './session-drawer.js';
-import { macSnap } from './mac-drawer.js';
+import { macSnap, resetText } from './mac-drawer.js';
+import { renderOmpUsagePanel } from './omp-usage-panel.js';
 import { queuePlace } from '../interact/place-cards.js';
 import { unseenDone } from '../life/your-turn.js';
 import { whereabouts } from '../people/outings.js';
@@ -118,7 +119,7 @@ let uiQueued = false;
 export function queueUi() {
   if (uiQueued) return; uiQueued = true;
   requestAnimationFrame(() => {
-    uiQueued = false; renderRail(); renderHud(); queueFeed(); state.boardDirty = true; queuePlace(); renderLite();
+    uiQueued = false; renderRail(); renderHud(); queueFeed(); state.boardDirty = true; queuePlace(); renderLite(); if (typeof renderOmpUsagePanel === 'function') renderOmpUsagePanel({ resetText });
     if (state.selectedId) { renderSessionHead(); if (tab === 'subs' && !state.subView) renderSubs(); }
   });
 }

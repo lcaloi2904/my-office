@@ -16,6 +16,9 @@ Tính năng tích hợp này **mặc định tắt (`off`)**, **hoàn toàn ch�
 | `OFFICE_OMP` | `off` | `off`: tắt hoàn toàn (0 đọc file, 0 timer, 0 route). `files`: chỉ đọc các file phiên đã lưu. `hybrid`: gồm `files` + cổng nhận sự kiện trực tiếp qua loopback (`POST /ingest/omp/v1`). |
 | `OFFICE_OMP_CONFIG` | *(trống)* | Bắt buộc khi bật `files` hoặc `hybrid`. Đường dẫn tuyệt đối tới file cấu hình JSON. |
 | `OFFICE_OMP_INGEST_FILE` | `~/.omp/office-private/ingest.json` | Tùy chọn đổi đường dẫn file lưu token nhận sự kiện của `hybrid`. Phải là đường dẫn tuyệt đối đạt chuẩn quyền truy cập riêng tư của `private-storage.js`. |
+| `OFFICE_OMP_USAGE` | `1` (`on`) | Mặc định **bật** (`1`). Tự động đọc hạn mức (quota) chỉ-đọc theo từng tài khoản OAuth `openai-codex` và `google-antigravity` qua `omp usage --json --no-extensions` khi có trình duyệt cục bộ đang mở. Đặt `0` (hoặc `off`/`false`) để tắt. Không chạm vào hạn mức hay điều khiển tài khoản Claude. |
+| `OFFICE_OMP_BIN` | `omp` | Đường dẫn hoặc tên binary `omp` trên cùng hệ điều hành dùng để đọc quota OMP. |
+| `OFFICE_OMP_PROFILE` | *(theo `OMP_PROFILE` / `default`)* | Tên profile OMP hợp lệ (`--profile <name>`) dùng để đọc quota OMP. |
 
 Trình tự kích hoạt khuyến nghị:
 1. Giữ `OFFICE_OMP=off` cho tới khi chuẩn bị xong file cấu hình `omp-config.json`.
@@ -102,6 +105,26 @@ Bộ giải mã hỗ trợ OMP session schema **v3** (mốc mã nguồn tham chi
    - Số liệu tạm thời từ luồng live mang nhãn `provenance: "provisional"` và sẽ **bị thay thế hoàn toàn** (không bao giờ cộng dồn) khi file của phiên đó được ghim và đọc xong (`readerState === "ready"` và `!incomplete`).
    - Nếu file vượt quá `maxFileBytes` (8 MiB), vượt `maxEntries` (4.096), hoặc chạm bộ lọc trùng lặp Bloom (`possible-duplicate-entry-id`), cờ `incomplete` sẽ bật thành `true` và chi phí chính xác được ẩn (`cost: null`, `provenance: "unknown"`).
    - Chi phí và token của OMP không bao giờ đi vào hạn mức gói Claude (`limits.json`), không kích hoạt nghỉ hết lượt của Claude và không cộng vào tổng chi phí ngày của cô kế toán Claude.
+
+4. **Quan sát Multi-Account Quota (`openai-codex`, `google-antigravity`) & Phân bổ Token theo Provider**:
+   - **Tách biệt hai khái niệm**:
+     1. **Account Quota (Mặc định bật — `OFFICE_OMP_USAGE=1`)**: Đọc các tài khoản OAuth `openai-codex` và `google-antigravity` trong profile OMP đã chọn qua lệnh chỉ-đọc `omp [--profile <p>] usage --json --no-extensions` (đã xác minh ở mốc `omp v18.14.2` không khởi tạo `AgentSession` và không tiêu saved resets). Mỗi tài khoản có `accountKey` ẩn danh (HMAC theo tiến trình trên tuple `(profile, provider, identity)`), nhãn đã che (`de* · or*1* · pro`), danh sách cửa sổ hạn mức thực tế (`usedPercent`, `remainingPercent`, `resetsAt`, `sourceUnit`), và trạng thái (`ready`/`stale`/`unavailable`/`auth-error`/`unsupported`).
+     2. **Session Tokens & Cost (`metrics.byProvider`)**: Tổng hợp token (`input`, `output`, `cacheRead`, `cacheWrite`) và `cost` theo từng `(providerId, model)` trực tiếp từ các bản ghi JSONL (`message.provider`, `model_usage.provider`) hoặc sự kiện live. Vì JSONL không xuất định danh OAuth công khai khớp với báo cáo quota, mọi chi phí/token theo phiên được gắn nhãn rõ ràng là **`unattributed` (`Chưa xác định tài khoản`)**, tuyệt đối không suy đoán từ tài khoản đang active.
+   - **Hướng dẫn sử dụng nhanh (How to use)**:
+     - **Chạy bình thường (mặc định bật)**: Chỉ cần chạy `start-office.cmd` (hoặc `npm start` / `npm run dev`). Khi bạn đã đăng nhập sẵn tài khoản Codex (`openai-codex`) hoặc Antigravity (`google-antigravity`) trong OMP, My Office sẽ tự động đọc hạn mức từ profile OMP hiện tại mà **không cần đăng nhập lại**.
+     - **Xem hạn mức đa tài khoản trên giao diện**:
+       1. Bấm vào nút **Gói / Plan** (`#btn-plan`) trên thanh trên cùng (TopBar) để mở bảng hạn mức (`#pop-plan`).
+       2. Phía dưới phần hạn mức Claude là khu vực **OMP Usage** (`#omp-usage-sec`), hiển thị riêng nhóm **Codex (`openai-codex`)** và **Antigravity (`google-antigravity`)**:
+          - Từng tài khoản OAuth (kể cả các tài khoản trùng email nhưng khác workspace/organization) hiển thị thành từng thẻ riêng kèm trạng thái (`mới`/`fresh`, `cũ`/`stale`, `lỗi xác thực`/`auth error`, `không hỗ trợ`/`unsupported`), tỷ lệ đã dùng/còn lại và thời điểm đặt lại (`resetsAt`).
+          - Ngay bên dưới danh sách tài khoản của từng provider là bảng **Token & chi phí theo phiên** (`Session tokens & cost`) tổng hợp theo từng model kèm nhãn **`Chưa xác định tài khoản` (`Account unattributed`)**.
+          - Bấm nút **Làm mới / Refresh** ở góc phải tiêu đề `OMP Usage` để yêu cầu cập nhật tức thời (single-flight, có chống spam/backoff).
+       3. Khi bấm vào một nhân vật/phiên OMP để mở ngăn chi tiết phiên (`#dr-session`), phần đầu trang hiện huy hiệu provider (ví dụ `openai-codex`, `google-antigravity`) và phần thông tin bên dưới hiện bảng **Usage theo provider & model** (`#ds-actions .ds-omp-metrics`) của riêng phiên đó.
+     - **Chọn profile OMP khác hoặc chỉ định đường dẫn `omp.exe`**:
+       - Đổi profile OMP: đặt `OFFICE_OMP_PROFILE=<tên-profile>` (hoặc `OMP_PROFILE=<tên-profile>`) trước khi chạy My Office.
+       - Chỉ định đường dẫn thực thi `omp`: đặt `OFFICE_OMP_BIN=C:\Users\<User>\AppData\Local\omp\omp.exe` nếu `omp` chưa nằm trong `PATH`.
+     - **Xem thử dữ liệu mẫu (Demo mode)**: Mở `http://127.0.0.1:4310/?demo&ompUsage` để xem giao diện mẫu gồm nhiều tài khoản Codex và Antigravity mà không gọi CLI thật.
+     - **Kiểm tra qua API cục bộ**: Mở `http://127.0.0.1:4310/api/omp/usage` (hoặc `?refresh=1`) và `http://127.0.0.1:4310/api/doctor` (trường `agents.ompUsage`).
+   - **Bảo mật & Tắt tính năng (Rollback)**: Khi không có trình duyệt cục bộ nào đang mở, collector tự động dừng timer (0 tiến trình con). Để tắt hẳn việc đọc quota tài khoản OMP, đặt `OFFICE_OMP_USAGE=0` (hoặc `off`/`false`) rồi khởi động lại My Office; không cần xóa hay sửa bất kỳ dữ liệu/cấu hình nào của OMP.
 
 ---
 

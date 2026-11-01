@@ -14,7 +14,7 @@ import { unseenDone } from '../life/your-turn.js';
 import { DEMO, demoLog } from '../demo/demo.js';
 import { acctActions } from './session-account.js';
 import { t as tr, locale } from '../../i18n/index.js';
-import { appendSessionBadges, childState, counterNote, projectLabel, sessionMetricView } from './session-info.js';
+import { appendSessionBadges, childState, counterNote, projectLabel, renderSessionProviderBreakdown, sessionMetricView } from './session-info.js';
 
 /* ---------- session drawer ---------- */
 export let tab = 'chat';
@@ -76,7 +76,7 @@ export async function openWindowOf(s) {
 }
 // what the buttons below depend on
 let drawnSig = '', qrFor = null;   // (qrFor: the session whose Remote Control QR code is shown)
-const actionsSig = (s) => [s.id, agentOf(s), s.persistedOnly, s.incomplete, state.isLocal, JSON.stringify(s.capabilities), s.link, s.status === 'rest', s.pid, s.moved?.to, s.acct, state.limits?.others?.length].join('|');
+const actionsSig = (s) => [s.id, agentOf(s), s.persistedOnly, s.incomplete, state.isLocal, JSON.stringify(s.capabilities), s.link, s.status === 'rest', s.pid, s.moved?.to, s.acct, state.limits?.others?.length, JSON.stringify(s.metrics?.byProvider || null)].join('|');
 function renderActions() {
   const s = sessions.get(state.selectedId); if (!s) return;
   const box = $('ds-actions'); box.replaceChildren(); drawnSig = actionsSig(s);
@@ -91,6 +91,8 @@ function renderActions() {
         box.append(b);
       }
     }
+    const breakdown = typeof renderSessionProviderBreakdown === 'function' ? renderSessionProviderBreakdown(s, { fmtTok, fmtUsd }) : null;
+    if (breakdown) box.append(breakdown);
     return;
   }
   if (state.isLocal && s.pid && canSession(s, 'openWindow')) {

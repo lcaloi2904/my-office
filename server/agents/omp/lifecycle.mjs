@@ -2,6 +2,7 @@
 // Every key is a logical OMP conversation; an instance/generation owns its own sequence and tools.
 // Liveness uses the time this server received an event, never the producer's wall clock.
 import { ompSessionIdentity } from '../schema.mjs';
+import { provisionalUsage } from './usage.mjs';
 
 const MAX_SESSIONS = 128, MAX_TOOLS = 96, MAX_REORDER = 16, MAX_RETIRED = 16;
 const STALE_MS = 30_000, DISCONNECTED_MS = 90_000, RETAIN_MS = 15 * 60_000;
@@ -23,7 +24,7 @@ export function createOmpLifecycle({ now = Date.now, onChange = () => {}, staleM
     pendingTools: running(s).length, toolCategories: [...new Set(running(s).map((t) => t.category))].sort(),
     waitReasons: [...new Set(s.waiting.values())].sort(), pendingMessages: s.pendingMessages,
     pendingJobs: s.pendingJobs, observedAt: s.observedAt,
-    model: s.model, metrics: s.metrics, persistedOnly: false, gap: s.gap,
+    model: s.model, provider: s.provider, metrics: s.metrics, persistedOnly: false, gap: s.gap,
   });
   // A heartbeat that changes nothing visible must not wake every client.
   const signature = (s) => { const { observedAt, ...rest } = snapshot(s); void observedAt; return JSON.stringify(rest); };
@@ -45,7 +46,7 @@ export function createOmpLifecycle({ now = Date.now, onChange = () => {}, staleM
     generation: e.generation, sequence: 0, observedAt: now(), connection: 'connected',
     ended: false, inTurn: false, isIdle: null, lastTurnOutcome: 'unknown',
     pendingMessages: 0, pendingJobs: 0, waiting: new Map(), tools: new Map(), reorder: new Map(),
-    retired: [], gap: false, activity: 'unknown', model: null, metrics: null, sig: null,
+    retired: [], gap: false, activity: 'unknown', model: null, provider: null, providersSeen: new Set(), metrics: null, sig: null,
   });
   const applyOne = (s, e) => {
     const d = e.data, at = now();
@@ -55,7 +56,22 @@ export function createOmpLifecycle({ now = Date.now, onChange = () => {}, staleM
       if (d.pendingMessages !== null) s.pendingMessages = d.pendingMessages;
       if (d.pendingJobs !== null) s.pendingJobs = d.pendingJobs;
       if (d.model) s.model = d.model;
-      if (d.metrics) s.metrics = d.metrics; // provisional, never an additive ledger
+      if (d.provider) { s.provider = d.provider; if (s.providersSeen.size < 8) s.providersSeen.add(d.provider); }
+      if (d.metrics) {
+        // If multiple providers were observed during one runtime session, a cumulative runtime snapshot cannot be
+        // attributed to a single provider without per-entry JSONL evidence: keep its provider bucket 'unknown'.
+        if (s.providersSeen.size > 1 && Array.isArray(d.metrics.byProvider) && d.metrics.byProvider[0]) {
+          s.metrics = provisionalUsage({
+            input: d.metrics.tokens?.input,
+            output: d.metrics.tokens?.output,
+            cacheRead: d.metrics.tokens?.cacheRead,
+            cacheWrite: d.metrics.tokens?.cacheWrite,
+            cost: d.metrics.cost?.value,
+          }, { provider: 'unknown', model: null });
+        } else {
+          s.metrics = d.metrics;
+        }
+      }
       if (e.type === 'heartbeat') {
         // An idle runtime cannot have a running tool or an open turn: a lost end event must not stay "active" forever.
         if (d.isIdle === true) {

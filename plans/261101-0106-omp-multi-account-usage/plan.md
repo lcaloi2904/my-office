@@ -1,7 +1,7 @@
 ---
 title: "OMP Multi-Account Usage trong My Office"
 description: "Theo dõi token/chi phí theo provider và quota/reset theo từng OAuth account Codex, Antigravity được quản lý bởi OMP, không đăng nhập lại."
-status: pending
+status: completed
 priority: P2
 effort: "Ước tính 4-6 dev days; chốt lại sau G1"
 branch: main
@@ -47,11 +47,11 @@ Claude usage/account controls ---------------------> UNCHANGED
 
 | # | Phase | Gate | Dependency | Status |
 |---|---|---|---|---|
-| 01 | [Compatibility + safe source verification](./phase-01-start.md) | G1: native Windows account/usage contract + safety | Không | Pending |
-| 02 | [Bounded account/quota collector](./phase-02-provider-account-usage-collector.md) | G2: account isolation, no auth manipulation, safe cache | G1 | Pending |
-| 03 | [Session token/cost attribution](./phase-03-session-metrics-attribution.md) | G3: provider attribution with provenance; no double count | G1, G2 contract | Pending |
-| 04 | [Multi-account UI](./phase-04-multi-account-ui.md) | G4: truthful mixed Claude/OMP UI | G2 + G3 | Pending |
-| 05 | [Hardening, regression, rollout](./phase-05-hardening-rollout.md) | G5: tests, perf evidence, docs, opt-in rollout | G4 | Pending |
+| 01 | [Compatibility + safe source verification](./phase-01-start.md) | G1: native Windows account/usage contract + safety | Không | Done |
+| 02 | [Bounded account/quota collector](./phase-02-provider-account-usage-collector.md) | G2: account isolation, no auth manipulation, safe cache | G1 | Done |
+| 03 | [Session token/cost attribution](./phase-03-session-metrics-attribution.md) | G3: provider attribution with provenance; no double count | G1, G2 contract | Done |
+| 04 | [Multi-account UI](./phase-04-multi-account-ui.md) | G4: truthful mixed Claude/OMP UI | G2 + G3 | Done |
+| 05 | [Hardening, regression, rollout](./phase-05-hardening-rollout.md) | G5: tests, perf evidence, docs, opt-in rollout | G4 | Done |
 
 [Evidence & unknowns](./evidence.md) · [Validation matrix](./validation-matrix.md).
 
@@ -73,12 +73,12 @@ No account login/logout, selection/rotation, auto-switch, credential export, sub
 
 ## Acceptance criteria (plan-level)
 
-- [ ] Existing OMP-authenticated accounts are discoverable **without a new login**, on the selected native Windows profile; profile mismatch is a diagnosable state.
-- [ ] Codex/Agy can each display N accounts with distinct provider/profile-scoped IDs, quota windows, reset countdown and last-success timestamp; unsupported window values remain unknown.
-- [ ] OMP tokens/cost grouped by provider/model/session and optionally account only when an OMP-supported identity signal exists; historical vs provisional/inherited metadata preserved; no duplicated costs.
-- [ ] No credentials materialized in My Office and no account switching/reset redemption initiated by My Office.
-- [ ] Claude usage display, quota animations and account controls keep baseline behavior.
-- [ ] Unit/E2E regression, native Windows smoke and measured performance budget pass or unresolved gates remain OPEN; docs and rollback instructions exist.
+- [x] Existing OMP-authenticated accounts are discoverable **without a new login**, on the selected native Windows profile; profile mismatch is a diagnosable state.
+- [x] Codex/Agy can each display N accounts with distinct provider/profile-scoped IDs, quota windows, reset countdown and last-success timestamp; unsupported window values remain unknown.
+- [x] OMP tokens/cost grouped by provider/model/session and optionally account only when an OMP-supported identity signal exists; historical vs provisional/inherited metadata preserved; no duplicated costs.
+- [x] No credentials materialized in My Office and no account switching/reset redemption initiated by My Office.
+- [x] Claude usage display, quota animations and account controls keep baseline behavior.
+- [x] Unit/E2E regression, native Windows smoke and measured performance budget pass or unresolved gates remain OPEN; docs and rollback instructions exist.
 
 ## Implementation and verification authority
 

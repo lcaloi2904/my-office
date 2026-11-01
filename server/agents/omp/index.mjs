@@ -365,7 +365,7 @@ export function createOmpAdapter({ config, configFile, io = fsp, now = Date.now,
     if (!snap?.supported || snap.sourceSessionId !== entry.header.sessionId) return null;
     const { projectKey, worktreeKey } = projectIdentity(source.cfg, entry.header.cwd, source.identities);
     return { sourceNamespace: source.cfg.id, sourceSessionId: snap.sourceSessionId, observedAt: snap.observedAt || Math.round(entry.mtimeMs),
-      model: snap.model, metrics: snap.metrics, counts: snap.counts, persistedOnly: true, readerState: info.state, incomplete: snap.incomplete === true || info.state !== 'ready',
+      model: snap.model, provider: snap.provider, metrics: snap.metrics, counts: snap.counts, persistedOnly: true, readerState: info.state, incomplete: snap.incomplete === true || info.state !== 'ready',
       children: taskChildren(rt, entry), childrenIncomplete: rt.childrenIncomplete,
       project: baseName(source.cfg, entry.header.cwd), projectKey, worktreeKey, conversation: source.cfg.conversation === true };
   }
@@ -379,7 +379,7 @@ export function createOmpAdapter({ config, configFile, io = fsp, now = Date.now,
     const identity = file || (entry?.header?.supported ? { ...projectIdentity(source.cfg, entry.header.cwd, source.identities), project: baseName(source.cfg, entry.header.cwd) } : {});
     const recorded = file?.readerState === 'ready' && !file.incomplete && file?.metrics && (file.metrics.cost || file.metrics.tokens?.provenance === 'recorded');
     return { sourceNamespace: runtime.sourceNamespace, sourceSessionId: runtime.sourceSessionId,
-      observedAt: runtime.observedAt, model: runtime.model ?? file?.model ?? null,
+      observedAt: runtime.observedAt, model: runtime.model ?? file?.model ?? null, provider: runtime.provider ?? file?.provider ?? null,
       // The durable file replaces a provisional runtime snapshot; the two are never added together.
       metrics: recorded ? file.metrics : runtime.metrics ?? file?.metrics ?? null,
       counts: file?.counts, readerState: file?.readerState, incomplete: file?.incomplete === true, filePersisted: !!file,

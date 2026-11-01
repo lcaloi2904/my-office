@@ -1,6 +1,6 @@
 ---
 title: "Phase 02: Isolated OMP account usage collector"
-status: todo
+status: done
 priority: P1
 effort: "1-1.5 days"
 dependencies: [1]
@@ -61,10 +61,10 @@ Do **not** modify `server/agents/omp/index.mjs` for account polling unless sourc
 
 ## G2 acceptance
 
-- [ ] S1–S8 synthetic tests pass; G1's safe source condition has not regressed.
-- [ ] All account identities remain distinct; masked; no auth/broker secrets or unapproved remote projections.
-- [ ] No unapproved use of saved resets, OAuth login, config alteration or provider requests outside approved OMP read path.
-- [ ] No Claude account/usage/control path changed; disable flag cleans all child processes/timers/retained objects.
+- [x] S1–S8 synthetic tests pass; G1's safe source condition has not regressed.
+- [x] All account identities remain distinct; masked; no auth/broker secrets or unapproved remote projections.
+- [x] No unapproved use of saved resets, OAuth login, config alteration or provider requests outside approved OMP read path.
+- [x] No Claude account/usage/control path changed; disable flag cleans all child processes/timers/retained objects.
 
 ## Verification (after scoped approval)
 

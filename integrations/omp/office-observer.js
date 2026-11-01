@@ -100,6 +100,8 @@ export function createOfficeObserver(options = {}) {
       if (jobCount !== null) out.pendingJobs = jobCount;
       const model = attempt(() => { const m = ctx?.model; return typeof m === 'string' ? m : m?.id; }, undefined);
       if (typeof model === 'string') out.model = model.slice(0, 96);
+      const provider = attempt(() => { const m = ctx?.model; return typeof m === 'object' && typeof m?.provider === 'string' ? m.provider : undefined; }, undefined);
+      if (typeof provider === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/.test(provider)) out.provider = provider.toLowerCase();
       const u = attempt(() => ctx?.sessionManager?.getUsageStatistics?.(), undefined);
       if (u && typeof u === 'object') {
         const usage = { input: num(u.input), output: num(u.output), cacheRead: num(u.cacheRead), cacheWrite: num(u.cacheWrite), cost: num(u.cost) };

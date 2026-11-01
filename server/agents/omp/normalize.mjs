@@ -5,6 +5,25 @@ import { aggregateUsage, usageRecord, provisionalUsage } from './usage.mjs';
 
 const idOf = (v) => typeof v === 'string' && v.length > 0 && v.length <= 256 && !/[\x00-\x1f\x7f]/.test(v) ? v : null;
 const modelOf = (v) => typeof v === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,95}$/.test(v) ? v : null;
+const providerOf = (v) => typeof v === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/.test(v) ? v.toLowerCase() : null;
+export function parseProviderModel(rawProvider, rawModel) {
+  const explicit = providerOf(rawProvider);
+  const m = modelOf(rawModel);
+  if (explicit) {
+    const prefix = explicit + '/';
+    const bare = m && m.toLowerCase().startsWith(prefix) && m.length > prefix.length ? m.slice(prefix.length) : m;
+    return { provider: explicit, model: m, modelId: bare };
+  }
+  if (m && m.includes('/')) {
+    const slash = m.indexOf('/');
+    const cand = providerOf(m.slice(0, slash));
+    const rest = m.slice(slash + 1);
+    if (cand && rest && !rest.includes('/')) {
+      return { provider: cand, model: m, modelId: rest };
+    }
+  }
+  return { provider: null, model: m, modelId: m };
+}
 const timestamp = (v) => typeof v === 'string' && Number.isFinite(Date.parse(v)) ? Date.parse(v) : 0;
 const contentText = (content) => typeof content === 'string' ? content : Array.isArray(content) ? content.filter((p) => p?.type === 'text' && typeof p.text === 'string').map((p) => p.text).join('\n') : '';
 const safeText = (s) => redact(String(s)).slice(0, 4000).replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '');
@@ -59,15 +78,22 @@ export function createNormalizer({ sourceNamespace, includeContent = false, maxE
     const e = { id, parentId, selectedLeafId: selected, type: KNOWN.has(raw.type) ? raw.type : 'unknown', ts: timestamp(raw.timestamp) };
     if (e.type === 'unknown') issue('unknown-record');
     if (raw.type === 'custom' && raw.customType === 'session_exit') e.exitEvidence = true;
-    if (raw.type === 'model_change' && (raw.role === undefined || raw.role === 'default')) e.model = modelOf(raw.model);
-    if (raw.type === 'model_usage') { e.usage = usageRecord(raw.usage); e.model = modelOf(raw.model); }
+    if (raw.type === 'model_change' && (raw.role === undefined || raw.role === 'default')) {
+      const pm = parseProviderModel(raw.provider, raw.model);
+      e.model = pm.model; if (pm.provider) e.provider = pm.provider; if (pm.modelId) e.modelId = pm.modelId;
+    }
+    if (raw.type === 'model_usage') {
+      const pm = parseProviderModel(raw.provider, raw.model);
+      e.usage = usageRecord(raw.usage); e.model = pm.model; if (pm.provider) e.provider = pm.provider; if (pm.modelId) e.modelId = pm.modelId;
+    }
     if (raw.type === 'compaction') { e.firstKeptEntryId = idOf(raw.firstKeptEntryId); if (includeContent) e.text = safeText(raw.summary || ''); }
     if (raw.type === 'branch_summary' && includeContent) e.text = safeText(raw.summary || '');
     if (raw.type === 'message') {
       const m = raw.message && typeof raw.message === 'object' ? raw.message : {};
       e.role = ['assistant', 'user', 'toolResult'].includes(m.role) ? m.role : 'unknown';
       if (m.role === 'assistant') {
-        e.usage = usageRecord(m.usage); e.model = modelOf(m.model);
+        const pm = parseProviderModel(m.provider, m.model);
+        e.usage = usageRecord(m.usage); e.model = pm.model; if (pm.provider) e.provider = pm.provider; if (pm.modelId) e.modelId = pm.modelId;
         const calls = (Array.isArray(m.content) ? m.content : []).filter((p) => p?.type === 'toolCall' && idOf(p.id));
         if (calls.length > 64) issue('tool-limit');
         e.calls = calls.slice(0, 64).map((p) => ({ id: p.id, category: toolCategory(p.name) }));
@@ -148,6 +174,7 @@ export function createNormalizer({ sourceNamespace, includeContent = false, maxE
       sourceNamespace, sourceSessionId: header?.id || null, supported: !!header && !rejected,
       relationKind: header?.relationKind || 'unknown', persistedOnly: true, lifecycle: 'historical',
       model: branch.findLast((e) => e.model && ['message', 'model_change'].includes(e.type))?.model || null,
+      provider: branch.findLast((e) => e.provider && ['message', 'model_change', 'model_usage'].includes(e.type))?.provider || null,
       observedAt: branch.at(-1)?.ts || header?.timestamp || 0, counts,
       metrics: aggregateUsage(entries.values(), { inherited: header?.inherited, incomplete }),
       items, tools: [...tools.values()], incomplete, diagnostics: [...issues],
@@ -180,8 +207,10 @@ export function normalizeOmpLiveEvent(raw) {
     data.isIdle = typeof d?.isIdle === 'boolean' ? d.isIdle : null;
     data.pendingMessages = boundedInteger(d?.pendingMessages);
     data.pendingJobs = boundedInteger(d?.pendingJobs);
+    const pm = parseProviderModel(d?.provider, d?.model);
     data.model = safeLiveModel(d?.model);
-    data.metrics = provisionalUsage(d?.usage);
+    if (pm.provider) data.provider = pm.provider;
+    data.metrics = provisionalUsage(d?.usage, { provider: pm.provider, model: pm.modelId || data.model });
     if (raw.type !== 'heartbeat') {
       data.waitReasons = Array.isArray(d?.waitReasons) ? d.waitReasons.filter((x) => x === 'approval' || x === 'input').slice(0, 24) : [];
       data.tools = Array.isArray(d?.tools) ? d.tools.slice(0, 96).filter((x) => boundedId(x?.id))

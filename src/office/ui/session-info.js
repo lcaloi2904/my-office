@@ -36,6 +36,11 @@ export function appendSessionBadges(node, s) {
   if (agentOf(s) !== 'claude') {
     const evidence = sessionEvidence(s), badge = el('span', 'session-evidence', tr('drawer.evidence.' + evidence));
     badge.dataset.evidence = evidence; node.append(badge);
+    if (agentOf(s) === 'omp' && typeof s?.provider === 'string' && s.provider) {
+      const pBadge = el('span', 'session-evidence session-provider', s.provider);
+      pBadge.dataset.provider = s.provider;
+      node.append(pBadge);
+    }
   }
   if (s.worktreeKey) {
     const chip = el('span', 'session-worktree', tr('drawer.worktree', { key: s.worktreeKey.slice(0, 7) }));
@@ -51,4 +56,46 @@ export function childState(x) {
   if (['parked', 'ended', 'aborted', 'unknown'].includes(x.lifecycle)) return tr('drawer.childState.' + x.lifecycle);
   if (x.persistedOnly === true || x.lifecycle === 'historical') return tr('drawer.persistedState');
   return x.endedAt ? tr('drawer.done') : tr('drawer.working');
+}
+export function renderSessionProviderBreakdown(s, { fmtTok, fmtUsd } = {}) {
+  if (agentOf(s) !== 'omp') return null;
+  const buckets = Array.isArray(s?.metrics?.byProvider) ? s.metrics.byProvider : [];
+  if (!buckets.length) return null;
+  const box = el('div', 'ds-omp-metrics');
+  const head = el('div', 'ds-omp-metrics-head');
+  head.append(
+    el('span', 'ds-omp-metrics-title', tr('drawer.ompMetrics.title')),
+    el('span', 'omp-unattr-badge', tr('drawer.ompMetrics.unattributed'))
+  );
+  box.append(head);
+  for (const b of buckets) {
+    if (!b || typeof b !== 'object') continue;
+    const provId = b.providerId || 'unknown';
+    const models = Array.isArray(b.models) && b.models.length
+      ? b.models
+      : [{ model: s.model || 'unknown', cost: b.cost, tokens: b.tokens }];
+    for (const m of models) {
+      const row = el('div', 'ds-omp-metric-row');
+      row.dataset.provider = provId;
+      row.dataset.model = m.model || 'unknown';
+      const t = m.tokens || {};
+      const tokStr = numeric(t.input) && numeric(t.output) && typeof fmtTok === 'function'
+        ? tr('drawer.ompMetrics.tokensInOut', { input: fmtTok(t.input), output: fmtTok(t.output) })
+        : tr('drawer.ompMetrics.costUnavailable');
+      const cacheStr = numeric(t.cacheRead) && numeric(t.cacheWrite) && (t.cacheRead > 0 || t.cacheWrite > 0) && typeof fmtTok === 'function'
+        ? ` · ${tr('drawer.ompMetrics.cacheReadWrite', { read: fmtTok(t.cacheRead), write: fmtTok(t.cacheWrite) })}`
+        : '';
+      const costVal = m.cost && numeric(m.cost.value) && provenance(m.cost.provenance) && typeof fmtUsd === 'function'
+        ? fmtUsd(m.cost.value)
+        : tr('drawer.ompMetrics.costUnavailable');
+      const provStr = provenance(t.provenance) ? tr('drawer.provenance.' + t.provenance) : '';
+      const scopeStr = m.cost && ['self', 'inherited', 'subtree'].includes(m.cost.scope) ? tr('drawer.scope.' + m.cost.scope) : '';
+      row.append(
+        el('code', 'ds-omp-metric-key', `${provId} / ${m.model || 'unknown'}`),
+        el('span', 'ds-omp-metric-val', [tokStr + cacheStr, costVal, provStr, scopeStr].filter(Boolean).join(' · '))
+      );
+      box.append(row);
+    }
+  }
+  return box;
 }
