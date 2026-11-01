@@ -36,7 +36,7 @@ git merge upstream/main
    - `server/agents/**` (`schema.mjs`, `registry.mjs`, `projection.mjs`, `conversation.mjs`, `claude/compat.mjs`, `omp/*`)
    - `integrations/omp/**` (`office-observer.js`, `private-storage.js`, `README.md`)
    - `src/office/ui/omp-history.js`
-   - `docs/OMP-INTEGRATION.md`, `scripts/benchmark-omp.mjs`, `start-office.cmd`, `AGENTS.md`
+   - `docs/OMP-INTEGRATION.md`, `scripts/benchmark-omp.mjs`, `start-office.ps1`, `AGENTS.md`
    - `playwright.omp.config.ts`, `playwright.hybrid.config.ts`, `tests/unit/omp-*.test.mjs`, `tests/unit/agent-*.test.mjs`, `tests/e2e/agents.spec.ts`, `tests/e2e/omp-*.spec.ts`, `tests/fixtures/omp/**`
 
 2. **Các file điểm nối dùng chung (Giữ tính năng mới của `upstream` + Giữ nguyên cổng nối OMP)**:
@@ -56,9 +56,9 @@ node node_modules/typescript/bin/tsc --noEmit
 node --test tests/unit/agent-*.test.mjs tests/unit/omp-*.test.mjs tests/unit/timeline.test.mjs tests/unit/i18n.test.mjs
 ```
 
-Sau khi test xanh, build lại bản production cho `start-office.cmd` và đẩy lên GitHub cá nhân:
-```cmd
-start-office.cmd rebuild
+Sau khi test xanh, build lại bản production cho `start-office.ps1` và đẩy lên GitHub cá nhân:
+```powershell
+.\start-office.ps1 buildonly
 git push origin main
 ```
 

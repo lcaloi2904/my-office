@@ -23,7 +23,7 @@ Tính năng tích hợp này **mặc định tắt (`off`)**, **hoàn toàn ch�
 Trình tự kích hoạt khuyến nghị:
 1. Giữ `OFFICE_OMP=off` cho tới khi chuẩn bị xong file cấu hình `omp-config.json`.
 2. Bật `OFFICE_OMP=files` trước và kiểm tra `GET /api/doctor` báo `effectiveMode: "files"` cùng `sources[].state: "ok"`.
-3. Bật `OFFICE_OMP=hybrid` (hoặc chạy qua `start-office.cmd`) sau khi đã tạo token riêng tư và nạp extension quan sát vào OMP.
+3. Bật `OFFICE_OMP=hybrid` (hoặc chạy qua `start-office.ps1`) sau khi đã tạo token riêng tư và nạp extension quan sát vào OMP.
 
 ---
 
@@ -111,7 +111,7 @@ Bộ giải mã hỗ trợ OMP session schema **v3** (mốc mã nguồn tham chi
      1. **Account Quota (Mặc định bật — `OFFICE_OMP_USAGE=1`)**: Đọc các tài khoản OAuth `openai-codex` và `google-antigravity` trong profile OMP đã chọn qua lệnh chỉ-đọc `omp [--profile <p>] usage --json --no-extensions` (đã xác minh ở mốc `omp v18.14.2` không khởi tạo `AgentSession` và không tiêu saved resets). Mỗi tài khoản có `accountKey` ẩn danh (HMAC theo tiến trình trên tuple `(profile, provider, identity)`), nhãn đã che (`de* · or*1* · pro`), danh sách cửa sổ hạn mức thực tế (`usedPercent`, `remainingPercent`, `resetsAt`, `sourceUnit`), và trạng thái (`ready`/`stale`/`unavailable`/`auth-error`/`unsupported`).
      2. **Session Tokens & Cost (`metrics.byProvider`)**: Tổng hợp token (`input`, `output`, `cacheRead`, `cacheWrite`) và `cost` theo từng `(providerId, model)` trực tiếp từ các bản ghi JSONL (`message.provider`, `model_usage.provider`) hoặc sự kiện live. Vì JSONL không xuất định danh OAuth công khai khớp với báo cáo quota, mọi chi phí/token theo phiên được gắn nhãn rõ ràng là **`unattributed` (`Chưa xác định tài khoản`)**, tuyệt đối không suy đoán từ tài khoản đang active.
    - **Hướng dẫn sử dụng nhanh (How to use)**:
-     - **Chạy bình thường (mặc định bật)**: Chỉ cần chạy `start-office.cmd` (hoặc `npm start` / `npm run dev`). Khi bạn đã đăng nhập sẵn tài khoản Codex (`openai-codex`) hoặc Antigravity (`google-antigravity`) trong OMP, My Office sẽ tự động đọc hạn mức từ profile OMP hiện tại mà **không cần đăng nhập lại**.
+     - **Chạy bình thường (mặc định bật)**: Chỉ cần chạy `.\start-office.ps1` (hoặc `npm start` / `npm run dev`). Khi bạn đã đăng nhập sẵn tài khoản Codex (`openai-codex`) hoặc Antigravity (`google-antigravity`) trong OMP, My Office sẽ tự động đọc hạn mức từ profile OMP hiện tại mà **không cần đăng nhập lại**.
      - **Xem hạn mức đa tài khoản trên giao diện**:
        1. Bấm vào nút **Gói / Plan** (`#btn-plan`) trên thanh trên cùng (TopBar) để mở bảng hạn mức (`#pop-plan`).
        2. Phía dưới phần hạn mức Claude là khu vực **OMP Usage** (`#omp-usage-sec`), hiển thị riêng nhóm **Codex (`openai-codex`)** và **Antigravity (`google-antigravity`)**:
@@ -191,4 +191,4 @@ Repository này dùng remote `origin` cho bản fork cá nhân (`lcaloi2904/my-o
    node node_modules/typescript/bin/tsc --noEmit
    node --test tests/unit/agent-*.test.mjs tests/unit/omp-*.test.mjs
    ```
-   Sau đó chạy `start-office.cmd rebuild` và `git push origin main`.
+   Sau đó chạy `.\start-office.ps1 buildonly` (hoặc `.\start-office.ps1 rebuild`) và `git push origin main`.
