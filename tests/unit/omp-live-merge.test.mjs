@@ -120,3 +120,25 @@ test('S3: the source files are never written by live mode', async (t) => {
   await h.adapter.refresh();
   assert.equal((await f.fs.readFile(path.join(f.source, 'proj', 'live-1.jsonl'))).toString(), before);
 });
+
+test('live session automatically tracks tool counts, taskStart, and reads its persisted transcript without manual pin', async (t) => {
+  const f = await fixture(t), h = await harness(t, f);
+  await h.post([
+    ev('session_start', 1, { isIdle: false }),
+    ev('tool_start', 2, { toolCallId: 't1', category: 'read' }),
+    ev('tool_end', 3, { toolCallId: 't1', category: 'read', phase: 'completed' }),
+    ev('tool_start', 4, { toolCallId: 't2', category: 'cmd' }),
+  ]);
+  const liveOnly = h.registry.list()[0];
+  assert.equal(liveOnly.status, 'work');
+  assert.ok(liveOnly.taskStart > 0);
+  assert.deepEqual(liveOnly.counts, { read: 1, edit: 0, cmd: 1, web: 0 });
+  await put(f, 'proj/live-1.jsonl', lines([header({ id: 'live-1' }), assistant('m1', null)]));
+  await h.adapter.refresh();
+  const merged = h.registry.list()[0];
+  assert.equal(merged.capabilities.readConversation, true);
+  assert.equal(merged.capabilities.startTask, false);
+  const page = await h.registry.readConversationPage(merged.id, 50);
+  assert.equal(page.items.length, 1);
+  assert.equal(page.items[0].text, 'Synthetic assistant m1');
+});

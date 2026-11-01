@@ -35,11 +35,19 @@ const SWEEP_MS = 5000;
 export function createOmpAdapter({ config, configFile, io = fsp, now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout, pinStore = null, live = false, onChange = () => {} } = {}) {
   let cfg = null, started = false, disposed = false, state = 'idle', timer = null, sweepTimer = null, running = null, controller = new AbortController();
   let lastScan = 0, scanEpoch = 0, failures = 0, activeConversations = 0, pinsLoaded = false;
-  const sources = new Map(), catalog = new Map(), byId = new Map(), conflicts = new Set(), pins = new Set(), runtimes = new Map();
+  const sources = new Map(), catalog = new Map(), byId = new Map(), conflicts = new Set(), pins = new Set(), unpinnedLive = new Set(), runtimes = new Map();
   const issues = new Set();
   const report = (code) => { if (issues.size < 24) issues.add(code); };
   const safe = (fn) => { try { fn(); } catch { /* a change listener never breaks the observer */ } };
-  const lifecycle = live ? createOmpLifecycle({ now, onChange: (ids) => { if (!disposed) safe(() => onChange(ids)); } }) : null;
+  const tracked = (id) => pins.has(id) || (!!lifecycle?.resolve(id) && !unpinnedLive.has(id));
+  const lifecycle = live ? createOmpLifecycle({ now, onChange: (ids) => {
+    if (disposed) return;
+    if (started && cfg) {
+      syncRuntimes();
+      if (setTimer === setTimeout && ids.some((id) => !fileRecordOf(id))) void run();
+    }
+    safe(() => onChange(ids));
+  } }) : null;
 
   async function loadConfig() {
     try { cfg = config ? validateConfig(config) : await readConfigFile(configFile, io); }
@@ -214,12 +222,14 @@ export function createOmpAdapter({ config, configFile, io = fsp, now = Date.now,
 
   function syncRuntimes() {
     if (disposed) return;
+    for (const id of [...unpinnedLive]) if (!lifecycle?.resolve(id)) unpinnedLive.delete(id);
     for (const id of [...runtimes.keys()]) {
       const entry = byId.get(id), rt = runtimes.get(id);
-      if (!pins.has(id) || (entry && (entry.sourceId !== rt.sourceId || entry.relative !== rt.relative))) dropRuntime(id);   // unpinned, or the file moved
+      if (!tracked(id) || (entry && (entry.sourceId !== rt.sourceId || entry.relative !== rt.relative))) dropRuntime(id);   // unpinned/ended, or the file moved
       else if (!entry && rt.absentSince === 0) rt.absentSince = now();
     }
-    for (const id of pins) {
+    for (const id of knownIds()) {
+      if (!tracked(id)) continue;
       const entry = byId.get(id), source = entry && sources.get(entry.sourceId);
       if (!entry || !source?.root || runtimes.has(id)) continue;
       const reader = createReader({ root: source.root, relative: entry.relative, io, now, limits: cfg.limits,
@@ -331,7 +341,8 @@ export function createOmpAdapter({ config, configFile, io = fsp, now = Date.now,
     const signal = controller.signal, listBefore = new Set(runtimes.keys());
     try {
       if (!pinsLoaded) { pinsLoaded = true; for (const id of (await pinStore?.load?.()) || []) if (typeof id === 'string' && /^omp:[0-9a-f]{64}$/.test(id) && pins.size < cfg.limits.maxPins) pins.add(id); }
-      if (!lastScan || now() - lastScan >= cfg.limits.reconcileMs) await scan(signal);
+      const missingLive = lifecycle ? lifecycle.ids().some((id) => !byId.has(id) && !conflicts.has(id)) : false;
+      if (!lastScan || now() - lastScan >= cfg.limits.reconcileMs || (missingLive && now() - lastScan >= cfg.limits.pollMs)) await scan(signal);
       else await fillHeaders(signal);
       if (signal.aborted) return;   // disposed while waiting: nothing may be opened again
       syncRuntimes();
@@ -372,17 +383,19 @@ export function createOmpAdapter({ config, configFile, io = fsp, now = Date.now,
 
   // One record per conversation. The runtime owns liveness; a persisted file owns history and durable usage.
   function recordOf(id) {
-    const file = pins.has(id) ? fileRecordOf(id) : null, runtime = lifecycle?.resolve(id) ?? null;
+    const file = tracked(id) ? fileRecordOf(id) : null, runtime = lifecycle?.resolve(id) ?? null;
     if (!runtime) return file;
     const entry = byId.get(id), source = sources.get(runtime.sourceNamespace);
     if (!source) return file;
     const identity = file || (entry?.header?.supported ? { ...projectIdentity(source.cfg, entry.header.cwd, source.identities), project: baseName(source.cfg, entry.header.cwd) } : {});
     const recorded = file?.readerState === 'ready' && !file.incomplete && file?.metrics && (file.metrics.cost || file.metrics.tokens?.provenance === 'recorded');
+    const fc = file?.counts, rc = runtime.counts;
+    const counts = fc && rc ? { read: Math.max(fc.read || 0, rc.read || 0), edit: Math.max(fc.edit || 0, rc.edit || 0), cmd: Math.max(fc.cmd || 0, rc.cmd || 0), web: Math.max(fc.web || 0, rc.web || 0) } : fc ?? rc;
     return { sourceNamespace: runtime.sourceNamespace, sourceSessionId: runtime.sourceSessionId,
       observedAt: runtime.observedAt, model: runtime.model ?? file?.model ?? null, provider: runtime.provider ?? file?.provider ?? null,
       // The durable file replaces a provisional runtime snapshot; the two are never added together.
       metrics: recorded ? file.metrics : runtime.metrics ?? file?.metrics ?? null,
-      counts: file?.counts, readerState: file?.readerState, incomplete: file?.incomplete === true, filePersisted: !!file,
+      counts, readerState: file?.readerState, incomplete: file?.incomplete === true, filePersisted: !!file,
       children: file?.children, childrenIncomplete: file?.childrenIncomplete === true,
       project: identity.project, projectKey: identity.projectKey, worktreeKey: identity.worktreeKey,
       conversation: !!file && file.conversation === true, persistedOnly: false, live: runtime };
@@ -446,11 +459,16 @@ export function createOmpAdapter({ config, configFile, io = fsp, now = Date.now,
     async pin(id, on = true) {
       if (disposed || !started) return { ok: false, code: 'unavailable' };
       if (typeof id !== 'string' || !/^omp:[0-9a-f]{64}$/.test(id)) return { ok: false, code: 'invalid-id' };
-      if (!on) { if (!pins.delete(id)) return { ok: true, pinned: false }; syncRuntimes(); await savePins(); safe(() => onChange([id])); return { ok: true, pinned: false }; }
+      if (!on) {
+        const hadPin = pins.delete(id), hadLive = !!lifecycle?.resolve(id);
+        if (hadLive) unpinnedLive.add(id);
+        if (!hadPin && !hadLive) return { ok: true, pinned: false };
+        syncRuntimes(); await savePins(); safe(() => onChange([id])); return { ok: true, pinned: false };
+      }
       if (conflicts.has(id)) return { ok: false, code: 'conflict' };
       if (!byId.has(id)) return { ok: false, code: 'unknown-session' };
       if (!pins.has(id) && pins.size >= cfg.limits.maxPins) return { ok: false, code: 'pin-limit' };
-      pins.add(id); syncRuntimes(); await savePins();
+      unpinnedLive.delete(id); pins.add(id); syncRuntimes(); await savePins();
       return { ok: true, pinned: true };
     },
 
@@ -461,7 +479,7 @@ export function createOmpAdapter({ config, configFile, io = fsp, now = Date.now,
     async readConversationPage(record, n = 120, childId = null, before = null) {
       if (disposed || !record || record.conversation !== true || activeConversations >= MAX_CONVERSATIONS) return emptyConversationPage();
       const id = ompSessionIdentity(record.sourceNamespace, record.sourceSessionId)?.id, entry = byId.get(id), source = entry && sources.get(entry.sourceId);
-      if (!entry || !source?.root || source.cfg.conversation !== true || !pins.has(id)) return emptyConversationPage();
+      if (!entry || !source?.root || source.cfg.conversation !== true || !tracked(id)) return emptyConversationPage();
       let relative = entry.relative, expectedSessionId = record.sourceSessionId;
       if (childId !== null) {
         const rt = runtimes.get(id);
@@ -501,7 +519,7 @@ export function createOmpAdapter({ config, configFile, io = fsp, now = Date.now,
       lifecycle?.dispose();
       await running;
       for (const id of [...runtimes.keys()]) { const rt = runtimes.get(id); runtimes.delete(id); await rt.reader.dispose().catch(() => {}); }
-      catalog.clear(); byId.clear(); conflicts.clear(); sources.clear(); pins.clear();
+      catalog.clear(); byId.clear(); conflicts.clear(); sources.clear(); pins.clear(); unpinnedLive.clear();
       state = 'disposed';
     },
   };

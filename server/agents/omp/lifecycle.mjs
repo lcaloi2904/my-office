@@ -24,7 +24,7 @@ export function createOmpLifecycle({ now = Date.now, onChange = () => {}, staleM
     pendingTools: running(s).length, toolCategories: [...new Set(running(s).map((t) => t.category))].sort(),
     waitReasons: [...new Set(s.waiting.values())].sort(), pendingMessages: s.pendingMessages,
     pendingJobs: s.pendingJobs, observedAt: s.observedAt,
-    model: s.model, provider: s.provider, metrics: s.metrics, persistedOnly: false, gap: s.gap,
+    model: s.model, provider: s.provider, metrics: s.metrics, counts: { ...s.counts }, taskStart: s.taskStart, persistedOnly: false, gap: s.gap,
   });
   // A heartbeat that changes nothing visible must not wake every client.
   const signature = (s) => { const { observedAt, ...rest } = snapshot(s); void observedAt; return JSON.stringify(rest); };
@@ -40,12 +40,23 @@ export function createOmpLifecycle({ now = Date.now, onChange = () => {}, staleM
     if (running(s).length || s.inTurn || s.pendingJobs > 0) return 'active';
     return s.isIdle === true && s.pendingMessages === 0 ? 'idle' : s.isIdle === false ? 'active' : 'unknown';
   };
-  const setActivity = (s) => { s.activity = activityOf(s); };
+  const setActivity = (s) => {
+    s.activity = activityOf(s);
+    if (s.activity === 'active' || s.activity === 'waiting') s.taskStart ||= s.observedAt;
+    else s.taskStart = 0;
+  };
+  const countTool = (s, id, category) => {
+    if (!id || s.countedTools.has(id)) return;
+    if (s.countedTools.size >= 4096) s.countedTools.clear();
+    s.countedTools.add(id);
+    if (Object.hasOwn(s.counts, category)) s.counts[category]++;
+  };
   const newSession = (e) => ({
     sourceId: e.sourceId, sessionId: e.sessionId, runtimeInstanceId: e.runtimeInstanceId,
     generation: e.generation, sequence: 0, observedAt: now(), connection: 'connected',
     ended: false, inTurn: false, isIdle: null, lastTurnOutcome: 'unknown',
     pendingMessages: 0, pendingJobs: 0, waiting: new Map(), tools: new Map(), reorder: new Map(),
+    counts: { read: 0, edit: 0, cmd: 0, web: 0 }, countedTools: new Set(), taskStart: 0,
     retired: [], gap: false, activity: 'unknown', model: null, provider: null, providersSeen: new Set(), metrics: null, sig: null,
   });
   const applyOne = (s, e) => {
@@ -87,7 +98,7 @@ export function createOmpLifecycle({ now = Date.now, onChange = () => {}, staleM
         // A reconnect snapshot replaces uncertain pending tool state. No historical animation is emitted.
         if (e.type === 'snapshot') {
           s.tools.clear();
-          for (const t of d.tools || []) s.tools.set(t.id, { phase: 'running', category: t.category, at });
+          for (const t of d.tools || []) { s.tools.set(t.id, { phase: 'running', category: t.category, at }); countTool(s, t.id, t.category); }
           if (d.isIdle === true) s.inTurn = false;
         }
       }
@@ -97,13 +108,15 @@ export function createOmpLifecycle({ now = Date.now, onChange = () => {}, staleM
       if (running(s).length === 0 && s.pendingJobs === 0) s.isIdle = true;
     } else if (e.type === 'tool_start' || e.type === 'tool_end') {
       const prev = s.tools.get(d.toolCallId);
+      const cat = prev?.category || d.category || 'other';
+      countTool(s, d.toolCallId, cat);
       if (e.type === 'tool_end') {
         // The first terminal state wins: a duplicate end must not turn an error into a success.
         if (!prev || !terminal.has(prev.phase)) {
-          s.tools.set(d.toolCallId, { category: prev?.category || d.category || 'other', phase: d.phase || 'completed', at });
+          s.tools.set(d.toolCallId, { category: cat, phase: d.phase || 'completed', at });
         }
       } else if (!prev) {
-        s.tools.set(d.toolCallId, { category: d.category || 'other', phase: 'running', at });
+        s.tools.set(d.toolCallId, { category: cat, phase: 'running', at });
       }
       while (s.tools.size > MAX_TOOLS) {
         const firstTerminal = [...s.tools].find(([, t]) => terminal.has(t.phase));
@@ -118,7 +131,7 @@ export function createOmpLifecycle({ now = Date.now, onChange = () => {}, staleM
     } else if (e.type === 'input_resolved') s.waiting.delete(d.requestId);
     else if (e.type === 'session_end') {
       s.ended = true; s.inTurn = false; s.isIdle = null;
-      s.tools.clear(); s.waiting.clear(); s.metrics = null;
+      s.tools.clear(); s.waiting.clear(); s.metrics = null; s.taskStart = 0;
     }
     s.sequence = e.sequence;
     setActivity(s);

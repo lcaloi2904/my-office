@@ -102,6 +102,7 @@ function liveFields(live) {
   return {
     persistedOnly: false, lifecycle: ended ? 'ended' : 'open', activity, connection,
     status: LEGACY_STATUS[activity] || 'unknown',
+    taskStart: (activity === 'active' || activity === 'waiting') ? (finiteNonnegative(live.taskStart) ?? 0) : 0,
     lastTurnOutcome: OUTCOMES.has(live.lastTurnOutcome) ? live.lastTurnOutcome : 'unknown',
     pendingTools: count(live.pendingTools),
     toolCategories: Array.isArray(live.toolCategories) ? live.toolCategories.filter((k) => TOOL_KINDS.has(k)).slice(0, 5) : [],
@@ -153,12 +154,13 @@ export function projectOmpSession(record) {
   const live = liveFields(record.live);
   // A live row that also has a file keeps the file's counts and project; its liveness comes only from the runtime.
   const persisted = record.persistedOnly === true || record.filePersisted === true ? persistedFields(record) : null;
+  const c = record.counts && typeof record.counts === 'object' ? record.counts : {};
   const base = {
     ...identity, agentKind: 'omp', agent: 'omp',
     name: 'OMP ' + identity.id.slice(4, 12), title: '', dir: '', origin: 'OMP',
     pid: null, link: null, acct: null, desk: -1, status: 'unknown',
     lifecycle: 'unknown', activity: 'unknown', connection: 'unknown',
-    taskStart: 0, counts: { read: 0, edit: 0, cmd: 0, web: 0 },
+    taskStart: 0, counts: { read: count(c.read), edit: count(c.edit), cmd: count(c.cmd), web: count(c.web) },
     ...childFields(record, identity.sessionKey), last: null, lastPrompt: '',
     lastAt: finiteNonnegative(record.observedAt) ?? 0,
     usage: null, model: safeModel(record.model), provider: safeProvider(record.provider), metrics: ompMetrics(record.metrics),

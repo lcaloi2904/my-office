@@ -28,7 +28,7 @@ const timestamp = (v) => typeof v === 'string' && Number.isFinite(Date.parse(v))
 const contentText = (content) => typeof content === 'string' ? content : Array.isArray(content) ? content.filter((p) => p?.type === 'text' && typeof p.text === 'string').map((p) => p.text).join('\n') : '';
 const safeText = (s) => redact(String(s)).slice(0, 4000).replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '');
 // Exact names only; custom/MCP and inherited Object prototype names remain neutral.
-const TOOL_CATEGORIES = new Map(Object.entries({ read: 'read', edit: 'edit', write: 'edit', bash: 'cmd', grep: 'read', find: 'read', ls: 'read', task: 'task', ask: 'ask', web_search: 'web', fetch: 'web' }));
+const TOOL_CATEGORIES = new Map(Object.entries({ read: 'read', edit: 'edit', write: 'edit', ast_edit: 'edit', bash: 'cmd', grep: 'read', find: 'read', glob: 'read', ls: 'read', task: 'task', ask: 'ask', web_search: 'web', fetch: 'web' }));
 export const toolCategory = (name) => TOOL_CATEGORIES.get(name) || 'other';
 const KNOWN = new Set(['message', 'model_usage', 'model_change', 'thinking_level_change', 'service_tier_change', 'compaction', 'branch_summary', 'reset_boundary', 'custom', 'label', 'title_change', 'ttsr_injection', 'credential_pin', 'session_init', 'mode_change', 'custom_message']);
 

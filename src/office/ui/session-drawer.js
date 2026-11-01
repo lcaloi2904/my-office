@@ -21,7 +21,8 @@ import { appendSessionBadges, childState, counterNote, projectLabel, renderSessi
 export let tab = 'chat';
 let logItems = [], subItems = [];
 let logTimer = null;
-let nextCursor = null, subCursor = null, conversationIncomplete = false, logRequest = 0;
+let nextCursor = null, subCursor = null, conversationIncomplete = false, logRequest = 0, headLogSig = '';
+const logSig = (s) => s ? [s.id, canSession(s, 'readConversation'), s.counts?.read, s.counts?.edit, s.counts?.cmd, s.counts?.web, s.metrics?.tokens?.input, s.metrics?.tokens?.output, s.subs?.length].join('|') : '';
 export let drS;
 export let drM;
 export function toggleSession(id) { if (state.selectedId === id && !drS.hidden) closeSession(); else openSession(id); }
@@ -34,19 +35,25 @@ export function openSession(id, opts = {}) {
   const waver = workers.get(id); if (waver && !same) waver.waveUntil = state.sim + 1.8;
   if (small.matches) $('feed').classList.remove('feed--open');
   state.zoomGoal = (small.matches ? 2.1 : 1.6) * BASE_ZOOM;
-  if (!same) { logItems = []; subItems = []; nextCursor = null; subCursor = null; conversationIncomplete = false; }
+  if (!same) { logItems = []; subItems = []; nextCursor = null; subCursor = null; conversationIncomplete = false; headLogSig = ''; }
   state.subView = opts.agent || null;
   setTab(opts.tab || 'chat');
+  headLogSig = logSig(sessions.get(id));
   renderSessionHead(); renderActions();
   loadLog(true);
   queueUi();
 }
-export function closeSession() { state.selectedId = null; state.subView = null; drS.hidden = true; goView('home'); queueUi(); }
+export function closeSession() { state.selectedId = null; state.subView = null; headLogSig = ''; drS.hidden = true; goView('home'); queueUi(); }
 export function renderSessionHead() {
   const s = sessions.get(state.selectedId); if (!s) return;
+  const nextLogSig = logSig(s), prevLogSig = headLogSig;
+  headLogSig = nextLogSig;
   if (!canSession(s, 'readConversation')) {
     logItems = []; subItems = []; nextCursor = null; subCursor = null; logRequest++;
     if (tab === 'chat' || (tab === 'subs' && state.subView)) $('ds-body').replaceChildren(el('p', 'chat-empty', tr('drawer.conversationDisabled')));
+  } else if (prevLogSig && nextLogSig !== prevLogSig) {
+    if (!prevLogSig.startsWith(s.id + '|true|')) loadLog(true);
+    else if (agentOf(s) === 'omp') scheduleLog();
   }
   $('ds-dot').style.background = colorOf(s);
   $('ds-name').textContent = dn(s);
@@ -155,9 +162,10 @@ function setTab(t) {
 }
 async function loadLog(scrollEnd = false, earlier = false) {
   const id = state.selectedId; if (!id) return;
-  const requestTab = tab, agent = requestTab === 'subs' ? state.subView : null;
-  if ((requestTab === 'subs' && !agent) || requestTab === 'act') return;
-  if (!canSession(sessions.get(id), 'readConversation')) {
+  const s = sessions.get(id), requestTab = tab, agent = requestTab === 'subs' ? state.subView : null;
+  const ompAct = requestTab === 'act' && agentOf(s) === 'omp';
+  if ((requestTab === 'subs' && !agent) || (requestTab === 'act' && !ompAct)) return;
+  if (!canSession(s, 'readConversation')) {
     logItems = []; subItems = []; nextCursor = null; subCursor = null;
     $('ds-body').replaceChildren(el('p', 'chat-empty', tr('drawer.conversationDisabled')));
     return;
@@ -180,7 +188,7 @@ async function loadLog(scrollEnd = false, earlier = false) {
     conversationIncomplete = d.incomplete === true;
     const items = Array.isArray(d.items) ? d.items : [];
     if (agent) { subCursor = d.nextCursor ?? null; subItems = earlier ? [...items, ...subItems] : items; renderSubs(scrollEnd); }
-    else { nextCursor = d.nextCursor ?? null; logItems = earlier ? [...items, ...logItems] : items; if (tab === 'chat') renderChat(scrollEnd); }
+    else { nextCursor = d.nextCursor ?? null; logItems = earlier ? [...items, ...logItems] : items; if (tab === 'chat') renderChat(scrollEnd); else if (tab === 'act') renderActivity(); }
     return true;
   } catch { if (isCurrentRequest()) $('ds-body').replaceChildren(el('p', 'chat-empty', tr('drawer.chatUnreadable'))); }
 }
@@ -438,9 +446,24 @@ export function renderSubs(scrollEnd = false) {
 }
 export function renderActivity() {
   if (tab !== 'act') return;
-  const body = $('ds-body');
+  const body = $('ds-body'), s = sessions.get(state.selectedId);
   const mine = state.feed.filter((e) => e.sess === state.selectedId).slice(-60).reverse();
   const ul = el('ul', 'feed-list'); ul.style.padding = '0';
+  if (!mine.length && agentOf(s) === 'omp') {
+    if (!canSession(s, 'readConversation')) { body.replaceChildren(el('p', 'chat-empty', tr('drawer.conversationDisabled'))); return; }
+    const tools = logItems.filter((it) => it.role === 'tool').slice(-60).reverse();
+    if (!tools.length) ul.append(el('li', 'fi-empty', tr('drawer.noActivity')));
+    for (const x of tools) {
+      const li = el('li', 'fr'), ln = el('span', 'fg-line'), ic = el('span', 'fi-ico');
+      ic.append(icon(TYPE_ICON[x.type] || 'sparkle'));
+      const text = `${tr('drawer.toolInvocation')} · ${tr('drawer.step.' + (STEP_WORD[x.type] || 'other'), { n: 1 })}`;
+      ln.append(ic, el('span', 'fg-text', text));
+      li.append(ln, el('time', null, x.ts ? hhmm(x.ts) : ''));
+      ul.append(li);
+    }
+    body.replaceChildren(ul);
+    return;
+  }
   if (!mine.length) ul.append(el('li', 'fi-empty', tr('drawer.noActivity')));
   for (const e of mine) ul.append(feedRow(e, false));
   ul.addEventListener('click', (ev) => { const b = ev.target.closest('[data-agent]'); if (b) openFromRow(b); });
@@ -452,7 +475,7 @@ export function setup() {
   drS = $('dr-session'); drM = $('dr-mac');
   $('tab-chat').addEventListener('click', () => { setTab('chat'); loadLog(true); });
   $('tab-subs').addEventListener('click', () => { state.subView = null; setTab('subs'); });
-  $('tab-act').addEventListener('click', () => setTab('act'));
+  $('tab-act').addEventListener('click', () => { setTab('act'); if (agentOf(sessions.get(state.selectedId)) === 'omp' && !logItems.length) loadLog(false); });
   // "Latest" button: shows when you have scrolled up in a conversation.
   jumpBtn = el('button', 'chat-jump');
    jumpBtn.type = 'button';
